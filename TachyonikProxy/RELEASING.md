@@ -81,19 +81,29 @@ line (`uuidgen`, or PowerShell `[guid]::NewGuid()`).
 
 ## 1. Versioning scheme
 
-Versions are **purely numeric dotted-decimal**: `MAJOR.MINOR.PATCH`, e.g.
-`1.4.0`. This is a hard constraint of the self-update comparator
-(`parseVersion` rejects any non-numeric component):
+TachyonikProxy versions its releases **independently** of the rest of the
+TachyonikCSM monorepo, using a **namespaced git tag**: `tachyonikproxy/X.Y.Z`
+(e.g. `tachyonikproxy/1.0.0`). The Makefile resolves the version with
+`git describe --match 'tachyonikproxy/*'` and strips the prefix, so other
+modules' tags (`assetmanager/…`, a repo-wide tag, etc.) can never leak in.
 
-- ✅ `1.4.0`, `0.7.0`, `1.10.2`
-- ❌ `v1.4.0` (the `v` prefix fails), `1.4.0-rc1`, `1.4.0-dirty`, `2026.05`
+The stripped version is **purely numeric dotted-decimal** — `MAJOR.MINOR.PATCH`,
+e.g. `1.0.0` — a hard constraint of the self-update comparator (`parseVersion`
+rejects any non-numeric component):
 
-The running binary's version is embedded from `git describe` via ldflags, so:
+- ✅ `1.0.0`, `0.7.0`, `1.10.2`   (tag: `tachyonikproxy/1.0.0`, …)
+- ❌ `v1.0.0` (the `v` fails), `1.0.0-rc1`, `1.0.0-dirty`, `2026.05`
 
-- **Tag releases without a `v` prefix** (e.g. `git tag 1.4.0`), and
-- **Build the release on the exact tag commit** so `git describe` yields a clean
-  `1.4.0` (an off-tag build produces `1.4.0-5-gabc1234`, which would break the
-  self-update version compare).
+So:
+
+- **Tag with the `tachyonikproxy/` prefix and a numeric `X.Y.Z`** (e.g.
+  `git tag tachyonikproxy/1.0.0`) — no `v`, no pre-release suffix, and
+- **Build on the exact tag commit, clean tree** so the resolved version is a
+  clean `1.0.0` (an off-tag or dirty build yields `1.0.0-5-gabc1234` /
+  `1.0.0-dirty`, which the packaging guard rejects).
+
+The `package-*` targets enforce this — they refuse any non-numeric `VERSION`
+(see the `_require-release-version` guard in the `Makefile`).
 
 The manifest's `latestVersion` must be **strictly greater** than what's deployed
 (downgrades are refused), and `publishedAt` must be **strictly newer** than the
@@ -320,7 +330,7 @@ installed version (downgrades are refused).
 
 - [ ] `govulncheck ./...` clean; built with a patched Go toolchain.
 - [ ] Production public PEM embedded in `internal/selfupdate/pubkeys/`; placeholder removed.
-- [ ] Tag is numeric (`1.4.0`, no `v`); build is on the exact tag commit.
+- [ ] Tagged `tachyonikproxy/X.Y.Z` (namespaced, numeric, no `v`); build is on the exact tag commit, clean tree.
 - [ ] `make build-all && make package-archives` (+ native installers as needed).
 - [ ] SHA-256 computed for each `.tar.gz`.
 - [ ] `manifest.json` assembled (schemaVersion 1, channel, latestVersion > deployed,

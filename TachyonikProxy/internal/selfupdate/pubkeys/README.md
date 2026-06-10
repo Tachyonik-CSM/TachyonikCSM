@@ -6,14 +6,14 @@ fetched from `auto_update.manifest_url`.
 
 The current files are:
 
-- `tachyonik-test-2026.pem` — **placeholder** generated 2026-05-04. The
-  matching private key was discarded at generation time and is **not** held
-  by anyone. This file exists so the trust-chain code has a syntactically
-  valid key to compile against; it cannot verify any production manifest.
+- `tachyonik-prod-2026.pem` — the **production** public key. The matching
+  private key is held offline (see RELEASING.md §0.1) and is used to sign
+  release manifests; it must never live on a build host, a CI runner, or this
+  repo.
 
-## Replacing for a release
+## Replacing the key
 
-Before tagging a real release:
+When generating a new production key (initial setup or a from-scratch reissue):
 
 1. Generate the production keypair on an offline / HSM-backed host:
    ```
@@ -22,8 +22,8 @@ Before tagging a real release:
    ```
 2. Move `tachyonik_priv.pem` to its long-term offline storage. It must
    never live on a build host, a CI runner, or this repo.
-3. Replace the placeholder in this directory with the production public
-   PEM, and rebuild.
+3. Place the production public PEM in this directory (replacing any prior
+   key you are retiring), and rebuild.
 
 ## Rotation
 

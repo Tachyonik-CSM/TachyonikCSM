@@ -52,11 +52,13 @@ TachyonikProxy is a standalone, cross-platform MCP (Model Context Protocol) serv
 ### Native build
 
 ```bash
-cd /home/longev/Tachyonik-App/TachyonikProxy
+cd TachyonikProxy
 make build
 ```
 
-This produces `dist/bin/tachyonikproxy` for the host platform. The version string is taken from `git describe` (falling back to `0.6.0`) and embedded via `-ldflags '-X main.version=...'`.
+This produces `dist/bin/tachyonikproxy` for the host platform. The version string is resolved from this module's **namespaced** git tag `tachyonikproxy/X.Y.Z` (e.g. `tachyonikproxy/1.0.0` → `1.0.0`), so it is independent of TachyonikCSM and other modules in the monorepo; with no matching tag it falls back to `0.0.0-dev`. It's embedded via `-ldflags '-X main.version=...'`. Override it deterministically with `make build VERSION=1.0.0`.
+
+> **Packaging requires a clean release version.** The `package-*` targets refuse to run unless `VERSION` resolves to a numeric `x.y.z` — a dirty tree (`1.0.0-dirty`), an off-tag build (`1.0.0-3-gabc123`), or the `0.0.0-dev` fallback are all rejected, so a mislabeled artifact can't be published (the proxy's self-update also requires a purely numeric version). Tag the release commit `git tag tachyonikproxy/1.0.0` or pass `VERSION=1.0.0`.
 
 ### Cross-compile all platforms
 

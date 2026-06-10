@@ -2,7 +2,15 @@
 # SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.6.0")
+# Resolved from this module's own namespaced git tag `tachyonikproxy/X.Y.Z`,
+# so the proxy's version is independent of TachyonikCSM and every other module
+# in the monorepo: `--match` ignores all other tags, and the prefix is stripped
+# to a numeric x.y.z. On the release tag `tachyonikproxy/1.0.0` → `1.0.0`.
+# Off-tag/dirty builds get a descriptive suffix; a tree with no matching tag
+# falls back to 0.0.0-dev. None of those non-numeric forms may be packaged —
+# see the _require-release-version guard below. Override with
+# `make … VERSION=1.0.0` for a deterministic build (CI).
+VERSION  ?= $(patsubst tachyonikproxy/%,%,$(shell git describe --tags --match 'tachyonikproxy/*' --dirty 2>/dev/null || echo 0.0.0-dev))
 MODULE   := tachyonik/tachyonikproxy
 BINARY   := tachyonikproxy
 LDFLAGS  := -s -w -X main.version=$(VERSION)
@@ -19,7 +27,7 @@ export PATH := $(PATH):$(shell go env GOPATH)/bin
 # Build targets: os/arch pairs
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: build build-all clean test \
+.PHONY: build build-all clean test _require-release-version \
         package-deb package-rpm package-macos package-windows \
         package-archives package-all
 
@@ -58,21 +66,34 @@ build-windows-amd64:
 test:
 	go test ./...
 
+# ─── Release-version guard ──────────────────────────────────────────
+# package-* refuses to run unless VERSION is a clean numeric x.y.z, so a
+# dirty tree, an off-tag build (1.0.0-3-gabc123), a bare commit hash, or the
+# no-git 0.0.0-dev fallback can never produce a publishable, mislabeled
+# artifact (the proxy's self-update also requires a purely numeric version).
+# Tag the release commit (`git tag 1.0.0`) or pass VERSION=1.0.0.
+_require-release-version:
+	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
+		echo "ERROR: refusing to package non-release version '$(VERSION)'."; \
+		echo "       Need a clean numeric x.y.z. Build the tagged release commit"; \
+		echo "       (e.g. git tag 1.0.0) or pass VERSION=1.0.0 explicitly."; \
+		exit 1; }
+
 # ─── Linux packages (.deb + .rpm) via nfpm ──────────────────────────
 
-package-deb: build-linux-amd64 build-linux-arm64
+package-deb: _require-release-version build-linux-amd64 build-linux-arm64
 	@command -v nfpm >/dev/null 2>&1 || { echo "nfpm not found. Install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.1"; exit 1; }
 	TACHYONIKPROXY_VERSION=$(VERSION) TACHYONIKPROXY_ARCH=amd64 nfpm package -p deb -f nfpm.yaml -t $(DIST)/
 	TACHYONIKPROXY_VERSION=$(VERSION) TACHYONIKPROXY_ARCH=arm64 nfpm package -p deb -f nfpm.yaml -t $(DIST)/
 
-package-rpm: build-linux-amd64 build-linux-arm64
+package-rpm: _require-release-version build-linux-amd64 build-linux-arm64
 	@command -v nfpm >/dev/null 2>&1 || { echo "nfpm not found. Install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.1"; exit 1; }
 	TACHYONIKPROXY_VERSION=$(VERSION) TACHYONIKPROXY_ARCH=amd64 nfpm package -p rpm -f nfpm.yaml -t $(DIST)/
 	TACHYONIKPROXY_VERSION=$(VERSION) TACHYONIKPROXY_ARCH=arm64 nfpm package -p rpm -f nfpm.yaml -t $(DIST)/
 
 # ─── macOS installer (.pkg) ─────────────────────────────────────────
 
-package-macos: build-darwin-amd64 build-darwin-arm64
+package-macos: _require-release-version build-darwin-amd64 build-darwin-arm64
 ifeq (,$(shell command -v pkgbuild 2>/dev/null))
 	@echo "pkgbuild not available (requires a macOS host) — skipping .pkg (use package-archives for .tar.gz)"
 else
@@ -105,7 +126,7 @@ endef
 # Requires: go-msi (go install github.com/mh-cbon/go-msi@latest) + WiX on Windows
 # Falls back to .zip-only on non-Windows build hosts.
 
-package-windows: build-windows-amd64
+package-windows: _require-release-version build-windows-amd64
 	@if command -v go-msi >/dev/null 2>&1; then \
 		mkdir -p $(DIST)/msi-stage; \
 		cp $(BINDIR)/$(BINARY)-windows-amd64.exe $(DIST)/msi-stage/$(BINARY).exe; \
@@ -122,7 +143,7 @@ package-windows: build-windows-amd64
 
 # ─── Portable archives (.tar.gz / .zip) ─────────────────────────────
 
-package-archives: build-all
+package-archives: _require-release-version build-all
 	@# Linux tar.gz
 	$(call build_tar,linux-amd64)
 	$(call build_tar,linux-arm64)
