@@ -1,0 +1,29 @@
+server:
+  port: 9100
+  host: "0.0.0.0"
+
+# Mutual TLS authentication — MANDATORY in outbound mode. Normally written by
+# `tachyonikproxy enroll`; do not edit by hand. The proxy refuses to start
+# without ca_cert / server_cert / server_key all set.
+# tls:
+#   ca_cert: "/etc/tachyonik/tachyonikproxy/certs/ca.crt"
+#   server_cert: "/etc/tachyonik/tachyonikproxy/certs/server.crt"
+#   server_key: "/etc/tachyonik/tachyonikproxy/certs/server.key"
+#   allowed_clients:
+#     - "toolmanager"
+
+proxy:
+  name: "toolproxy"
+  description: "Tachyonik ToolProxy"
+
+log:
+  file_path: "/var/log/tachyonik/toolproxy.log"
+  to_console: false
+  to_file: true
+  level: INFO
+
+tools: []
+
+mcp_servers: []
+
+allow_remote_config: false

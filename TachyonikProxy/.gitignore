@@ -1,0 +1,15 @@
+# Build output
+/dist/
+/bin/
+/tachyonikproxy
+/tachyonikproxy.exe
+
+# Enrollment / runtime artifacts — never commit TLS material or live state
+/certs/*
+!/certs/.gitkeep
+update-state.json
+*.tmp
+
+# Local/dev config (like the other modules). The canonical template lives in
+# packaging/config.yaml.default; this CWD config.yaml is per-machine.
+/config.yaml

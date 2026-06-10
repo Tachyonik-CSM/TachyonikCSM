@@ -1,0 +1,63 @@
+# TachyonikProxy
+# SPDX-FileCopyrightText: 2026 Tachyonik GmbH
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# nfpm configuration — generates .deb and .rpm packages.
+# https://nfpm.goreleaser.com/configuration/
+#
+# Variable overrides (set via nfpm environment or --target):
+#   TACHYONIKPROXY_VERSION  — package version (required)
+#   TACHYONIKPROXY_ARCH     — architecture: amd64, arm64 (required)
+
+name: tachyonikproxy
+arch: "${TACHYONIKPROXY_ARCH}"
+version: "${TACHYONIKPROXY_VERSION}"
+maintainer: "Tachyonik <support@tachyonik.io>"
+description: "Tachyonik TachyonikProxy — MCP server for security tool integration"
+vendor: "Tachyonik"
+homepage: "https://tachyonik.io"
+license: "Proprietary"
+
+contents:
+  # expand: true is required for ${...} substitution in src/dst — nfpm
+  # v2.43.x (the last release building with Go 1.24, see Makefile) only
+  # expands content entries that opt in.
+  - src: dist/bin/tachyonikproxy-linux-${TACHYONIKPROXY_ARCH}
+    dst: /usr/bin/tachyonikproxy
+    expand: true
+    file_info:
+      mode: 0755
+
+  - src: packaging/config.yaml.default
+    dst: /usr/share/tachyonik/tachyonikproxy/config.yaml.default
+    file_info:
+      mode: 0644
+
+  - src: packaging/systemd/tachyonikproxy.service
+    dst: /lib/systemd/system/tachyonikproxy.service
+    file_info:
+      mode: 0644
+
+  - src: packaging/systemd/tachyonikproxy-update.service
+    dst: /lib/systemd/system/tachyonikproxy-update.service
+    file_info:
+      mode: 0644
+
+  - src: packaging/systemd/tachyonikproxy-update.timer
+    dst: /lib/systemd/system/tachyonikproxy-update.timer
+    file_info:
+      mode: 0644
+
+  - dst: /etc/tachyonik/tachyonikproxy
+    type: dir
+    file_info:
+      mode: 0750
+
+  - dst: /var/log/tachyonik
+    type: dir
+    file_info:
+      mode: 0755
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh

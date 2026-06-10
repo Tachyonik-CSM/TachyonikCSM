@@ -1,0 +1,28 @@
+[Unit]
+Description=Tachyonik TachyonikProxy auto-update (oneshot)
+Documentation=https://tachyonik.io
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/tachyonikproxy self-update
+Environment=TACHYONIKPROXY_CONFIG=/etc/tachyonik/tachyonikproxy/config.yaml
+
+# Run with low priority so an update check never competes with the proxy
+# itself for CPU or disk. Apply still has to swap a file and restart the
+# service, but the bulk of the work (download + extract + sha) is friendly.
+Nice=10
+IOSchedulingClass=idle
+
+# The updater needs root to write under /opt/tachyonik/proxy/, manage the
+# CLI symlink at /usr/bin/, write the state file under /var/lib/, and call
+# `systemctl restart tachyonikproxy.service`. Tighter capabilities are
+# possible but unnecessary for a process that runs once and exits.
+User=root
+Group=root
+
+# Defence in depth — the updater shouldn't need any of these.
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true

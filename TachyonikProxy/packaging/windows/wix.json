@@ -1,0 +1,21 @@
+{
+  "product": "Tachyonik TachyonikProxy",
+  "company": "Tachyonik",
+  "license": "",
+  "upgrade-code": "0a54c21e-fa2a-4bc0-a906-25af9b18717c",
+  "files": {
+    "items": [
+      "tachyonikproxy.exe",
+      "config.yaml"
+    ]
+  },
+  "directories": [
+    "Tachyonik\\TachyonikProxy"
+  ],
+  "env": {
+    "vars": []
+  },
+  "shortcuts": {
+    "items": []
+  }
+}

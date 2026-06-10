@@ -1,0 +1,26 @@
+[Unit]
+Description=Tachyonik TachyonikProxy MCP Server
+Documentation=https://tachyonik.io
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tachyonikproxy
+Group=tachyonikproxy
+ExecStart=/usr/bin/tachyonikproxy
+WorkingDirectory=/etc/tachyonik/tachyonikproxy
+Environment=TACHYONIKPROXY_CONFIG=/etc/tachyonik/tachyonikproxy/config.yaml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/tachyonik /etc/tachyonik/tachyonikproxy
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

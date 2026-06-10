@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tachyonik.tachyonikproxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/tachyonikproxy</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TACHYONIKPROXY_CONFIG</key>
+        <string>/etc/tachyonik/tachyonikproxy/config.yaml</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/etc/tachyonik/tachyonikproxy</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/tachyonik/tachyonikproxy.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/tachyonik/tachyonikproxy.log</string>
+</dict>
+</plist>

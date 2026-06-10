@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tachyonik.tachyonikproxy-update</string>
+
+    <!--
+      Periodic auto-update check. Runs as a oneshot — RunAtLoad starts it
+      shortly after boot so a freshly installed proxy picks up pending
+      updates within a few minutes; StartInterval reschedules it every
+      24h. AbandonProcessGroup is intentionally absent: when the binary
+      finishes, the job is done.
+    -->
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/tachyonikproxy</string>
+        <string>self-update</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TACHYONIKPROXY_CONFIG</key>
+        <string>/etc/tachyonik/tachyonikproxy/config.yaml</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/etc/tachyonik/tachyonikproxy</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>86400</integer>
+
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>Nice</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/tachyonik/tachyonikproxy-update.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/tachyonik/tachyonikproxy-update.log</string>
+</dict>
+</plist>

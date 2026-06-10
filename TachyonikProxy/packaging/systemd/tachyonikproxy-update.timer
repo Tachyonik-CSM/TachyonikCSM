@@ -1,0 +1,25 @@
+[Unit]
+Description=Periodic auto-update check for TachyonikProxy
+Documentation=https://tachyonik.io
+
+[Timer]
+# First run shortly after boot so a freshly enrolled proxy doesn't wait a
+# full day to pick up a pending release.
+OnBootSec=10min
+
+# Subsequent checks roughly daily.
+OnUnitActiveSec=24h
+
+# Spread fleet load: each proxy fires within a 1h window around its
+# scheduled time. Without this, a fleet that booted together would all hit
+# the manifest URL within seconds of each other.
+RandomizedDelaySec=1h
+
+# If the system was off when the timer would have fired, run as soon as
+# it's back up rather than waiting for the next 24h tick.
+Persistent=true
+
+Unit=tachyonikproxy-update.service
+
+[Install]
+WantedBy=timers.target
