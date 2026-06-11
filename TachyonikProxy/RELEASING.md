@@ -127,6 +127,15 @@ previous manifest (replay is refused).
 
 ## 3. Build and package
 
+For a full build host, **`make release`** does steps 3 and 4 in one go — all
+packages plus `dist/manifest.json` (still unsigned; sign offline in §5):
+
+```bash
+make release                 # = package-all + manifest (uses the resolved VERSION + BASE_URL)
+```
+
+Or run the pieces individually:
+
 ```bash
 cd TachyonikProxy
 
@@ -162,40 +171,94 @@ dist/tachyonikproxy-1.4.0-*.deb / *.rpm / *.pkg / *.msi
 
 ---
 
-## 4. Compute SHA-256 and assemble the manifest
+## 4. Generate the manifest
+
+Easiest is the make target, which builds the archives (if needed) and writes
+`dist/manifest.json` in one step, reusing the resolved `VERSION` and the
+release-version guard:
 
 ```bash
-cd dist
-for f in tachyonikproxy-1.4.0-{linux,darwin}-{amd64,arm64}.tar.gz; do
-  printf '%s  %s\n' "$(sha256sum "$f" | awk '{print $1}')" "$f"
-  # macOS: shasum -a 256
-done
+make manifest                              # base URL defaults to the canonical download path
+make manifest BASE_URL=https://staging/…   # override for staging
 ```
 
-Create `manifest.json` (see the full example in §8). Only include
-`<goos>/<goarch>` entries you actually ship for self-update — i.e. the four
-Linux/macOS targets; **omit `windows/amd64`** (Windows uses the MSI).
+It wraps `scripts/make-manifest.sh`, which you can also run directly in the
+**build area** (where `dist/*.tar.gz` live), with `--base-url` set to where the
+artifacts will be hosted:
+
+```bash
+scripts/make-manifest.sh -v 1.0.0 -u https://tachyonik.com/download/proxy/
+# → dist/manifest.json   (channel defaults to "stable"; publishedAt = now UTC)
+```
+
+It computes the SHA-256 of each `tachyonikproxy-1.0.0-<os>-<arch>.tar.gz`,
+builds the `artifacts` map (the four Linux/macOS targets — Windows is
+intentionally excluded; it upgrades via `.msi`), and validates the JSON. A
+missing artifact, a non-`https://` base URL, or a non-numeric version is a hard
+error. See §8 for the resulting shape. Useful flags: `-c/--channel` (e.g. a
+pinned channel, §10), `-o/--out`, `--published-at`.
+
+> Hash the **exact bytes you will upload** — generate the manifest from the same
+> `dist/` files you publish, and don't let anything re-compress them in between.
 
 ---
 
-## 5. Sign the manifest
+## 5. Sign the manifest (offline)
 
-The signature is the **raw 64-byte Ed25519 signature over `manifest.json`'s exact
-bytes** — no JSON wrapping, no canonicalisation. Sign the bytes the CDN will
-serve, then never re-serialise them.
+Run `scripts/sign-manifest.sh` on the **offline host that holds the private
+key**, verifying against the embedded public key as you go:
+
+```bash
+scripts/sign-manifest.sh -k <offline-priv.pem> \
+    -p internal/selfupdate/pubkeys/tachyonik-prod-2026.pem dist/manifest.json
+# → dist/manifest.json.sig   (asserts 64 bytes; verifies before exit)
+```
+
+Under the hood it produces the **raw 64-byte Ed25519 signature over
+`manifest.json`'s exact bytes** (no JSON wrapping, no canonicalisation) — the
+equivalent of:
 
 ```bash
 # OpenSSL 3.x (the -rawin flag is required for Ed25519):
-openssl pkeyutl -sign  -inkey tachyonik_priv.pem -rawin -in manifest.json -out manifest.json.sig
-
-# Sanity-check BEFORE publishing:
-test "$(wc -c < manifest.json.sig)" -eq 64 && echo "sig length OK (64 bytes)"
-openssl pkeyutl -verify -pubin -inkey tachyonik_prod.pem -rawin \
-        -in manifest.json -sigfile manifest.json.sig && echo "signature verifies"
+openssl pkeyutl -sign  -inkey <offline-priv.pem> -rawin -in manifest.json -out manifest.json.sig
+openssl pkeyutl -verify -pubin -inkey internal/selfupdate/pubkeys/tachyonik-prod-2026.pem -rawin \
+        -in manifest.json -sigfile manifest.json.sig
 ```
 
 If a byte of `manifest.json` changes after signing, re-sign — the proxy verifies
-the signature before it even parses the JSON.
+the signature before it even parses the JSON. (The signing host need not be the
+build host; copy `manifest.json` to the offline signer, then bring the `.sig`
+back to publish.)
+
+### Manually verify the signature matches the manifest
+
+This is the same Ed25519 check the proxy performs, so anyone can confirm a
+`manifest.json` / `manifest.json.sig` pair with just the **public** key — no
+private key, no proxy needed. Use it to sanity-check before publishing, and
+again **after upload** (fetch the two files back from the download server) to
+prove the published bytes verify and weren't corrupted or altered in transit:
+
+```bash
+# Optional: verify the served copies, exactly as a proxy would fetch them.
+curl -fsSO https://tachyonik.com/download/proxy/manifest.json
+curl -fsSO https://tachyonik.com/download/proxy/manifest.json.sig
+
+# The signature must be exactly 64 bytes …
+test "$(wc -c < manifest.json.sig)" -eq 64 && echo "length OK"
+
+# … and verify against the embedded public key (OpenSSL 3.x):
+openssl pkeyutl -verify -pubin \
+    -inkey internal/selfupdate/pubkeys/tachyonik-prod-2026.pem -rawin \
+    -in manifest.json -sigfile manifest.json.sig
+```
+
+- **Match:** prints `Signature Verified Successfully` and exits `0`.
+- **Mismatch / tampered / wrong key:** prints `Signature Verification Failure`
+  and exits non-zero.
+
+The verifying key must be one the fleet actually has embedded — verify with the
+same PEM(s) under `internal/selfupdate/pubkeys/` that shipped in the deployed
+binaries, not a key you only just generated.
 
 ---
 
@@ -224,6 +287,24 @@ https://tachyonik.com/download/proxy/
   on its timer, verifies + downloads, and installs under `/opt/tachyonik/proxy/<version>/`
   with an atomic `current` symlink swap. The on-host version directories are
   managed automatically (pruned per `auto_update.keep_versions`).
+
+### Update the `latest` download links
+
+The download space also serves `…latest…` convenience symlinks (used by
+`install-tachyonikproxy.sh` and manual downloads) — these are **separate** from
+the self-update manifest. After uploading a release's artifacts, run
+`scripts/update-latest-symlinks.sh` **on the server, in the download directory**
+to repoint them:
+
+```bash
+cd /var/www/tachyonik.com/download/proxy
+update-latest-symlinks.sh            # → highest version present
+update-latest-symlinks.sh 1.0.0      # → a specific version
+update-latest-symlinks.sh --dry-run  # preview, no changes
+```
+
+It maintains the `latest` link for every package family (`.tar.gz`, `.zip`,
+`.msi`, `.rpm`, `.deb`); a format you didn't ship this release is skipped.
 
 A proxy applies the update on its next timer fire when **all** hold: signature
 verifies, `channel` matches, `latestVersion` > installed, `publishedAt` is newer,
@@ -331,11 +412,9 @@ installed version (downgrades are refused).
 - [ ] `govulncheck ./...` clean; built with a patched Go toolchain.
 - [ ] Production public PEM embedded in `internal/selfupdate/pubkeys/`; placeholder removed.
 - [ ] Tagged `tachyonikproxy/X.Y.Z` (namespaced, numeric, no `v`); build is on the exact tag commit, clean tree.
-- [ ] `make build-all && make package-archives` (+ native installers as needed).
-- [ ] SHA-256 computed for each `.tar.gz`.
-- [ ] `manifest.json` assembled (schemaVersion 1, channel, latestVersion > deployed,
-      publishedAt newer, 4 Linux/macOS artifacts).
-- [ ] `manifest.json.sig` produced **offline**; length is 64 bytes; verifies against the embedded key.
+- [ ] `make build-all && make package-archives VERSION=X.Y.Z` (+ native installers as needed).
+- [ ] `scripts/make-manifest.sh -v X.Y.Z -u <base-url>` → `dist/manifest.json` (hashes the four archives; confirm `latestVersion` > deployed).
+- [ ] `scripts/sign-manifest.sh` run **offline** → `manifest.json.sig` (64 bytes; verifies against the embedded key).
 - [ ] Manifest, `.sig`, and `.tar.gz` artifacts uploaded to `manifest_url`'s directory.
 - [ ] Windows `.msi` built with the permanent `UpgradeCode` and an increased `ProductVersion`; uploaded.
 - [ ] Smoke test: on a staging proxy, `tachyonikproxy self-update --dry-run` reports the new version and verifies; then a real run applies, restarts, and passes the health probe.

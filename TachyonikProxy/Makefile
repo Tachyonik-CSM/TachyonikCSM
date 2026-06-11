@@ -27,9 +27,14 @@ export PATH := $(PATH):$(shell go env GOPATH)/bin
 # Build targets: os/arch pairs
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
+# Base URL where release artifacts are hosted — used to build the auto-update
+# manifest's artifact URLs (the `manifest` target). Defaults to the canonical
+# download path; override for staging: `make manifest BASE_URL=https://staging/…`.
+BASE_URL ?= https://tachyonik.com/download/proxy/
+
 .PHONY: build build-all clean test _require-release-version \
         package-deb package-rpm package-macos package-windows \
-        package-archives package-all
+        package-archives package-all manifest release
 
 # ─── Single-platform build (native) ────────────────────────────────
 
@@ -181,6 +186,24 @@ package-all: package-deb package-rpm package-macos package-windows package-archi
 	@echo ""
 	@echo "All packages built in $(DIST)/:"
 	@ls -1 $(DIST)/*.deb $(DIST)/*.rpm $(DIST)/*.pkg $(DIST)/*.msi $(DIST)/*.tar.gz $(DIST)/*.zip 2>/dev/null || true
+
+# ─── Auto-update manifest ───────────────────────────────────────────
+# Hash the four self-update archives and write dist/manifest.json. Depends on
+# package-archives (so the tarballs exist and the release-version guard has
+# run). Signing stays a separate, OFFLINE step — see scripts/sign-manifest.sh
+# and RELEASING.md.
+
+manifest: package-archives
+	scripts/make-manifest.sh -v $(VERSION) -u $(BASE_URL) -d $(DIST)
+
+# ─── Full release build (packages + manifest, unsigned) ─────────────
+# One command for everything publishable from the build host. The manifest
+# still needs to be signed offline and uploaded with the artifacts.
+
+release: package-all manifest
+	@echo ""
+	@echo "Release $(VERSION) staged in $(DIST)/ (packages + manifest.json)."
+	@echo "Next: sign dist/manifest.json offline (scripts/sign-manifest.sh), then upload."
 
 # ─── Clean ──────────────────────────────────────────────────────────
 
