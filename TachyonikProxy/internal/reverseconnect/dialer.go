@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
-	"tachyonik/tachyonikproxy/internal/logger"
 	"tachyonik/tachyonikproxy/internal/mcpserver"
 )
 

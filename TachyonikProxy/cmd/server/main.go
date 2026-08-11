@@ -18,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
 	"tachyonik/tachyonikproxy/internal/enroll"
-	"tachyonik/tachyonikproxy/internal/logger"
 	"tachyonik/tachyonikproxy/internal/mcpserver"
 	"tachyonik/tachyonikproxy/internal/reverseconnect"
 	"tachyonik/tachyonikproxy/internal/selfupdate"

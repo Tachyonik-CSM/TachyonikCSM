@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"sync"
 
+	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
-	"tachyonik/tachyonikproxy/internal/logger"
 )
 
 // MCPTool represents a tool in MCP protocol format.

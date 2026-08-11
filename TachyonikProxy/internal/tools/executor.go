@@ -18,9 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
 	"tachyonik/tachyonikproxy/internal/execenv"
-	"tachyonik/tachyonikproxy/internal/logger"
 )
 
 const (

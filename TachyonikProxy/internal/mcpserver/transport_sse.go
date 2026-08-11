@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"sync"
 
-	"tachyonik/tachyonikproxy/internal/logger"
+	"tachyonik/lib/logger"
 )
 
 // SSETransport implements the MCP SSE+HTTP transport.

@@ -11,7 +11,10 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/sys v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
+	tachyonik/lib v1.0.0
 )
+
+replace tachyonik/lib => ../TachyonikLib
 
 require (
 	github.com/dlclark/regexp2 v1.11.4 // indirect

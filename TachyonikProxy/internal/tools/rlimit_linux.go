@@ -14,8 +14,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
-	"tachyonik/tachyonikproxy/internal/logger"
 )
 
 // applyResourceLimits enforces tool.MaxCPUSeconds / MaxMemoryMB by calling

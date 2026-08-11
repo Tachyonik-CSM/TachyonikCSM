@@ -10,8 +10,8 @@ import (
 	"os/exec"
 	"sync"
 
+	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
-	"tachyonik/tachyonikproxy/internal/logger"
 )
 
 var rlimitWarnedOnce sync.Once

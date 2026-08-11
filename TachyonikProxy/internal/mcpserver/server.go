@@ -11,8 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
-	"tachyonik/tachyonikproxy/internal/logger"
 	"tachyonik/tachyonikproxy/internal/tools"
 	"tachyonik/tachyonikproxy/internal/toolscan"
 )
