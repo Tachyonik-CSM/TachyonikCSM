@@ -1,0 +1,66 @@
+# SourceAnalyser Configuration File Example
+# Copy this file to config.yaml and adjust the values as needed.
+#
+# Configuration priority (highest wins):
+#   environment variables > config.yaml > built-in defaults
+#
+# The config file location can be overridden with SOURCEANALYSER_CONFIG
+# (default: ./config.yaml).
+
+# Sources are retrieved from ResourceManager, which is the only purpose. No data is sent.
+resourcemanager:
+  url: http://localhost:8080  # ResourceManager API URL (default: http://localhost:8080)
+                              # Env: RESOURCEMANAGER_URL (legacy: RESOURCEMANAGER_API_BASE_URL)
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ResourceManager's internal_service_key
+                                                            # Env: RESOURCEMANAGER_INTERNAL_SERVICE_KEY
+
+# Log/heartbeat information is sent to SystemManager, which is the only purpose. No data is retrieved.
+systemmanager:
+  url: http://localhost:8083  # SystemManager API URL (default: http://localhost:8083)
+                              # Env: SYSTEMMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match SystemManager's internal_service_key
+                                                            # Env: SYSTEMMANAGER_INTERNAL_SERVICE_KEY
+                                                            # If empty, falls back to resourcemanager.internal_service_key
+
+# AI configuration (model, name, system prompt) is retrieved from AIManager at runtime,
+# which is the only purpose. No data is sent.
+ai_manager:
+  url: http://localhost:8085  # AIManager API URL (default: http://localhost:8085)
+                              # Env: SOURCEANALYSER_AI_MANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AIManager's internal_service_key
+                                                            # Env: AIMANAGER_INTERNAL_SERVICE_KEY
+
+analyzer:
+  poll_interval: 5  # Seconds between polls for new sources to analyze (default: 5)
+                    # Env: SOURCEANALYSER_POLL_INTERVAL
+  js_exec_timeout_seconds: 5  # Max seconds a single AI/feed-sourced JS analysis routine
+                              # may run (load or analyze) before it is interrupted, guarding
+                              # against infinite loops / catastrophic regex. <= 0 disables.
+                              # (default: 5) — Env: SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS
+  max_content_bytes: 65536  # Bytes downloaded and matched for a non-PDF source (also the
+                            # initial type-sniff read for any source). (default: 65536)
+                            # Env: SOURCEANALYSER_MAX_CONTENT_BYTES
+  max_pdf_bytes: 33554432  # Max bytes of a PDF fetched for text extraction, bounding memory
+                           # on very large PDFs. (default: 33554432 = 32 MiB)
+                           # Env: SOURCEANALYSER_MAX_PDF_BYTES
+
+# Heartbeat controls the liveness signal sent to SystemManager. SystemManager applies
+# its own grace period on top before declaring the service offline.
+heartbeat:
+  interval_seconds: 10  # Seconds between heartbeats (default: 10)
+                        # Env: SOURCEANALYSER_HEARTBEAT_INTERVAL_SECONDS
+
+# NOTE: to_console and to_file must be stated explicitly whenever this file
+# exists. Unlike every other setting, they are applied unconditionally rather
+# than only when non-empty — YAML cannot distinguish an absent boolean from
+# "false" — so omitting them yields false and silently disables that log sink,
+# rather than falling back to the built-in default of true. Keep both keys.
+log:
+  file_path: /home/tachyon/log/tachyonik-sourceanalyser.log  # Log file path (default: ./sourceanalyser.log)
+                                                             # Env: SOURCEANALYSER_LOG_FILE
+  to_console: false  # Write logs to stdout/stderr (built-in default: true; see NOTE above)
+                     # Env: SOURCEANALYSER_LOG_TO_CONSOLE (true/1 to enable)
+  to_file: true      # Write logs to file_path (built-in default: true; see NOTE above)
+                     # Env: SOURCEANALYSER_LOG_TO_FILE (true/1 to enable)
+  level: INFO        # Log verbosity: DEBUG, INFO, WARN, ERROR (default: INFO)
+                     # Env: SOURCEANALYSER_LOG_LEVEL

@@ -1,0 +1,6 @@
+sourceanalyser
+*.log
+/cmd/**/sourceanalyser
+config.yaml
+.env
+.env.*
