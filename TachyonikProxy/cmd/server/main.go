@@ -22,6 +22,7 @@ import (
 	"tachyonik/tachyonikproxy/internal/config"
 	"tachyonik/tachyonikproxy/internal/enroll"
 	"tachyonik/tachyonikproxy/internal/mcpserver"
+	"tachyonik/tachyonikproxy/internal/netscan"
 	"tachyonik/tachyonikproxy/internal/reverseconnect"
 	"tachyonik/tachyonikproxy/internal/selfupdate"
 	"tachyonik/tachyonikproxy/internal/tlsutil"
@@ -97,8 +98,15 @@ func runServer() {
 	registry := tools.NewRegistry(cfg.Tools, cfg.MCPServers)
 	logger.Infof("Loaded %d local tool(s)", len(cfg.Tools))
 
+	// Start the local-network sweep before the MCP server, so a scan request
+	// arriving early finds a scanner that at least reports itself not-ready
+	// rather than absent. Its goroutine is independent of request handling:
+	// sweeps never block the MCP server, and routines only ever read the
+	// cached snapshot.
+	netScanner := startNetScan(cfg)
+
 	// Initialize MCP server
-	mcpSrv := mcpserver.NewServer(cfg, registry, version)
+	mcpSrv := mcpserver.NewServer(cfg, registry, version, netScanner)
 
 	// Tools execute as this process's user. Running the proxy as root means
 	// every tool (and every scan routine's exec()) runs as root too, turning
@@ -481,6 +489,40 @@ func runResetEnrollment() {
 	fmt.Println("Enrollment cleared. Re-enroll with one of:")
 	fmt.Println("  tachyonikproxy enroll <enrollment-url>")
 	fmt.Println("  tachyonikproxy enroll --listen")
+}
+
+// startNetScan builds the local-network scanner from config and starts its
+// sweep loop. Returns nil when disabled or when the configured range is not one
+// the proxy may sweep — in both cases the netscan JS API stays available but
+// reports itself not ready, so detection routines degrade to "not detected"
+// instead of failing.
+//
+// The return type is the interface, not *netscan.Scanner, deliberately: a nil
+// *Scanner assigned into an interface makes that interface non-nil, so the
+// disabled path would slip past the consumer's nil check and dereference.
+func startNetScan(cfg *config.Config) toolscan.NetScanProvider {
+	if !cfg.NetScan.Enabled {
+		logger.Info("netscan: disabled by configuration")
+		return nil
+	}
+
+	scanner, err := netscan.New(netscan.Config{
+		Enabled:                cfg.NetScan.Enabled,
+		IntervalMinutes:        cfg.NetScan.IntervalMinutes,
+		Network:                cfg.NetScan.Network,
+		Ports:                  cfg.NetScan.Ports,
+		Concurrency:            cfg.NetScan.Concurrency,
+		TimeoutSeconds:         cfg.NetScan.TimeoutSeconds,
+		MaxBodyBytes:           cfg.NetScan.MaxBodyBytes,
+		MaxScanDurationMinutes: cfg.NetScan.MaxScanDurationMinutes,
+	})
+	if err != nil {
+		logger.Warnf("netscan: disabled — %v", err)
+		return nil
+	}
+
+	go scanner.Run(context.Background())
+	return scanner
 }
 
 func runScan() {

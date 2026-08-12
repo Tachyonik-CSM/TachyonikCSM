@@ -27,6 +27,7 @@ TachyonikProxy is a standalone, cross-platform MCP (Model Context Protocol) serv
 - [Operation](#operation)
 - [Subcommands](#subcommands)
 - [Tool Detection](#tool-detection)
+- [Local Network Scan](#local-network-scan)
 - [Tool Execution](#tool-execution)
 - [Communication and Data Workflows](#communication-and-data-workflows)
 - [MCP Protocol](#mcp-protocol)
@@ -270,9 +271,11 @@ Tool detection is **driven from ToolManager**, not from a hard-coded list inside
 
 1. **ToolManager** sends a `tools/scan` JSON-RPC request to the proxy with a list of `RoutineInput { name, code, version, sha256 }` entries.
 2. **Integrity check**: for each routine the proxy computes `SHA-256(code)` and rejects any routine whose SHA does not match the declared digest. This prevents tampering on the wire and makes routine versions verifiable.
-3. **Sandboxed execution**: each routine runs in a fresh `goja` VM with two host helpers exposed:
+3. **Sandboxed execution**: each routine runs in a fresh `goja` VM with these host helpers exposed:
    - `which(name)` — wraps `exec.LookPath`; returns the absolute path of `name` on `$PATH`, or `""`.
    - `exec(cmd, args)` — runs a command and returns `{ output, exitCode }` (combined stdout/stderr; `exitCode = -1` if the command was not found).
+   - `httpGet(url, options)` — a single bounded HTTPS/HTTP GET returning `{ status, body, error }`. Options: `headers`, `timeout` (ms, capped at 30 s), `skipTLS`. Redirects are not followed.
+   - `netscan` — a read-only view of the periodic local-network sweep. See [Local Network Scan](#local-network-scan).
 4. The routine declares a global `rules` array; each rule has `name`, `description`, and a `detect()` function. The proxy iterates `rules`, calls `detect()`, and collects:
    - `null` / `undefined` → not detected.
    - object `{ version, path, description, host? }` → one detection. If `host` is omitted the proxy fills it with its own primary IPv4 address.
@@ -288,6 +291,125 @@ tachyonikproxy scan --json   # machine-readable, suitable for piping
 ```
 
 The CLI form is mainly a debugging aid: with no routines supplied, it shows what the proxy would return if ToolManager pushed an empty routine set — i.e. an empty list. The intended source of truth for detection is the routine library managed by ToolManager.
+
+## Local Network Scan
+
+Some tools are recognised not by a binary on this host but by a web interface on
+a neighbouring one. Probing for those from inside a detection routine does not
+work: a `/24` is 254 addresses, each `exec("curl", …)` is synchronous, and a
+routine has a 30-second budget. The sweep would also be repeated by every rule
+that needed it.
+
+So the proxy does the probing itself, on a schedule, and routines match against
+the collected responses.
+
+### What it does
+
+Once at startup and then every `interval_minutes`, the proxy issues an HTTPS
+`GET /` to every address in its local network on each configured port,
+concurrently, and caches what came back. Certificate validation is deliberately
+not required — appliances routinely ship self-signed or expired certificates,
+and the goal is to find them. Whether the certificate *would* have validated is
+recorded per host as `tlsTrusted`.
+
+The sweep runs in its own goroutine. It never blocks the MCP server, and
+routines only ever read the last completed snapshot.
+
+### The range is always private
+
+The network is derived from this host's primary IPv4 as a `/24`, or set
+explicitly with `netscan.network`. Either way it must fall inside `10/8`,
+`172.16/12`, `192.168/16` or `127/8`, and be no wider than `/22`. A proxy
+holding a public address logs that netscan is disabled and carries on — it will
+not sweep its neighbours.
+
+This is why a detection rule does **not** need to check that it is on a private
+network before scanning: the platform guarantees it.
+
+### The `netscan` JS API
+
+```js
+netscan.info()                     // { network, ready, scanning, lastScan, durationMs, hostCount }
+netscan.hosts()                    // every address that responded
+netscan.find(substring)            // hosts whose body contains substring
+netscan.findMatching(regexString)  // hosts whose body matches the pattern
+netscan.get(ip[, port])            // one host record, or null
+```
+
+Each host record:
+
+```js
+{ ip: "192.168.178.42", port: 443, url: "https://192.168.178.42:443/",
+  status: 200, body: "…", headers: { "server": "gsad" },
+  tlsTrusted: false, certSubject: "CN=openvas", error: "" }
+```
+
+**Always check `netscan.info().ready` first.** It is `false` until the first
+sweep completes, and an empty host list then means "not looked yet", not "not
+present" — a routine that skips this check reports every network tool absent
+for the first minute after the proxy starts.
+
+### Example
+
+Detecting an OpenVAS/Greenbone web interface anywhere on the local network:
+
+```js
+var rules = [{
+  name: "OPENVAS SCAN",
+  description: "OpenVAS/Greenbone web interface on the local network",
+  detect: function () {
+    if (!netscan.info().ready) return null;
+
+    var hits = netscan.find("<title>OPENVAS SCAN</title>");
+    if (hits.length === 0) return null;
+
+    var out = [];
+    for (var i = 0; i < hits.length; i++) {
+      out.push({
+        name: "OPENVAS SCAN",
+        host: hits[i].ip,
+        version: "unknown",
+        description: "Detected via HTTPS at " + hits[i].url
+      });
+    }
+    return out;
+  }
+}];
+```
+
+Returning an array produces one `ToolResult` per discovered host, each keeping
+the address it was found at.
+
+### Configuration
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Sweep at startup and on each interval |
+| `interval_minutes` | `60` | Time between sweeps |
+| `network` | `""` | Explicit CIDR; empty derives the `/24` from the primary IPv4 |
+| `ports` | `[443]` | Ports probed per address; each one multiplies the sweep |
+| `concurrency` | `32` | Simultaneous probes — the main tuning knob |
+| `timeout_seconds` | `3` | Per-probe timeout |
+| `max_body_bytes` | `65536` | Response bytes cached per host |
+| `max_scan_duration_minutes` | `10` | Hard stop for one sweep |
+
+`concurrency` and `timeout_seconds` set the wall-clock cost: a `/24` where
+nothing answers takes roughly `254 / concurrency × timeout_seconds` — about 24
+seconds at the defaults. Raising concurrency shortens that but uses more file
+descriptors and makes the sweep more conspicuous to network monitoring; 8 is a
+reasonable conservative value.
+
+### Operational notes
+
+- **This is active scanning.** Every address in the range is connected to on
+  each cycle. On a monitored network that can raise IDS alerts — set
+  `enabled: false` if that is unwanted.
+- **Cached bodies live in memory only.** They are bounded, replaced on each
+  sweep, never written to disk, and never sent to ToolManager wholesale; only
+  what a routine returns leaves the proxy.
+- Routines supplied by ToolManager can read those cached bodies. That is the
+  point of the feature, but it does mean a routine sees page content from hosts
+  on the local network.
 
 ## Tool Execution
 

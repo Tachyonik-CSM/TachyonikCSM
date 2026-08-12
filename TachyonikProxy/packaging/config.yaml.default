@@ -27,3 +27,24 @@ tools: []
 mcp_servers: []
 
 allow_remote_config: false
+
+# Periodic HTTPS sweep of the proxy's own local network. Tool-detection
+# routines match against the collected responses through the `netscan` JS API
+# instead of probing each address themselves.
+#
+# The range is always private: it is derived from this host's primary IPv4 and
+# refused if that address is not in 10/8, 172.16/12, 192.168/16 or 127/8. A
+# proxy on a public address will log that netscan is disabled and carry on.
+#
+# NOTE: this performs active connections to every address in the range. On a
+# monitored network that may raise IDS alerts — set enabled: false if that is
+# not wanted.
+netscan:
+  enabled: true
+  interval_minutes: 60        # also sweeps once immediately at startup
+  network: ""                 # empty = derive the /24 from the primary IPv4
+  ports: [443]                # each extra port multiplies the sweep by the host count
+  concurrency: 32             # main tuning knob: 254 hosts / 32 x 3s ~= 24s worst case
+  timeout_seconds: 3          # LAN services answer in well under this
+  max_body_bytes: 65536       # per host; bounds memory at ~16 MiB for a /24
+  max_scan_duration_minutes: 10  # hard stop so a sweep cannot run into the next tick

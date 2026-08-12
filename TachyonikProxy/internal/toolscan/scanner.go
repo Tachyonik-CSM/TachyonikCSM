@@ -18,6 +18,7 @@ import (
 	"github.com/dop251/goja"
 
 	"tachyonik/tachyonikproxy/internal/execenv"
+	"tachyonik/tachyonikproxy/internal/netscan"
 )
 
 // Defaults that bound the resource usage of a single scan routine.
@@ -74,14 +75,29 @@ type RoutineInput struct {
 	ToolOverviewID *int64 `json:"toolOverviewId,omitempty"`
 }
 
-// Scanner executes tool-detection JS routines received from ToolManager
-type Scanner struct {
-	mu sync.Mutex
+// NetScanProvider supplies the latest local-network sweep to routines. It is
+// satisfied by *netscan.Scanner; nil means no sweep is configured, in which
+// case the netscan JS API reports itself as not ready and routines relying on
+// it return "not detected" rather than failing.
+type NetScanProvider interface {
+	Snapshot() netscan.Snapshot
 }
 
-// New creates a new Scanner
+// Scanner executes tool-detection JS routines received from ToolManager
+type Scanner struct {
+	mu      sync.Mutex
+	netScan NetScanProvider
+}
+
+// New creates a new Scanner with no local-network data.
 func New() *Scanner {
 	return &Scanner{}
+}
+
+// NewWithNetScan creates a Scanner whose routines can query the local-network
+// sweep through the netscan JS global.
+func NewWithNetScan(p NetScanProvider) *Scanner {
+	return &Scanner{netScan: p}
 }
 
 // Scan runs the provided routines and returns results
@@ -193,6 +209,11 @@ func (s *Scanner) executeRuleCode(code string) []ToolResult {
 			"exitCode": exitCode,
 		})
 	})
+
+	// Register the local-network sweep view and the HTTP helper. Both are
+	// pure lookups or bounded single requests — see jsbridge.go.
+	s.registerNetScan(vm)
+	registerHTTPGet(vm)
 
 	// Register which() helper — returns the path of a command or ""
 	vm.Set("which", func(call goja.FunctionCall) goja.Value {

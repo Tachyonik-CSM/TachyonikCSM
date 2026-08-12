@@ -125,6 +125,7 @@ type Server struct {
 	config      *config.Config
 	registry    *tools.Registry
 	version     string
+	netScan     toolscan.NetScanProvider
 	initialized atomic.Bool
 	mu          sync.RWMutex
 }
@@ -135,7 +136,14 @@ type Server struct {
 // initialize.serverInfo.version so ToolManager — and therefore the
 // ResourceManager `proxies.version` column — sees what's actually
 // running, not a hard-coded placeholder.
-func NewServer(cfg *config.Config, registry *tools.Registry, version string) *Server {
+// NewServer builds the MCP server. netScan supplies the local-network sweep to
+// tool-detection routines and may be nil (sweep disabled or unavailable), in
+// which case the netscan JS API reports itself not ready.
+//
+// A typed nil would defeat the nil check inside the scanner, so an untyped nil
+// interface is preserved rather than stored as a non-nil interface holding a
+// nil pointer.
+func NewServer(cfg *config.Config, registry *tools.Registry, version string, netScan toolscan.NetScanProvider) *Server {
 	if version == "" {
 		version = "dev"
 	}
@@ -143,6 +151,7 @@ func NewServer(cfg *config.Config, registry *tools.Registry, version string) *Se
 		config:   cfg,
 		registry: registry,
 		version:  version,
+		netScan:  netScan,
 	}
 }
 
@@ -246,7 +255,7 @@ func (s *Server) handleToolsScan(req Request) *Response {
 		}
 	}
 
-	scanner := toolscan.New()
+	scanner := toolscan.NewWithNetScan(s.netScan)
 	results := scanner.Scan(params.Routines)
 
 	detectedCount := 0

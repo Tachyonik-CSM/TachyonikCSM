@@ -30,6 +30,7 @@ type Config struct {
 	ConnectionMode    string               `yaml:"connection_mode"` // "outbound" (default) or "inbound"
 	ReverseConnect    ReverseConnectConfig `yaml:"reverse_connect"`
 	AutoUpdate        AutoUpdateConfig     `yaml:"auto_update"`
+	NetScan           NetScanConfig        `yaml:"netscan"`
 
 	// baseDir is the absolute directory of the config file this Config was
 	// loaded from (or will be written to). Relative paths inside the config
@@ -56,6 +57,31 @@ func (c *Config) AbsPath(p string) string {
 // (empty if no config location is known).
 func (c *Config) BaseDir() string {
 	return c.baseDir
+}
+
+// NetScanConfig controls the periodic HTTPS sweep of the proxy's own local
+// network, whose results tool-detection routines match against instead of
+// probing hosts themselves.
+//
+// Concurrency and TimeoutSeconds are the two knobs that matter: a /24 is 254
+// probes, so at the defaults a sweep where nothing answers costs roughly
+// 254/32 × 3s ≈ 24 seconds. Raising Concurrency shortens that but risks
+// exhausting file descriptors on a small appliance and tripping rate limits on
+// a monitored network; lowering it is the conservative choice. The remaining
+// fields are safety rails rather than tuning.
+//
+// Network is normally left empty, deriving the /24 around the proxy's primary
+// IPv4. Either way the range must be private (or loopback) — see
+// internal/netscan.
+type NetScanConfig struct {
+	Enabled                bool   `yaml:"enabled"`
+	IntervalMinutes        int    `yaml:"interval_minutes"`
+	Network                string `yaml:"network"`
+	Ports                  []int  `yaml:"ports"`
+	Concurrency            int    `yaml:"concurrency"`
+	TimeoutSeconds         int    `yaml:"timeout_seconds"`
+	MaxBodyBytes           int    `yaml:"max_body_bytes"`
+	MaxScanDurationMinutes int    `yaml:"max_scan_duration_minutes"`
 }
 
 // AutoUpdateConfig controls the proxy's self-update behaviour.
@@ -201,6 +227,16 @@ func LoadFrom(configPath string) *Config {
 			HealthWindowSeconds: 30,
 			ManifestURL:         "https://tachyonik.com/download/proxy/manifest.json",
 			KeepVersions:        3,
+		},
+		NetScan: NetScanConfig{
+			Enabled:                true,
+			IntervalMinutes:        60,
+			Network:                "", // derive the /24 from the primary IPv4
+			Ports:                  []int{443},
+			Concurrency:            32,
+			TimeoutSeconds:         3,
+			MaxBodyBytes:           64 << 10,
+			MaxScanDurationMinutes: 10,
 		},
 	}
 
