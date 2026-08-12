@@ -133,16 +133,25 @@ func hostToMap(h netscan.Host) map[string]interface{} {
 	for k, v := range h.Headers {
 		headers[k] = v
 	}
+	dnsNames := make([]interface{}, 0, len(h.CertDNSNames))
+	for _, n := range h.CertDNSNames {
+		dnsNames = append(dnsNames, n)
+	}
 	return map[string]interface{}{
-		"ip":          h.IP,
-		"port":        h.Port,
-		"url":         h.URL,
-		"status":      h.Status,
-		"body":        h.Body,
-		"headers":     headers,
-		"tlsTrusted":  h.TLSTrusted,
-		"certSubject": h.CertSubject,
-		"error":       h.Error,
+		"ip":           h.IP,
+		"port":         h.Port,
+		"url":          h.URL,
+		"finalUrl":     h.FinalURL,
+		"status":       h.Status,
+		"body":         h.Body,
+		"title":        h.Title(),
+		"headers":      headers,
+		"tlsTrusted":   h.TLSTrusted,
+		"certSubject":  h.CertSubject,
+		"certIssuer":   h.CertIssuer,
+		"certDnsNames": dnsNames,
+		"certNotAfter": h.CertNotAfter,
+		"error":        h.Error,
 	}
 }
 

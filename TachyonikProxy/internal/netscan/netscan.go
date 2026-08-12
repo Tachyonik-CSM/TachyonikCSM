@@ -27,6 +27,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -71,16 +72,27 @@ var DefaultPorts = []int{443}
 // certificate would have validated against the system roots — the probe itself
 // never requires it, since finding a service matters more than trusting it, but
 // a routine may want to know.
+//
+// FinalURL is where the probe ended up after following redirects; it differs
+// from URL when the service redirected. The certificate fields describe that
+// final connection, and are often the only usable identifier when the body is
+// not — an appliance behind an auth wall, or one whose root serves an empty
+// shell that fills itself in via JavaScript, still presents a certificate
+// naming the product.
 type Host struct {
-	IP          string            `json:"ip"`
-	Port        int               `json:"port"`
-	URL         string            `json:"url"`
-	Status      int               `json:"status"`
-	Body        string            `json:"body"`
-	Headers     map[string]string `json:"headers"`
-	TLSTrusted  bool              `json:"tlsTrusted"`
-	CertSubject string            `json:"certSubject"`
-	Error       string            `json:"error"`
+	IP           string            `json:"ip"`
+	Port         int               `json:"port"`
+	URL          string            `json:"url"`
+	FinalURL     string            `json:"finalUrl"`
+	Status       int               `json:"status"`
+	Body         string            `json:"body"`
+	Headers      map[string]string `json:"headers"`
+	TLSTrusted   bool              `json:"tlsTrusted"`
+	CertSubject  string            `json:"certSubject"`
+	CertIssuer   string            `json:"certIssuer"`
+	CertDNSNames []string          `json:"certDnsNames"`
+	CertNotAfter string            `json:"certNotAfter"`
+	Error        string            `json:"error"`
 }
 
 // Snapshot is an immutable view of the most recent completed sweep.
@@ -127,12 +139,8 @@ func New(cfg Config) (*Scanner, error) {
 		network: ipNet,
 		roots:   roots,
 		client: &http.Client{
-			Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
-			// A redirect would take the probe off the address we are
-			// cataloguing, so record the 3xx as the answer for this host.
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+			Timeout:       time.Duration(cfg.TimeoutSeconds) * time.Second,
+			CheckRedirect: checkRedirect,
 			Transport: &http.Transport{
 				// Deliberate: the point is to find services, including the
 				// self-signed and expired ones that a LAN appliance ships
@@ -413,6 +421,59 @@ func (s *Scanner) probeAll(ctx context.Context, targets []target) []Host {
 	return hosts
 }
 
+// maxRedirects bounds how far a probe will chase a redirect chain.
+const maxRedirects = 3
+
+// checkRedirect follows a redirect only when it stays on the address we
+// probed — any port, any path, and hostnames that resolve back to it.
+//
+// Not following at all meant an appliance that answers "/" with a 302 to its
+// login page was cached as an empty body, since a redirect response has no
+// content. Following anywhere would be worse: it would probe hosts the sweep
+// never selected, and attribute another machine's page to this record. Same
+// address keeps both the private-range guarantee and a coherent record, while
+// covering what appliances actually do — "/" to "/login", or 443 to a product
+// port such as 9392.
+//
+// A redirect that leaves the address is not followed; the 3xx and its Location
+// header are recorded instead, which is still a usable detection signal.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return http.ErrUseLastResponse
+	}
+	if len(via) == 0 {
+		return nil
+	}
+	if !resolvesToSameHost(req.URL.Hostname(), via[0].URL.Hostname()) {
+		return http.ErrUseLastResponse
+	}
+	return nil
+}
+
+// resolvesToSameHost reports whether target is, or resolves to, origin.
+// origin is always an IP literal here (the swept address). Lookups are bounded
+// so a slow resolver cannot stall a sweep.
+func resolvesToSameHost(target, origin string) bool {
+	if target == origin {
+		return true
+	}
+	if net.ParseIP(target) != nil {
+		return false // a different IP literal: not our address
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, target)
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if a == origin {
+			return true
+		}
+	}
+	return false
+}
+
 // probe performs one HTTPS GET. The bool reports whether anything answered:
 // a refused connection or timeout is the normal case for most of a subnet and
 // is not worth caching.
@@ -433,17 +494,28 @@ func (s *Scanner) probe(ctx context.Context, t target) (Host, bool) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(s.cfg.MaxBodyBytes)))
 
 	h := Host{
-		IP:      t.ip,
-		Port:    t.port,
-		URL:     url,
-		Status:  resp.StatusCode,
-		Body:    string(body),
-		Headers: flattenHeaders(resp.Header),
+		IP:       t.ip,
+		Port:     t.port,
+		URL:      url,
+		FinalURL: url,
+		Status:   resp.StatusCode,
+		Body:     string(body),
+		Headers:  flattenHeaders(resp.Header),
+	}
+	// resp.Request is the last request made, so this reflects any redirects
+	// that were followed.
+	if resp.Request != nil && resp.Request.URL != nil {
+		h.FinalURL = resp.Request.URL.String()
 	}
 
+	// The certificate belongs to the connection the response came from, which
+	// after a followed redirect is the final one.
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		leaf := resp.TLS.PeerCertificates[0]
 		h.CertSubject = leaf.Subject.String()
+		h.CertIssuer = leaf.Issuer.String()
+		h.CertDNSNames = leaf.DNSNames
+		h.CertNotAfter = leaf.NotAfter.UTC().Format(time.RFC3339)
 		h.TLSTrusted = s.verifyChain(leaf, resp.TLS.PeerCertificates[1:], t.ip)
 	}
 
@@ -466,6 +538,22 @@ func (s *Scanner) verifyChain(leaf *x509.Certificate, intermediates []*x509.Cert
 		Intermediates: inter,
 	})
 	return err == nil
+}
+
+// titleRe extracts the contents of a <title> element. Deliberately tolerant:
+// attributes on the tag, mixed case, and newlines inside the text all occur in
+// the wild, and this only feeds a diagnostic listing.
+var titleRe = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+// Title returns the response's <title> text with whitespace collapsed, or "".
+// Together with the Server header it is what usefully reads as a "banner" for
+// a host — the raw body rarely does.
+func (h Host) Title() string {
+	m := titleRe.FindStringSubmatch(h.Body)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.Join(strings.Fields(m[1]), " ")
 }
 
 func flattenHeaders(h http.Header) map[string]string {

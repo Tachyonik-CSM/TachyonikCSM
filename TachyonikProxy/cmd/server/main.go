@@ -6,16 +6,20 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"tachyonik/lib/logger"
@@ -54,6 +58,9 @@ func main() {
 			return
 		case "scan":
 			runScan()
+			return
+		case "netscan":
+			runNetScan()
 			return
 		case "self-update":
 			runSelfUpdate()
@@ -525,6 +532,101 @@ func startNetScan(cfg *config.Config) toolscan.NetScanProvider {
 	return scanner
 }
 
+// runNetScan performs a one-shot local-network sweep and prints what answered.
+//
+// It deliberately does not talk to a running daemon: the daemon's snapshot
+// lives in its own memory and is never written to disk, so there is nothing for
+// a second process to read. This sweeps afresh using the same configuration,
+// which also means it works with no daemon running at all — useful for checking
+// a network before deployment.
+//
+// netscan.enabled is ignored here. Disabling the periodic sweep is a statement
+// about background behaviour; running this command is an explicit request.
+func runNetScan() {
+	jsonOutput := false
+	for _, a := range os.Args[1:] {
+		if a == "--json" {
+			jsonOutput = true
+		}
+	}
+
+	cfg := config.Load()
+	scanner, err := netscan.New(netscan.Config{
+		IntervalMinutes:        cfg.NetScan.IntervalMinutes,
+		Network:                cfg.NetScan.Network,
+		Ports:                  cfg.NetScan.Ports,
+		Concurrency:            cfg.NetScan.Concurrency,
+		TimeoutSeconds:         cfg.NetScan.TimeoutSeconds,
+		MaxBodyBytes:           cfg.NetScan.MaxBodyBytes,
+		MaxScanDurationMinutes: cfg.NetScan.MaxScanDurationMinutes,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "netscan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Progress goes to stderr so stdout stays pipeable.
+	fmt.Fprintf(os.Stderr, "Sweeping %s on port(s) %v ...\n", scanner.Network(), cfg.NetScan.Ports)
+
+	scanner.ScanOnce(context.Background())
+	snap := scanner.Snapshot()
+
+	hosts := append([]netscan.Host(nil), snap.Hosts...)
+	sort.Slice(hosts, func(i, j int) bool {
+		a, b := net.ParseIP(hosts[i].IP).To4(), net.ParseIP(hosts[j].IP).To4()
+		if a != nil && b != nil {
+			ai, bi := binary.BigEndian.Uint32(a), binary.BigEndian.Uint32(b)
+			if ai != bi {
+				return ai < bi
+			}
+		}
+		return hosts[i].Port < hosts[j].Port
+	})
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{
+			"network":    snap.Network,
+			"lastScan":   snap.LastScan.Format(time.RFC3339),
+			"durationMs": snap.DurationMS,
+			"hosts":      hosts,
+		})
+		return
+	}
+
+	fmt.Printf("Network %s · %d responded · %s\n\n",
+		snap.Network, len(hosts), time.Duration(snap.DurationMS)*time.Millisecond)
+
+	if len(hosts) == 0 {
+		fmt.Println("Nothing answered. If a service is expected, check the port list and that it speaks HTTPS.")
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "HOST\tPORT\tSTATUS\tTLS\tSERVER\tTITLE")
+	for _, h := range hosts {
+		trust := "untrusted"
+		if h.TLSTrusted {
+			trust = "trusted"
+		}
+		fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\t%s\n",
+			h.IP, h.Port, h.Status, trust, truncate(h.Headers["server"], 24), truncate(h.Title(), 48))
+	}
+	w.Flush()
+}
+
+// truncate shortens s for column display, marking that it was cut.
+func truncate(s string, max int) string {
+	if s == "" {
+		return "-"
+	}
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
+}
+
 func runScan() {
 	// Parse flags
 	jsonOutput := false
@@ -603,6 +705,8 @@ func runHelp() {
 	fmt.Println("  enroll             Enroll this proxy (online: supply <url>; or --listen for reverse enrollment)")
 	fmt.Println("  reset-enrollment   Clear all enrollment material and reset TLS config")
 	fmt.Println("  scan               Scan for available tools on this host")
+	fmt.Println("  netscan            Sweep the local network over HTTPS and list what answered")
+	fmt.Println("                       --json                    full records including response bodies")
 	fmt.Println("  self-update        Check (and optionally apply) an auto-update")
 	fmt.Println("                       --dry-run                  check only, no changes")
 	fmt.Println("                       --status                   print the local update history")

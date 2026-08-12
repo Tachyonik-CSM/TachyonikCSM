@@ -253,6 +253,7 @@ The same binary handles operational subcommands. Flags may appear before or afte
 | `enroll --listen [--san <names>]` | Reverse enrollment — wait for Tachyonik to dial in and complete the handshake |
 | `reset-enrollment [--force]`    | Delete on-disk certs and clear `tls.*`, `reverse_connect.*`, `connection_mode`, `proxy.name` |
 | `scan [--json]`                 | Run the local tool-detection scanner and print results                  |
+| `netscan [--json]`              | Sweep the local network over HTTPS and list what answered               |
 | `self-update`                   | Check + apply an auto-update; rolls back automatically on health failure |
 | `self-update --dry-run`         | Check the auto-update manifest and report what an apply would do        |
 | `self-update --status`          | Print the local `update-state.json` summary                              |
@@ -282,6 +283,34 @@ Tool detection is **driven from ToolManager**, not from a hard-coded list inside
    - **array** of those objects → multiple detections from a single rule (e.g. an HTTP probe that finds the same tool on several endpoints). One `ToolResult` is emitted per array element.
    - thrown exception → reported as an error in the result.
 5. The proxy returns one `ToolResult` per detection — detected, not-detected, or errored — so ToolManager can show negative results and surface SHA-256 / JS-execution failures. Each detected result carries `host` and `toolOverviewId`: the latter is the catalogue identity copied from the originating AIManager `scan_rule.tool_overview_id` and is what ResourceManager stores as `tools.tool_id`. The `scan` CLI subcommand uses the same scanner with no input routines for offline diagnostics.
+
+### Inspecting the sweep from the command line
+
+```bash
+tachyonikproxy netscan          # banner table
+tachyonikproxy netscan --json   # full records, including response bodies
+```
+
+```
+Network 192.168.178.0/24 · 3 responded · 22.4s
+
+HOST            PORT   STATUS  TLS        SERVER  TITLE
+192.168.178.1   443    200     trusted    nginx   FRITZ!Box 7590
+192.168.178.42  443    200     untrusted  gsad    OPENVAS SCAN
+192.168.178.77  443    200     untrusted  gsad    OPENVAS SCAN
+```
+
+This performs its **own** one-shot sweep rather than reading a running daemon's
+snapshot — that snapshot lives in the daemon's memory and is deliberately never
+written to disk, so a second process has nothing to read. The practical
+consequences: the command works with no daemon running (useful for checking a
+network before deployment), it costs a full sweep (~24 s at the defaults), and
+`netscan.enabled: false` does not suppress it, since running the command is an
+explicit request rather than background behaviour.
+
+Progress goes to stderr and the table to stdout, so `netscan --json` pipes
+cleanly. A range the proxy may not sweep is reported on stderr with exit
+status 1.
 
 ### Local `scan` subcommand
 
@@ -339,10 +368,33 @@ netscan.get(ip[, port])            // one host record, or null
 Each host record:
 
 ```js
-{ ip: "192.168.178.42", port: 443, url: "https://192.168.178.42:443/",
-  status: 200, body: "…", headers: { "server": "gsad" },
-  tlsTrusted: false, certSubject: "CN=openvas", error: "" }
+{ ip: "192.168.178.42", port: 443,
+  url:      "https://192.168.178.42:443/",       // what was probed
+  finalUrl: "https://192.168.178.42:443/login",  // where it ended up
+  status: 200, body: "…", title: "OPENVAS SCAN",
+  headers: { "server": "gsad", "location": "…" },
+  tlsTrusted: false,
+  certSubject: "CN=gsad", certIssuer: "CN=Greenbone",
+  certDnsNames: ["openvas.local"], certNotAfter: "2027-04-01T00:00:00Z",
+  error: "" }
 ```
+
+`title` is the `<title>` text, extracted for you — it is the marker most web
+interfaces are identified by.
+
+**Redirects are followed, but only back to the same address.** An appliance that
+answers `/` with a `302` to `/login`, or redirects `443` to a product port such
+as `9392`, is followed and the real page is what gets stored; `finalUrl` shows
+where it landed. A redirect that leaves the probed address is *not* followed —
+that would reach a host the sweep never selected and attribute its page to this
+record — so the `3xx` and its `location` header are stored instead, which is
+still a usable signal. Chains are bounded at 3 hops.
+
+**When the body is useless, use the certificate.** A service behind an
+authentication wall, or one whose root serves an empty shell that fills itself
+in via JavaScript, still presents a certificate. `certSubject`, `certIssuer` and
+`certDnsNames` frequently name the product outright and are often the only thing
+worth matching on for such a host.
 
 **Always check `netscan.info().ready` first.** It is `false` until the first
 sweep completes, and an empty host list then means "not looked yet", not "not

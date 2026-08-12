@@ -232,3 +232,158 @@ func splitHostPort(t *testing.T, rawURL string) (string, int) {
 	}
 	return host, port
 }
+
+func TestHostTitle(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "plain", body: "<html><head><title>OPENVAS SCAN</title></head>", want: "OPENVAS SCAN"},
+		{name: "mixed case tag", body: "<TITLE>Fritz!Box</TITLE>", want: "Fritz!Box"},
+		{name: "attributes on the tag", body: `<title lang="en">Router</title>`, want: "Router"},
+		{name: "newlines and padding collapse", body: "<title>\n  OPENVAS\n  SCAN\n</title>", want: "OPENVAS SCAN"},
+		{name: "first title wins", body: "<title>One</title><title>Two</title>", want: "One"},
+		{name: "absent", body: "<html><body>no title here</body></html>", want: ""},
+		// A body truncated at max_body_bytes mid-element must not yield garbage.
+		{name: "truncated before the closing tag", body: "<html><head><title>OPENV", want: ""},
+		{name: "empty body", body: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (Host{Body: tt.body}).Title(); got != tt.want {
+				t.Fatalf("Title() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An appliance answering "/" with a redirect to its login page used to be
+// cached as an empty body, since a 3xx carries no content. Same-address hops
+// are now followed, so the real page is what gets stored.
+func TestProbe_FollowsSameHostRedirect(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "<html><head><title>OPENVAS SCAN</title></head></html>")
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	host, port := splitHostPort(t, srv.URL)
+	s, err := New(Config{Network: host + "/32", Ports: []int{port}, Concurrency: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.ScanOnce(context.Background())
+
+	hosts := s.Snapshot().Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("hosts = %d, want 1", len(hosts))
+	}
+	h := hosts[0]
+	if h.Status != http.StatusOK {
+		t.Errorf("status = %d, want 200 — the redirect was not followed", h.Status)
+	}
+	if h.Title() != "OPENVAS SCAN" {
+		t.Errorf("title = %q, want the redirected page's title", h.Title())
+	}
+	if !strings.HasSuffix(h.FinalURL, "/login") {
+		t.Errorf("finalUrl = %q, want the redirect target", h.FinalURL)
+	}
+	if h.URL == h.FinalURL {
+		t.Error("url and finalUrl are identical; the redirect is invisible to a routine")
+	}
+}
+
+// Chasing a redirect off the probed address would attribute another machine's
+// page to this record — and could reach a host the sweep never selected.
+func TestProbe_DoesNotFollowOffHostRedirect(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://elsewhere.invalid/login", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	host, port := splitHostPort(t, srv.URL)
+	s, err := New(Config{Network: host + "/32", Ports: []int{port}, Concurrency: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.ScanOnce(context.Background())
+
+	hosts := s.Snapshot().Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("hosts = %d, want 1", len(hosts))
+	}
+	h := hosts[0]
+	if h.Status != http.StatusFound {
+		t.Errorf("status = %d, want 302 recorded rather than followed", h.Status)
+	}
+	if h.Headers["location"] != "https://elsewhere.invalid/login" {
+		t.Errorf("location = %q, want it preserved as a detection signal", h.Headers["location"])
+	}
+}
+
+// A redirect loop must terminate rather than spin.
+func TestProbe_BoundsRedirectChain(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/next", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	host, port := splitHostPort(t, srv.URL)
+	s, err := New(Config{Network: host + "/32", Ports: []int{port}, TimeoutSeconds: 5, Concurrency: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() { s.ScanOnce(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("sweep did not finish: the redirect chain is unbounded")
+	}
+
+	hosts := s.Snapshot().Hosts
+	if len(hosts) != 1 || hosts[0].Status != http.StatusFound {
+		t.Fatalf("want the loop stopped with the last 3xx recorded, got %+v", hosts)
+	}
+}
+
+// Certificate detail is the only usable identifier when the body is not —
+// an auth wall, or a shell page that fills itself in via JavaScript.
+func TestProbe_CapturesCertificateDetail(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized) // no body at all
+	}))
+	defer srv.Close()
+
+	host, port := splitHostPort(t, srv.URL)
+	s, err := New(Config{Network: host + "/32", Ports: []int{port}, Concurrency: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.ScanOnce(context.Background())
+
+	hosts := s.Snapshot().Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("hosts = %d, want 1", len(hosts))
+	}
+	h := hosts[0]
+	if h.Body != "" {
+		t.Fatalf("test premise broken: body = %q, expected empty", h.Body)
+	}
+	if h.CertSubject == "" || h.CertIssuer == "" {
+		t.Errorf("cert subject/issuer empty: %+v", h)
+	}
+	if h.CertNotAfter == "" {
+		t.Error("certNotAfter empty; a routine cannot reason about expiry")
+	}
+	if len(h.CertDNSNames) == 0 {
+		t.Errorf("certDnsNames empty — httptest certs carry example.com; got %+v", h.CertDNSNames)
+	}
+}
