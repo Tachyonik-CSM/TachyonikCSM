@@ -106,6 +106,17 @@ TachyonikProxy is released as a single self-contained binary plus a set of OS-na
 
 `postinstall` scripts create the `tachyonikproxy` system user (Linux), set up the service unit, and install the default config if no `config.yaml` is already present.
 
+### Service lifecycle across install, upgrade and removal
+
+| | enabled (starts on boot) | running afterwards |
+|---|---|---|
+| Fresh install | yes | no — enroll first, then start once |
+| Upgrade of a running proxy | yes | yes, restarted onto the new binary |
+| Upgrade of a stopped proxy | yes | no — a stopped service stays stopped |
+| Removal | no | no |
+
+Two details make this less obvious than it looks. `preremove` runs on upgrades as well as removals, so it has to branch on its argument — dpkg passes a word (`remove` / `upgrade`), rpm passes a count (`0` on final erase, `1` on upgrade); and the two packagers run the scripts in opposite orders, dpkg doing old-`prerm` → new-`postinst` while rpm does new-`%post` → old-`%preun`. Getting that wrong is invisible in either script read alone, so `scripts/check-package-lifecycle.sh` (via `make check-packaging`) drives real dpkg and rpm transactions and asserts the table above.
+
 ### Install script
 
 `install-tachyonikproxy.sh` is the unattended one-liner installer for Linux and macOS. It detects OS and architecture, downloads the matching `.deb`, `.rpm`, or `.tar.gz` from `https://tachyonik.com/download/proxy/`, installs the service unit, and offers a user-space install path when sudo is unavailable. See `INSTALL-SCRIPT-README.md` for details — keep that file in sync with the script (see CLAUDE.md).
@@ -241,6 +252,14 @@ TACHYONIKPROXY_LOG_LEVEL=DEBUG ./tachyonikproxy
 - **Linux (systemd)**: `sudo systemctl start tachyonikproxy`
 - **macOS (launchd)**: `sudo launchctl load /Library/LaunchDaemons/com.tachyonik.tachyonikproxy.plist`
 - **Windows**: `net start TachyonikTachyonikProxy`
+
+A `.deb` / `.rpm` install enables the unit, so it comes up on every boot, but deliberately does **not** start it: a freshly installed proxy is not enrolled yet, and an unenrolled proxy exits on purpose — starting it would only produce a `Restart=on-failure` loop. Enroll first, then start it once by hand.
+
+Upgrades are different: since 1.1.2 a package upgrade restarts the proxy onto the new binary if it was running, and leaves it alone if it was not. Before 1.1.2 every upgrade stopped it (and on `.rpm`, disabled it as well — so it did not return after a reboot). If you upgrade *from* a pre-1.1.2 package, that old version's removal script still runs, so check once afterwards:
+
+```bash
+systemctl is-enabled tachyonikproxy && systemctl is-active tachyonikproxy
+```
 
 ## Subcommands
 

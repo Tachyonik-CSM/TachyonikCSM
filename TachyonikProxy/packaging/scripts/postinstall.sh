@@ -37,7 +37,7 @@ fi
 # enabled a timer and bootstrapped a second copy of the binary under /opt,
 # which the service never executed. Both are removed here; all of it is
 # best-effort, since a package install must not fail over cleanup.
-if command -v systemctl >/dev/null 2>&1; then
+if [ -d /run/systemd/system ]; then
     # The unit files are gone with this upgrade, but the enable-symlink was
     # created by our own postinstall, so dpkg does not remove it.
     systemctl disable --now tachyonikproxy-update.timer 2>/dev/null || true
@@ -67,11 +67,41 @@ if [ -d /opt/tachyonik/proxy ] && [ -n "$(ls -A /opt/tachyonik/proxy 2>/dev/null
 fi
 
 # Enable and start systemd units (Linux)
-if command -v systemctl >/dev/null 2>&1; then
+if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
     systemctl enable tachyonikproxy.service
 
-    echo "Service installed. Start with: systemctl start tachyonikproxy"
+    # try-restart, not start.
+    #
+    # On an upgrade the service is still running the old binary at this point,
+    # and try-restart swaps it for the new one — without it, the upgrade left
+    # the proxy stopped and someone had to notice and start it by hand.
+    #
+    # On a fresh install the unit is inactive and try-restart does nothing,
+    # which is the behaviour we want: a fresh install is not enrolled yet, and
+    # an unenrolled proxy exits fatally by design (requireOutboundTLS /
+    # requireInboundTLS). Starting it here would drop the unit into a
+    # Restart=on-failure loop every 5 seconds until somebody enrolled it.
+    #
+    # It also respects a deliberately stopped service: an operator who stopped
+    # the proxy does not get it restarted by an unrelated package upgrade.
+    if systemctl is-active --quiet tachyonikproxy.service; then
+        # Not allowed to fail the transaction: `set -e` is on, and a daemon
+        # that does not come up must not leave dpkg with a half-configured
+        # package. systemd's Restart=on-failure keeps trying either way, so say
+        # so and let the operator look at the log.
+        if systemctl try-restart tachyonikproxy.service; then
+            echo "Service restarted on the new version."
+        else
+            echo "Warning: tachyonikproxy did not restart cleanly."
+            echo "         Check: systemctl status tachyonikproxy"
+        fi
+    else
+        echo "Service enabled; it will start on boot."
+        echo "Not started now — enroll first if you have not already:"
+        echo "    sudo tachyonikproxy enroll <enrollment-url>"
+        echo "then: sudo systemctl start tachyonikproxy"
+    fi
     echo "Upgrades come from your package manager; built-in auto-update is off."
 fi
 

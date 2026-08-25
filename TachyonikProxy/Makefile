@@ -34,7 +34,7 @@ BASE_URL ?= https://tachyonik.com/download/proxy/
 
 .PHONY: build build-all clean test _require-release-version \
         package-deb package-rpm package-macos package-windows \
-        package-archives package-all manifest release
+        package-archives package-all manifest release check-packaging
 
 # ─── Single-platform build (native) ────────────────────────────────
 
@@ -70,6 +70,14 @@ build-windows-amd64:
 
 test:
 	go test ./...
+
+# Packaging checks. Separate from `test` because they shell out to docker to
+# drive real dpkg and rpm transactions — the ordering bugs they catch (an
+# upgrade leaving the service stopped, or disabled) are invisible to any check
+# that reads the maintainer scripts one at a time.
+check-packaging:
+	scripts/check-latest-urls.sh
+	scripts/check-package-lifecycle.sh
 
 # ─── Release-version guard ──────────────────────────────────────────
 # package-* refuses to run unless VERSION is a clean numeric x.y.z, so a
