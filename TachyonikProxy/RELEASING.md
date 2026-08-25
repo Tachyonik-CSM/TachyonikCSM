@@ -169,6 +169,17 @@ dist/tachyonikproxy-1.4.0-*.deb / *.rpm / *.pkg / *.msi
 > is exactly `tachyonikproxy`. The `make package-archives` tarballs already match
 > this layout. **Do not** point a manifest artifact at a `.deb`/`.rpm`/`.zip`.
 
+> **Self-update applies to the tar.gz install only.** `.deb` and `.rpm` installs
+> belong to dpkg/rpm: the updater would write over files they track, leaving the
+> package database describing a version that is no longer on disk. Since 1.1.1
+> the packages ship a marker at
+> `/usr/share/tachyonik/tachyonikproxy/package-managed`, do not install the
+> auto-update systemd units, and `tachyonikproxy self-update` refuses on such an
+> install. Their upgrade path is re-running `install-tachyonikproxy.sh`, which
+> fetches the `…-latest-…` package — so the `latest` links (§ *Update the
+> `latest` download links*) are what packaged fleets actually follow. There is
+> no apt/yum repository, so `apt upgrade` alone will never see a new release.
+
 ---
 
 ## 4. Generate the manifest
@@ -417,5 +428,6 @@ installed version (downgrades are refused).
 - [ ] `scripts/sign-manifest.sh` run **offline** → `manifest.json.sig` (64 bytes; verifies against the embedded key).
 - [ ] Manifest, `.sig`, and `.tar.gz` artifacts uploaded to `manifest_url`'s directory.
 - [ ] Windows `.msi` built with the permanent `UpgradeCode` and an increased `ProductVersion`; uploaded.
-- [ ] Smoke test: on a staging proxy, `tachyonikproxy self-update --dry-run` reports the new version and verifies; then a real run applies, restarts, and passes the health probe.
+- [ ] Smoke test (**tar.gz install**): on a staging proxy, `tachyonikproxy self-update --dry-run` reports the new version and verifies; then a real run applies, restarts, and passes the health probe.
+- [ ] Smoke test (**.deb / .rpm install**): `tachyonikproxy self-update` prints the package-managed notice and exits 0 without touching anything; `systemctl list-timers` shows no `tachyonikproxy-update.timer`. On a machine upgraded from ≤ 1.1.0, confirm the old timer is gone and `/usr/local/bin/tachyonikproxy` no longer shadows `/usr/bin/tachyonikproxy`.
 - [ ] Verify outcome via `tachyonikproxy self-update --status` and `journalctl -u tachyonikproxy-update.service`.

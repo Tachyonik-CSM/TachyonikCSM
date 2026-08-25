@@ -742,6 +742,22 @@ func runSelfUpdate() {
 		}
 	}
 
+	// A .deb / .rpm install belongs to dpkg or rpm, and the updater cannot
+	// serve it: the packages put the binary at /usr/bin, both units execute
+	// that path, and apply only ever rewrites /opt/tachyonik/proxy. Before the
+	// marker existed this path "succeeded" on every timer tick while the
+	// service kept running the old binary.
+	//
+	// --status stays available: reading local state tells an operator what
+	// happened on this machine and changes nothing.
+	if managed, msg := selfupdate.PackageManaged(); managed && !status {
+		fmt.Println(msg)
+		// Exit 0, not an error: this is an expected state, and a failing exit
+		// would leave systemd marking the unit failed (and mailing the admin)
+		// on any machine where a timer from an older package survives.
+		os.Exit(0)
+	}
+
 	cfg := config.Load()
 
 	paths, pathsErr := selfupdate.ResolveInstallPaths()

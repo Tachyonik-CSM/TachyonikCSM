@@ -15,7 +15,7 @@ set -eu
 
 # ─── Constants ──────────────────────────────────────────────────────
 
-INSTALLER_VERSION="1.6.1"
+INSTALLER_VERSION="1.6.2"
 DOWNLOAD_BASE="https://tachyonik.com/download/proxy"
 BINARY_NAME="tachyonikproxy"
 
@@ -663,10 +663,19 @@ print_success_system() {
         printf '    2. Start the service:\n'
         printf '       sudo systemctl start tachyonikproxy\n'
         printf '\n'
-        printf '  Auto-updates: a systemd timer (tachyonikproxy-update.timer) is\n'
-        printf '  enabled. The proxy will check for signed updates daily and apply\n'
-        printf '  them with automatic rollback on health failure. To disable:\n'
-        printf '    sudo systemctl disable --now tachyonikproxy-update.timer\n'
+        # A .deb / .rpm install belongs to dpkg or rpm; built-in auto-update is
+        # off there, so say what actually upgrades it rather than pointing at a
+        # timer the package no longer ships.
+        if [ "${PKG_METHOD:-tar}" = "tar" ]; then
+            printf '  Auto-updates: a systemd timer (tachyonikproxy-update.timer) is\n'
+            printf '  enabled. The proxy will check for signed updates daily and apply\n'
+            printf '  them with automatic rollback on health failure. To disable:\n'
+            printf '    sudo systemctl disable --now tachyonikproxy-update.timer\n'
+        else
+            printf '  Updates: this install is managed by your package manager, so\n'
+            printf '  built-in auto-update is off. To upgrade, re-run this installer:\n'
+            printf '    curl -fsSL %s/install-tachyonikproxy.sh | sudo sh\n' "$DOWNLOAD_BASE"
+        fi
     elif [ "$_os" = "darwin" ]; then
         printf '    2. The service starts automatically via LaunchDaemon.\n'
         printf '       To restart: sudo launchctl unload && sudo launchctl load %s\n' "$LAUNCHD_PLIST"

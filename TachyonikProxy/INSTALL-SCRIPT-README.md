@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # install-tachyonikproxy.sh
 
-Version: 1.6.1
+Version: 1.6.2
 
 Cross-platform installer for TachyonikProxy on Linux and macOS.
 
@@ -30,7 +30,9 @@ curl -fsSL https://tachyonik.com/install-tachyonikproxy.sh | bash
 5. **Sets up the service**: systemd on Linux, LaunchDaemon on macOS.
 6. **Creates system user** `tachyonikproxy` on Linux (tar.gz path; native packages handle this via postinstall).
 7. **Installs uninstaller** at `/usr/local/bin/uninstall-tachyonikproxy`.
-8. **Bootstraps the auto-update layout** (`/opt/tachyonik/proxy/<version>/` with `current` symlink) and **enables the auto-update timer** (`tachyonikproxy-update.timer` on Linux, `com.tachyonik.tachyonikproxy-update` LaunchDaemon on macOS) so signed updates are applied automatically with rollback on health failure.
+8. **Sets up updates — differently per install method.**
+   - **tar.gz route** (macOS, and Linux where no package manager is detected): bootstraps the auto-update layout (`/opt/tachyonik/proxy/<version>/` with `current` symlink) and enables the auto-update timer (`tachyonikproxy-update.timer` on Linux, `com.tachyonik.tachyonikproxy-update` LaunchDaemon on macOS), so signed updates are applied automatically with rollback on health failure.
+   - **.deb / .rpm route**: neither. Those installs belong to dpkg/rpm — the built-in updater would write over files they track, leaving the package database describing a version that is no longer on disk, and the next package upgrade would undo it. The package ships a marker at `/usr/share/tachyonik/tachyonikproxy/package-managed`; `tachyonikproxy self-update` sees it, explains the situation and exits without changing anything. **Re-running this installer is the upgrade path** — it fetches the current `…-latest-…` package.
 9. **Prints next steps** covering both enrollment modes (online and reverse) — or, on an upgrade where the proxy is already enrolled, prints a service-restart hint instead and asks whether the operator wants to re-enroll anyway (default: no). The success banner also reports the version that was placed on disk: `Installed version: X.Y.Z` on a fresh install, or `Upgraded from A.B.C to X.Y.Z` on an upgrade (`unknown` in place of the prior version when the existing binary refused to report it).
 
 ## Upgrades

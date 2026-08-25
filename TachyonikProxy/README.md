@@ -617,6 +617,8 @@ The proxy can pull signed updates from Tachyonik's release server and apply them
 
 > **Status:** the trust chain, the apply path with automatic rollback, **and** the periodic timer that drives the check unattended ship now. With a default install the proxy will check for signed updates roughly daily and apply them with automatic rollback on health failure. Fleet-wide telemetry (visibility of update outcomes from the Tachyonik WebUI) is not part of this release; local visibility is via `tachyonikproxy self-update --status` and journald.
 
+> **Applies to the standalone (`.tar.gz`) install only.** A `.deb` or `.rpm` install belongs to your package manager: the built-in updater would write over files dpkg/rpm track, leaving the package database describing a version that is no longer on disk, and the next package upgrade would undo it. Those packages therefore ship no update timer, and `tachyonikproxy self-update` detects the marker at `/usr/share/tachyonik/tachyonikproxy/package-managed`, explains the situation and exits without changing anything. Upgrade them by re-running `install-tachyonikproxy.sh`, or by installing the current `.deb`/`.rpm` with your package manager.
+
 ### Trust chain
 
 The auto-update mechanism is **not** secured by TLS to `tachyonik.com` alone — TLS is necessary but not sufficient. The proxy verifies a detached Ed25519 signature on every manifest using a public key compiled into the binary. A compromised CDN cannot substitute a malicious manifest because it cannot produce a valid signature without the offline-held signing key.

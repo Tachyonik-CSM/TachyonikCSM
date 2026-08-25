@@ -16,7 +16,6 @@ fi
 mkdir -p /etc/tachyonik/tachyonikproxy
 mkdir -p /var/log/tachyonik
 mkdir -p /var/lib/tachyonik/proxy
-mkdir -p /opt/tachyonik/proxy
 
 # Install default config if none exists
 if [ ! -f /etc/tachyonik/tachyonikproxy/config.yaml ]; then
@@ -31,14 +30,40 @@ if id tachyonikproxy >/dev/null 2>&1; then
     chown -R tachyonikproxy:tachyonikproxy /var/log/tachyonik
 fi
 
-# Bootstrap the auto-update versioned-symlink layout. Idempotent — a no-op
-# on installs that are already migrated. Failures are warnings, not fatal:
-# the package install should not fail just because the auto-update layout
-# couldn't be set up. The next manual `self-update --bootstrap-layout` (or
-# the operator's own remediation) can finish the job.
-if [ -x /usr/bin/tachyonikproxy ]; then
-    /usr/bin/tachyonikproxy self-update --bootstrap-layout 2>/dev/null || \
-        echo "Warning: failed to bootstrap auto-update layout. Run 'tachyonikproxy self-update --bootstrap-layout' manually."
+# Clean up the auto-update machinery that packages up to 1.1.0 installed.
+#
+# This install is owned by dpkg/rpm, so built-in auto-update does not apply —
+# see /usr/share/tachyonik/tachyonikproxy/package-managed. Earlier packages
+# enabled a timer and bootstrapped a second copy of the binary under /opt,
+# which the service never executed. Both are removed here; all of it is
+# best-effort, since a package install must not fail over cleanup.
+if command -v systemctl >/dev/null 2>&1; then
+    # The unit files are gone with this upgrade, but the enable-symlink was
+    # created by our own postinstall, so dpkg does not remove it.
+    systemctl disable --now tachyonikproxy-update.timer 2>/dev/null || true
+    rm -f /etc/systemd/system/timers.target.wants/tachyonikproxy-update.timer
+    rm -f /etc/systemd/system/tachyonikproxy-update.timer
+    rm -f /etc/systemd/system/tachyonikproxy-update.service
+fi
+
+# The old bootstrap left /usr/local/bin/tachyonikproxy pointing into
+# /opt/tachyonik/proxy. That path usually precedes /usr/bin, so leaving it
+# behind means a shell `tachyonikproxy --version` can disagree with the binary
+# the service is actually running. Remove it only when it is a symlink into
+# that tree — never a real file an operator put there.
+if [ -L /usr/local/bin/tachyonikproxy ]; then
+    _target="$(readlink -f /usr/local/bin/tachyonikproxy 2>/dev/null || true)"
+    case "$_target" in
+        /opt/tachyonik/proxy/*) rm -f /usr/local/bin/tachyonikproxy ;;
+    esac
+fi
+
+# /opt/tachyonik/proxy is deliberately left in place: it is inert once nothing
+# points at it, and a package script deleting a tree outside its own file list
+# is how someone's machine gets damaged. Say it is there instead.
+if [ -d /opt/tachyonik/proxy ] && [ -n "$(ls -A /opt/tachyonik/proxy 2>/dev/null)" ]; then
+    echo "Note: /opt/tachyonik/proxy holds binaries from the old auto-update layout."
+    echo "      Nothing uses them now; the directory can be removed."
 fi
 
 # Enable and start systemd units (Linux)
@@ -46,15 +71,8 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
     systemctl enable tachyonikproxy.service
 
-    # Auto-update timer: enable + start so the first check fires shortly
-    # after boot. The proxy itself need not be running for the timer to
-    # tick; the apply path skips when TLS material is missing, so an
-    # unenrolled proxy is harmless.
-    systemctl enable --now tachyonikproxy-update.timer 2>/dev/null || \
-        echo "Warning: failed to enable auto-update timer."
-
     echo "Service installed. Start with: systemctl start tachyonikproxy"
-    echo "Auto-update timer: systemctl list-timers tachyonikproxy-update.timer"
+    echo "Upgrades come from your package manager; built-in auto-update is off."
 fi
 
 # Load launchd plist (macOS)

@@ -5,7 +5,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 set -e
 
-# Stop systemd units (Linux). Stop the timer first so it can't kick off a
+# Stop systemd units (Linux). The update timer is no longer shipped — a
+# package-managed install upgrades through dpkg/rpm — but stop it anyway in
+# case one survives from a package built before 1.1.1, so it cannot kick off a
 # self-update mid-uninstall.
 if command -v systemctl >/dev/null 2>&1; then
     systemctl stop tachyonikproxy-update.timer 2>/dev/null || true

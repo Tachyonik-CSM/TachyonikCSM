@@ -38,13 +38,15 @@ contents:
     file_info:
       mode: 0644
 
-  - src: packaging/systemd/tachyonikproxy-update.service
-    dst: /lib/systemd/system/tachyonikproxy-update.service
-    file_info:
-      mode: 0644
-
-  - src: packaging/systemd/tachyonikproxy-update.timer
-    dst: /lib/systemd/system/tachyonikproxy-update.timer
+  # The auto-update systemd units are deliberately NOT shipped here. A .deb or
+  # .rpm install belongs to dpkg/rpm; the built-in updater would write over
+  # files they track. The marker below is what tells the binary so.
+  #
+  # It is package-owned on purpose: dpkg and rpm create it on install and
+  # remove it on uninstall, so "is this package-managed?" is answered by a fact
+  # rather than by guessing from the binary's path.
+  - src: packaging/package-managed
+    dst: /usr/share/tachyonik/tachyonikproxy/package-managed
     file_info:
       mode: 0644
 

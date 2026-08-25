@@ -1,0 +1,14 @@
+This TachyonikProxy installation was made from a .deb or .rpm package, so your
+system package manager owns it. Built-in auto-update is disabled here: it would
+write over files dpkg/rpm track, leaving the package database describing a
+version that is no longer on disk — and the next package upgrade would silently
+undo it.
+
+To upgrade, re-run the installer, which fetches the current package:
+
+    curl -fsSL https://tachyonik.com/download/proxy/install-tachyonikproxy.sh | sudo sh
+
+Or download the current .deb/.rpm from https://tachyonik.com/download/proxy/ and
+install it with your package manager.
+
+Auto-update applies to the standalone (.tar.gz) installation instead.
