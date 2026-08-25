@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # install-tachyonikproxy.sh
 
-Version: 1.6.2
+Version: 1.6.3
 
 Cross-platform installer for TachyonikProxy on Linux and macOS.
 

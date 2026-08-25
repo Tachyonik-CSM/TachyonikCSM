@@ -15,7 +15,7 @@ set -eu
 
 # ─── Constants ──────────────────────────────────────────────────────
 
-INSTALLER_VERSION="1.6.2"
+INSTALLER_VERSION="1.6.3"
 DOWNLOAD_BASE="https://tachyonik.com/download/proxy"
 BINARY_NAME="tachyonikproxy"
 
@@ -158,6 +158,17 @@ detect_arch() {
     esac
 }
 
+# Maps a Go architecture (what detect_arch returns) to the name RPM uses in
+# package filenames. Only the two architectures detect_arch accepts can reach
+# here, so an unknown value means detect_arch grew a case this did not.
+rpm_arch() {
+    case "$1" in
+        amd64) echo "x86_64" ;;
+        arm64) echo "aarch64" ;;
+        *)     error "No RPM architecture mapping for '$1'." ;;
+    esac
+}
+
 # Returns deb, rpm, or tar based on available package managers (Linux only).
 detect_package_manager() {
     if command -v dpkg >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
@@ -171,9 +182,17 @@ detect_package_manager() {
 
 # ─── System-wide install methods ───────────────────────────────────
 
+# The published package filenames follow NATIVE packaging conventions, not the
+# tarballs' os-arch shape: nfpm emits `tachyonikproxy_<version>_<arch>.deb` and
+# `tachyonikproxy-<version>-<release>.<rpmarch>.rpm`, and
+# scripts/update-latest-symlinks.sh maintains `latest` links in the same form.
+# Asking for `tachyonikproxy-latest-linux-amd64.deb` fetched a name that has
+# never existed on the server.
+
 install_native_deb() {
     _arch="$1"
-    _url="${DOWNLOAD_BASE}/tachyonikproxy-latest-linux-${_arch}.deb"
+    # Debian convention: name_version_arch, underscore-separated, Go arch names.
+    _url="${DOWNLOAD_BASE}/tachyonikproxy_latest_${_arch}.deb"
     _tmp="$(mktemp /tmp/tachyonikproxy-XXXXXX.deb)"
 
     info "Downloading .deb package for linux/${_arch}..."
@@ -190,7 +209,8 @@ install_native_deb() {
 
 install_native_rpm() {
     _arch="$1"
-    _url="${DOWNLOAD_BASE}/tachyonikproxy-latest-linux-${_arch}.rpm"
+    # RPM names architectures its own way; detect_arch yields Go's.
+    _url="${DOWNLOAD_BASE}/tachyonikproxy-latest.$(rpm_arch "$_arch").rpm"
     _tmp="$(mktemp /tmp/tachyonikproxy-XXXXXX.rpm)"
 
     info "Downloading .rpm package for linux/${_arch}..."

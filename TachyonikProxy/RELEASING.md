@@ -161,7 +161,11 @@ dist/tachyonikproxy-1.4.0-linux-arm64.tar.gz      ← referenced by manifest
 dist/tachyonikproxy-1.4.0-darwin-amd64.tar.gz     ← referenced by manifest
 dist/tachyonikproxy-1.4.0-darwin-arm64.tar.gz     ← referenced by manifest
 dist/tachyonikproxy-1.4.0-windows-amd64.zip       ← Windows portable (no self-update)
-dist/tachyonikproxy-1.4.0-*.deb / *.rpm / *.pkg / *.msi
+dist/tachyonikproxy_1.4.0_amd64.deb               ← nfpm uses NATIVE naming for
+dist/tachyonikproxy_1.4.0_arm64.deb                 packages: name_version_arch
+dist/tachyonikproxy-1.4.0-1.x86_64.rpm              for .deb, and RPM's own arch
+dist/tachyonikproxy-1.4.0-1.aarch64.rpm             names for .rpm
+dist/tachyonikproxy-1.4.0-*.pkg / *.msi
 ```
 
 > The self-update artifact **must** be the `.tar.gz` archive: the updater
@@ -428,6 +432,12 @@ installed version (downgrades are refused).
 - [ ] `scripts/sign-manifest.sh` run **offline** → `manifest.json.sig` (64 bytes; verifies against the embedded key).
 - [ ] Manifest, `.sig`, and `.tar.gz` artifacts uploaded to `manifest_url`'s directory.
 - [ ] Windows `.msi` built with the permanent `UpgradeCode` and an increased `ProductVersion`; uploaded.
+- [ ] `scripts/check-latest-urls.sh` passes — every `…latest…` name
+      `install-tachyonikproxy.sh` downloads is one `update-latest-symlinks.sh`
+      publishes. The two drifted once already: the installer asked for
+      `tachyonikproxy-latest-linux-amd64.deb` / `.rpm` while the server
+      published `tachyonikproxy_latest_amd64.deb` and
+      `tachyonikproxy-latest.x86_64.rpm`, so both package routes 404'd.
 - [ ] Smoke test (**tar.gz install**): on a staging proxy, `tachyonikproxy self-update --dry-run` reports the new version and verifies; then a real run applies, restarts, and passes the health probe.
 - [ ] Smoke test (**.deb / .rpm install**): `tachyonikproxy self-update` prints the package-managed notice and exits 0 without touching anything; `systemctl list-timers` shows no `tachyonikproxy-update.timer`. On a machine upgraded from ≤ 1.1.0, confirm the old timer is gone and `/usr/local/bin/tachyonikproxy` no longer shadows `/usr/bin/tachyonikproxy`.
 - [ ] Verify outcome via `tachyonikproxy self-update --status` and `journalctl -u tachyonikproxy-update.service`.
