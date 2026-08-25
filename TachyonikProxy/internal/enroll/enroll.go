@@ -99,6 +99,14 @@ func Run(opts Options) error {
 		}
 	}
 
+	// Check we can write the result before spending the token — the platform
+	// consumes it the moment the request arrives, so failing after the POST
+	// costs the operator a fresh token for nothing.
+	certDir := certDirFor(opts.CertDir, opts.ConfigPath)
+	if err := preflightWritable(opts.ConfigPath, certDir); err != nil {
+		return err
+	}
+
 	// Build request
 	reqBody := Request{
 		Token:       token,
@@ -150,11 +158,6 @@ func Run(opts Options) error {
 		return fmt.Errorf("failed to parse enrollment response: %w", err)
 	}
 
-	certDir := opts.CertDir
-	if certDir == "" {
-		certDir = filepath.Join(filepath.Dir(opts.ConfigPath), "certs")
-	}
-
 	pres, err := PersistEnrollment(cfg, &enrollResp, certDir, opts.ConfigPath, u.Hostname())
 	if err != nil {
 		return err
@@ -167,6 +170,12 @@ func Run(opts Options) error {
 	fmt.Println()
 	fmt.Printf("  Certificates written to: %s\n", certDir)
 	fmt.Printf("  Config updated:          %s\n", opts.ConfigPath)
+	if pres.Owner != "" {
+		// Named explicitly: it is the one property of the output that decides
+		// whether the service can read it, and it is invisible in `ls` output
+		// that shows world-readable certs inside a 0700 directory.
+		fmt.Printf("  Readable by service:     %s\n", pres.Owner)
+	}
 	fmt.Println()
 
 	if enrollResp.URLWarning != "" {
@@ -222,14 +231,20 @@ func printStartHint(configPath string) {
 		fmt.Println("  Note: user-space installs do not auto-start on boot. Add the command")
 		fmt.Println("  to crontab (@reboot) or a user systemd unit if you need it persistent.")
 	case systemInstall:
-		fmt.Println("  Start the service:")
+		// "restart", not "start": on a re-enrollment the unit is usually
+		// already up and holding the *previous* certificates in memory, where
+		// `start` is a silent no-op and the operator concludes the new
+		// enrollment did not take. Restarting an inactive unit just starts it.
+		fmt.Println("  Start (or restart) the service:")
 		switch runtime.GOOS {
 		case "darwin":
+			fmt.Println("    sudo launchctl unload /Library/LaunchDaemons/com.tachyonik.tachyonikproxy.plist")
 			fmt.Println("    sudo launchctl load /Library/LaunchDaemons/com.tachyonik.tachyonikproxy.plist")
 		case "windows":
+			fmt.Println("    net stop TachyonikTachyonikProxy")
 			fmt.Println("    net start TachyonikTachyonikProxy")
 		default:
-			fmt.Println("    sudo systemctl start tachyonikproxy")
+			fmt.Println("    sudo systemctl restart tachyonikproxy")
 		}
 		fmt.Println()
 		fmt.Println("  Or run interactively:")
@@ -247,14 +262,106 @@ func printStartHint(configPath string) {
 type PersistResult struct {
 	ConnectionMode string
 	CertDir        string
+	// Owner is the account the material was given to when enrolling as root
+	// on behalf of a service account, empty when no chown was needed.
+	Owner string
+}
+
+// certDirFor resolves where cert material belongs: an explicit --cert-dir, or
+// the canonical <config-dir>/certs. Shared by Run, RunListen and the preflight
+// so all three agree on the directory being checked and written.
+func certDirFor(certDir, configPath string) string {
+	if certDir != "" {
+		return certDir
+	}
+	return filepath.Join(filepath.Dir(configPath), "certs")
+}
+
+// preflightWritable checks that enrollment can actually write its output,
+// before anything irreversible happens.
+//
+// Enrollment spends a one-time token: ResourceManager marks it consumed at the
+// top of the /api/proxy-enroll handler, before the proxy has written a byte.
+// So an unprivileged `tachyonikproxy enroll` against a system install used to
+// fail at the first MkdirAll — after the token was already dead, leaving the
+// platform believing the proxy was enrolled and the operator having to issue a
+// fresh token. Checking first turns that into a message with a fix in it.
+//
+// The check writes a probe rather than inspecting modes: group membership,
+// ACLs and read-only mounts all make a mode-based guess wrong in one direction
+// or the other.
+func preflightWritable(configPath, certDir string) error {
+	certDir = certDirFor(certDir, configPath)
+	configDir := filepath.Dir(configPath)
+
+	probe := func(dir string) error {
+		f, err := os.CreateTemp(dir, ".enroll-probe.*")
+		if err != nil {
+			return err
+		}
+		name := f.Name()
+		f.Close()
+		os.Remove(name)
+		return nil
+	}
+
+	// Neither directory necessarily exists yet — a first user-space enrollment
+	// creates ~/.config/tachyonik/tachyonikproxy, and <config-dir>/certs is
+	// always created by enrollment itself. Creating them is part of what
+	// enrollment must be able to do, so probe the deepest existing ancestor
+	// rather than the path itself; probing a path that is merely absent would
+	// report "permission denied" for a perfectly fine fresh install.
+	existing := func(dir string) string {
+		for {
+			if _, err := os.Stat(dir); err == nil {
+				return dir
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				return dir
+			}
+			dir = parent
+		}
+	}
+
+	var failed string
+	for _, dir := range []string{existing(configDir), existing(certDir)} {
+		if err := probe(dir); err != nil {
+			failed = dir
+			break
+		}
+	}
+	if failed == "" {
+		return nil
+	}
+
+	msg := fmt.Sprintf("cannot write enrollment material to %s: permission denied", failed)
+	if os.Geteuid() != 0 {
+		msg += "\n\nThis looks like a system installation. Re-run the same command with sudo:" +
+			"\n    sudo tachyonikproxy enroll ..." +
+			"\n\nNo enrollment token was used, so the token you have is still valid."
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 // PersistEnrollment writes the cert material from an enrollment response to disk
 // and updates the config file. Shared by the online enroll flow (Run) and the
 // listen-mode flow (RunListen). When resp.ServerKey is empty for outbound mode
-// the existing key at <certDir>/server.key is left in place (the listen-mode
-// caller writes it separately before calling).
+// the existing key at <certDir>/server.key is left in place.
 func PersistEnrollment(cfg *config.Config, resp *Response, certDir, configPath, enrollHost string) (*PersistResult, error) {
+	// When root enrolls on behalf of a service account, everything written
+	// below has to end up owned by that account — see owner_unix.go. Resolved
+	// once, up front, from the config directory.
+	owner, chown := targetOwner(filepath.Dir(configPath))
+	written := []string{}
+	write := func(path string, data []byte, mode os.FileMode) error {
+		if err := writeFileAtomicOwned(path, data, mode, owner, chown); err != nil {
+			return err
+		}
+		written = append(written, path)
+		return nil
+	}
+
 	// 0700: only the proxy user (or root) should be able to read or even
 	// list the cert directory. Key files inside are 0600, so the directory
 	// is defence in depth — without it, other local users could enumerate
@@ -265,6 +372,14 @@ func PersistEnrollment(cfg *config.Config, resp *Response, certDir, configPath, 
 	}
 	if err := os.Chmod(certDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to chmod cert directory %s: %w", certDir, err)
+	}
+	// 0700 without the matching owner is worse than useless: it stops the
+	// service account traversing into the directory at all, so even the
+	// world-readable certs inside come back EACCES.
+	if chown {
+		if err := chownTo(certDir, owner); err != nil {
+			return nil, err
+		}
 	}
 
 	// Paths stored in the config are made relative to the config file's
@@ -290,7 +405,7 @@ func PersistEnrollment(cfg *config.Config, resp *Response, certDir, configPath, 
 	}
 
 	caCertPath := filepath.Join(certDir, "ca.crt")
-	if err := writeFileAtomic(caCertPath, []byte(resp.CACert), 0644); err != nil {
+	if err := write(caCertPath, []byte(resp.CACert), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write CA cert: %w", err)
 	}
 
@@ -311,10 +426,10 @@ func PersistEnrollment(cfg *config.Config, resp *Response, certDir, configPath, 
 		clientCertPath := filepath.Join(certDir, "client.crt")
 		clientKeyPath := filepath.Join(certDir, "client.key")
 
-		if err := writeFileAtomic(clientCertPath, []byte(resp.ClientCert), 0644); err != nil {
+		if err := write(clientCertPath, []byte(resp.ClientCert), 0644); err != nil {
 			return nil, fmt.Errorf("failed to write client cert: %w", err)
 		}
-		if err := writeFileAtomic(clientKeyPath, []byte(resp.ClientKey), 0600); err != nil {
+		if err := write(clientKeyPath, []byte(resp.ClientKey), 0600); err != nil {
 			return nil, fmt.Errorf("failed to write client key: %w", err)
 		}
 
@@ -334,11 +449,11 @@ func PersistEnrollment(cfg *config.Config, resp *Response, certDir, configPath, 
 		serverCertPath := filepath.Join(certDir, "server.crt")
 		serverKeyPath := filepath.Join(certDir, "server.key")
 
-		if err := writeFileAtomic(serverCertPath, []byte(resp.ServerCert), 0644); err != nil {
+		if err := write(serverCertPath, []byte(resp.ServerCert), 0644); err != nil {
 			return nil, fmt.Errorf("failed to write server cert: %w", err)
 		}
 		if resp.ServerKey != "" {
-			if err := writeFileAtomic(serverKeyPath, []byte(resp.ServerKey), 0600); err != nil {
+			if err := write(serverKeyPath, []byte(resp.ServerKey), 0600); err != nil {
 				return nil, fmt.Errorf("failed to write server key: %w", err)
 			}
 		}
@@ -356,16 +471,57 @@ func PersistEnrollment(cfg *config.Config, resp *Response, certDir, configPath, 
 		return nil, fmt.Errorf("failed to save config: %w", err)
 	}
 
-	return &PersistResult{ConnectionMode: connMode, CertDir: certDir}, nil
+	res := &PersistResult{ConnectionMode: connMode, CertDir: certDir}
+	if !chown {
+		return res, nil
+	}
+
+	// SaveConfig writes a fresh temp file and renames it, so config.yaml comes
+	// out owned by whoever ran enrollment — root, here. It survives today only
+	// because the package ships it 0644; SaveConfig's own default for a new
+	// file is 0640, so this is one packaging change away from locking the
+	// service out of its own config. Fix it, which also repairs a machine
+	// already damaged by an earlier root enrollment.
+	if err := chownTo(configPath, owner); err != nil {
+		return nil, err
+	}
+
+	// Verify rather than assume: a half-applied chown reproduces exactly the
+	// failure this code exists to prevent, and it fails at service start with a
+	// message that points at the wrong thing.
+	for _, p := range append([]string{certDir, configPath}, written...) {
+		if err := verifyOwned(p, owner); err != nil {
+			return nil, err
+		}
+	}
+	res.Owner = owner.String()
+
+	return res, nil
 }
 
 // writeFileAtomic writes data to path via a .tmp sibling + rename, fsyncing the
 // temp file first so a crash mid-write leaves the original file intact.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	return writeFileAtomicOwned(path, data, mode, Owner{}, false)
+}
+
+// writeFileAtomicOwned is writeFileAtomic with an optional chown applied to the
+// temp file, before the rename. Chowning the temp file rather than the final
+// path means the file never exists at its real name with the wrong owner —
+// there is no window in which a concurrently starting service reads a key it
+// cannot open, or in which a crash leaves material stranded as root.
+func writeFileAtomicOwned(path string, data []byte, mode os.FileMode, owner Owner, chown bool) error {
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
+	}
+	if chown {
+		if err := chownTo(tmp, owner); err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()

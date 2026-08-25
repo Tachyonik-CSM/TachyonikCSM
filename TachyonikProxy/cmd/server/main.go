@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -129,6 +130,8 @@ func runServer() {
 
 	if cfg.ConnectionMode == "inbound" {
 		// Mode 2: Reverse-connect — dial ToolManager via WebSocket
+		requireInboundTLS(cfg)
+
 		dialer = reverseconnect.NewDialer(cfg, mcpSrv)
 		dialer.Start()
 		logger.Infof("Running in inbound (reverse-connect) mode")
@@ -257,11 +260,84 @@ func requireOutboundTLS(cfg *config.Config) {
 	}
 
 	for _, f := range fields {
-		if _, err := os.Stat(cfg.AbsPath(f.path)); err != nil {
-			logger.Fatalf("TLS file %s=%q is not readable: %v. "+
-				"Run 'tachyonikproxy reset-enrollment' and re-enroll.", f.name, cfg.AbsPath(f.path), err)
+		requireTLSFileReadable(f.name, cfg.AbsPath(f.path))
+	}
+}
+
+// requireInboundTLS is requireOutboundTLS for reverse-connect mode. Without it
+// unreadable client cert material produced no startup check at all: the dialer
+// reported "failed to load client certificate: ... permission denied" and
+// retried forever, so systemd counted restarts while the actual cause — the
+// cert directory belonging to the wrong account — never appeared in the log.
+func requireInboundTLS(cfg *config.Config) {
+	fields := []struct{ name, path string }{
+		{"ca_cert", cfg.TLS.CACert},
+		{"reverse_connect.client_cert", cfg.ReverseConnect.ClientCert},
+		{"reverse_connect.client_key", cfg.ReverseConnect.ClientKey},
+	}
+
+	var missing []string
+	for _, f := range fields {
+		if f.path == "" {
+			missing = append(missing, f.name)
 		}
 	}
+	if len(missing) == len(fields) {
+		logger.Fatalf("TLS not configured — proxy is not enrolled. " +
+			"Run: tachyonikproxy enroll <enrollment-url>  (or)  tachyonikproxy enroll --listen")
+	}
+	if len(missing) > 0 {
+		logger.Fatalf("Reverse-connect TLS configuration is incomplete (missing: %s). "+
+			"Run 'tachyonikproxy reset-enrollment' and re-enroll.", strings.Join(missing, ", "))
+	}
+
+	for _, f := range fields {
+		requireTLSFileReadable(f.name, cfg.AbsPath(f.path))
+	}
+}
+
+// requireTLSFileReadable checks a TLS file the proxy needs and, on failure,
+// says which of the two very different problems it is.
+//
+// "reset-enrollment and re-enroll" is right for a missing file and actively
+// wrong for a permission error: re-enrolling as root was what created the
+// unreadable material in the first place. Enrollment run under sudo used to
+// leave <config-dir>/certs as root:root 0700 while the service runs as its own
+// account, so the files inside came back EACCES even when `ls` showed them
+// world-readable. Opening the file (not just Stat) is what distinguishes them —
+// Stat succeeds on a file in a directory the process can traverse but whose
+// contents it may not read.
+func requireTLSFileReadable(name, path string) {
+	f, err := os.Open(path)
+	if err == nil {
+		f.Close()
+		return
+	}
+	logger.Fatalf("%s", tlsFileErrorMessage(name, path, err))
+}
+
+// tlsFileErrorMessage builds the operator-facing text for an unusable TLS file.
+// Split out from requireTLSFileReadable because that one ends the process, and
+// the branch that matters here — permission versus everything else — is exactly
+// the part worth asserting on.
+func tlsFileErrorMessage(name, path string, err error) string {
+	if !os.IsPermission(err) {
+		return fmt.Sprintf("TLS file %s=%q is not readable: %v. "+
+			"Run 'tachyonikproxy reset-enrollment' and re-enroll.", name, path, err)
+	}
+
+	account := "this process's user"
+	if u, uerr := user.Current(); uerr == nil {
+		account = u.Username
+	}
+	// filepath.Dir twice: from <config-dir>/certs/client.crt back to the config
+	// directory, which is the tree whose ownership is actually wrong.
+	return fmt.Sprintf("TLS file %s=%q cannot be read by %s: %v.\n"+
+		"The enrollment material exists but belongs to another account — "+
+		"most likely it was written by 'sudo tachyonikproxy enroll' before the "+
+		"ownership fix. Repair it with:\n"+
+		"    sudo chown -R %s: %s",
+		name, path, account, err, account, filepath.Dir(filepath.Dir(path)))
 }
 
 func setupLogging(cfg *config.Config) *os.File {

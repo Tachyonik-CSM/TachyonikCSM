@@ -21,7 +21,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -144,9 +143,15 @@ func RunListen(opts ListenOptions) error {
 		}
 	}
 
-	certDir := opts.CertDir
-	if certDir == "" {
-		certDir = filepath.Join(filepath.Dir(opts.ConfigPath), "certs")
+	certDir := certDirFor(opts.CertDir, opts.ConfigPath)
+
+	// Checked before the listener binds. Listen mode is the worse place to
+	// discover an unwritable target than the online flow: the operator waits
+	// out a handshake with the platform, and the failure only appears in an
+	// HTTP 500 back to Tachyonik after the enrollment has been completed on
+	// the other side.
+	if err := preflightWritable(opts.ConfigPath, certDir); err != nil {
+		return err
 	}
 
 	l := &listener{
@@ -504,7 +509,8 @@ func (l *listener) handleComplete(w http.ResponseWriter, r *http.Request) {
 		AllowedClients:      req.AllowedClients,
 		ToolManagerEndpoint: req.ToolManagerEndpoint,
 	}
-	if _, err := PersistEnrollment(l.cfg, resp, l.certDir, l.configPath, ""); err != nil {
+	pres, err := PersistEnrollment(l.cfg, resp, l.certDir, l.configPath, "")
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		// Don't finish — let the operator retry within the window. But bump the counter.
 		_ = l.registerFailure(ip)
@@ -517,6 +523,9 @@ func (l *listener) handleComplete(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Enrolled successfully as \"%s\" (mode: outbound)\n", req.ProxyName)
 	fmt.Printf("  Certificates: %s\n", l.certDir)
 	fmt.Printf("  Config:       %s\n", l.configPath)
+	if pres.Owner != "" {
+		fmt.Printf("  Readable by:  %s\n", pres.Owner)
+	}
 	fmt.Println()
 	printStartHint(l.configPath)
 

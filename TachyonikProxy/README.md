@@ -216,7 +216,7 @@ On startup the proxy:
 4. Initializes the MCP JSON-RPC server.
 5. Branches on `connection_mode`:
    - `outbound` (default) — starts an HTTPS+mTLS server with the MCP SSE+HTTP transport on `host:port`. **TLS is mandatory**: the proxy refuses to start unless `tls.ca_cert`, `tls.server_cert`, and `tls.server_key` are all set and readable. Enroll the proxy first (`tachyonikproxy enroll …`).
-   - `inbound` — starts a `reverseconnect.Dialer` that opens a persistent WebSocket to `reverse_connect.toolmanager_url`, sends a `register` message with the proxy's name, and serves JSON-RPC requests over that single connection. A localhost-only `/health` endpoint is bound on the configured port for local diagnostics.
+   - `inbound` — starts a `reverseconnect.Dialer` that opens a persistent WebSocket to `reverse_connect.toolmanager_url`, sends a `register` message with the proxy's name, and serves JSON-RPC requests over that single connection. A localhost-only `/health` endpoint is bound on the configured port for local diagnostics. **TLS is equally mandatory here**: `tls.ca_cert`, `reverse_connect.client_cert` and `reverse_connect.client_key` must be set and readable, checked before the dialer starts so unreadable material is diagnosed once instead of retried indefinitely.
 6. Waits for `SIGINT` / `SIGTERM` to shut down gracefully (10 second timeout).
 
 ### Stopping the Server
@@ -586,6 +586,21 @@ TACHYONIKPROXY_LOG_LEVEL=ERROR ./tachyonikproxy
 
 Enrollment is the one-time process that issues TLS material to the proxy and registers it with ToolManager. There are two flows; both end with `tls.*` (and, in inbound mode, `reverse_connect.*`) populated in `config.yaml` and certificates written under `<config-dir>/certs/`.
 
+### Privileges
+
+A system installation (`.deb` / `.rpm`, or the installer's system path) must be enrolled with `sudo` — `/etc/tachyonik/tachyonikproxy` is not writable otherwise. Both flows check this before contacting Tachyonik, so an unprivileged attempt fails immediately with a hint and **does not consume the one-time enrollment token**.
+
+The service itself runs as the unprivileged `tachyonikproxy` account, not as root. Enrollment therefore hands the cert directory, the certificates, and `config.yaml` to whichever account owns the config directory, and verifies the result before reporting success — the summary names it:
+
+```
+  Certificates written to: /etc/tachyonik/tachyonikproxy/certs
+  Readable by service:     tachyonikproxy
+```
+
+A user-space install enrolls without `sudo` and owns everything already; nothing is changed there.
+
+> Proxies enrolled with a version before 1.1.2 may have root-owned material under `/etc/tachyonik/tachyonikproxy`, which the service cannot read (it fails at startup with `permission denied` on `client.crt` or `server.crt`, even though `ls` shows the file world-readable — the 0700 cert *directory* is what blocks it). Repair with `sudo chown -R tachyonikproxy: /etc/tachyonik/tachyonikproxy` and restart; the certificates themselves stay valid, so no re-enrollment is needed.
+
 ### Online enrollment
 
 ```bash
@@ -850,7 +865,8 @@ The outbound listener is HTTPS-only — the proxy does not start a plain-HTTP li
 
 - **`TLS not configured — proxy is not enrolled`** — all three of `tls.ca_cert` / `tls.server_cert` / `tls.server_key` are empty. Run `tachyonikproxy enroll <enrollment-url>` (online) or `tachyonikproxy enroll --listen` (reverse).
 - **`TLS configuration is incomplete (missing: …)`** — some fields are set, others are not. The config has been edited or partially overwritten. Run `tachyonikproxy reset-enrollment` and re-enroll.
-- **`TLS file <field>=<path> is not readable`** — config references a cert path that does not exist or the proxy user can't read it. Fix permissions or re-enroll.
+- **`TLS file <field>=<path> is not readable`** — the config references a cert path that does not exist. Run `tachyonikproxy reset-enrollment` and re-enroll.
+- **`TLS file <field>=<path> cannot be read by <user>`** — the material exists but belongs to another account, typically root-owned leftovers from an enrollment run under `sudo` before 1.1.2. Do **not** re-enroll; the certificates are fine. Run the `chown -R` command the message prints and restart the service. The same check now runs for reverse-connect (inbound) mode, which previously logged `failed to load client certificate: … permission denied` on a retry loop with no startup diagnosis at all.
 
 ### TLS / mTLS handshake fails (outbound mode)
 
@@ -898,7 +914,8 @@ The migration is idempotent and does not require a service restart — the runni
 
 1. Check `reverse_connect.toolmanager_url` is reachable: `curl -v <https equivalent>`.
 2. If the log says `missing TLS material … proxy is not enrolled`, run `tachyonikproxy enroll --listen` (or online enrollment) to populate the certs and `reverse_connect.*` fields.
-3. Otherwise look for `Reverse-connect error:` lines in the log — backoff doubles up to 60 s between attempts.
+3. If the log says `failed to load client certificate: … permission denied`, the cert material belongs to the wrong account — see the `cannot be read by` entry above. Since 1.1.2 this is caught at startup with the repair command instead of looping.
+4. Otherwise look for `Reverse-connect error:` lines in the log — backoff doubles up to 60 s between attempts.
 
 ### Tool scan returns empty
 
