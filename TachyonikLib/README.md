@@ -19,6 +19,7 @@ replace tachyonik/lib => ../TachyonikLib
 | `systemmanager` | Thin outbound client for reporting audit-trail events to SystemManager. Modules needing further endpoints embed this `Client` and add methods locally. |
 | `textextract` | Turns a file or a retrieved web page into the text that analysis, import routines and prompts work on. Text formats pass through unchanged; a PDF's text layer is extracted; HTML is rendered as the text a visitor sees (scripts and styling dropped, block elements kept on separate lines) together with its resolved links and a helper that picks out an imprint/contact link. Bounded at both ends (see below). Best-effort and never fatal. |
 | `httpguard` | Makes an outbound request to a user-influenced address survivable: refuses loopback, unspecified, link-local (cloud metadata), multicast and private/ULA addresses. Three layers — validate the URL up front, re-validate every redirect hop, and check again in the dialer at connect time, which is what defeats DNS rebinding. Used by ChatAI for user-supplied AI endpoints and by SystemManager for the organisation homepage fetch. |
+| `providererr` | Turns a failed AI-provider HTTP response into a short reason that is safe to show the user who configured that provider. Echoes no bytes of the body: it lifts at most `message` and `type` out of a document that has to declare a JSON content type and parse as a provider error envelope (`{"error":{"message":…}}` or `{"error":"…"}`), then flattens it to one line and cuts it to 300 runes. Lets a user see "credit balance is too low" instead of "status 400" without turning a user-supplied endpoint into an SSRF read primitive. |
 | `aiclient/claude` | Client for the Anthropic (Claude) Messages API. |
 | `aiclient/openai` | Client for OpenAI-compatible APIs (OpenAI, Mistral, Google OpenAI-compat, self-hosted). |
 | `aiclient/ollama` | Client for the Ollama API (optional Bearer auth for fronted installs). |
@@ -85,13 +86,13 @@ All twelve service modules depend on this library:
 | ActionManager | `logger` |
 | AIManager | `logger`, `textextract`, `aiclient/*` |
 | AssetManager | `logger`, `systemmanager` |
-| ChatAI | `logger`, `aimwatcher` |
+| ChatAI | `logger`, `aimwatcher`, `providererr` |
 | ResourceManager | `logger`, `systemmanager` |
 | SourceAnalyser | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `textextract`, `aiclient/*` |
 | SourceImporter | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `textextract`, `aiclient/*` |
 | SystemManager | `logger` |
 | TachyonikProxy | `logger` |
-| ToolManager | `logger`, `aimwatcher` |
+| ToolManager | `logger`, `aimwatcher`, `providererr` |
 
 ## Versioning
 
