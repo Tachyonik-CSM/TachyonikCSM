@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests for turning a failed provider response into something a user can read:
+// that the error envelopes the AI providers actually send are recognised, and
+// that everything else is refused. The second half carries the weight — an HTML
+// error page, a cloud metadata document, a JSON body served as text, an object
+// with no message — because this decides what a server-side fetch is allowed to
+// hand back, and the guarantee is that nothing but two named fields ever is.
+
 package providererr
 
 import (
