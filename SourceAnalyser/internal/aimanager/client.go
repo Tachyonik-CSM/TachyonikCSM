@@ -169,8 +169,14 @@ func (c *Client) GetAIByName(name string) (*AIEntry, error) {
 
 // ClearGenerateRequest clears the generate_requested_at flag on an analysis rule
 // via the internal PATCH endpoint.
-func (c *Client) ClearGenerateRequest(ruleID int64) error {
-	payload := map[string]any{"clearGenerateRequest": true}
+// ClearGenerateRequest clears the pending flag and records WHY the
+// generation failed — an empty reason meaning it succeeded.
+//
+// The reason used to go only to this daemon's log, where the person who
+// pressed the button never saw it: a failed generation and a successful
+// one looked identical in the UI.
+func (c *Client) ClearGenerateRequest(ruleID int64, reason string) error {
+	payload := map[string]any{"clearGenerateRequest": true, "generateError": reason}
 	path := fmt.Sprintf("/api/internal/analysis-rules/%d", ruleID)
 	return c.rc.JSON("PATCH", path, payload, nil, http.StatusOK)
 }

@@ -384,13 +384,24 @@ func (a *AIAnalyser) HandleRuleChange(event aimwatcher.RuleChangeEvent) {
 		// Only regenerate when explicitly requested via the generate_requested_at flag
 		if targetRule.GenerateRequestedAt != nil {
 			logger.Infof("Routine generation requested for analysis rule %d (%s), generating...", event.RuleID, targetRule.Type)
+			// The rule prompt is OPTIONAL: it advises on variable
+			// substitution for rules that use variables, and a rule without
+			// one is perfectly legitimate. Code generation is given the whole
+			// rule and never required this field — refusing on it meant the
+			// button appeared to do nothing, with only a log line to say why.
 			if strings.TrimSpace(targetRule.RulePrompt) == "" {
-				logger.Warnf("Cannot generate routine for analysis rule %d (%s): rule prompt is empty", event.RuleID, targetRule.Type)
-			} else if err := a.GenerateForRule(targetRule); err != nil {
-				logger.Errorf("Failed to generate routine for analysis rule %d: %v", event.RuleID, err)
+				logger.Infof("Analysis rule %d (%s) has no rule prompt; generating from the rule alone", event.RuleID, targetRule.Type)
 			}
-			// Clear the flag regardless of success/failure to avoid retry loops
-			if err := a.aiMgrClient.ClearGenerateRequest(event.RuleID); err != nil {
+			// What to report back. Empty means it worked.
+			var failure string
+			if err := a.GenerateForRule(targetRule); err != nil {
+				logger.Errorf("Failed to generate routine for analysis rule %d: %v", event.RuleID, err)
+				failure = err.Error()
+			}
+			// Clear the flag regardless of success/failure to avoid retry
+			// loops, and record the reason so the UI can show it rather than
+			// leaving it in this log.
+			if err := a.aiMgrClient.ClearGenerateRequest(event.RuleID, failure); err != nil {
 				logger.Errorf("Failed to clear generate request flag for analysis rule %d: %v", event.RuleID, err)
 			}
 		} else {
