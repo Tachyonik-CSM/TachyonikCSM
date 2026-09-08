@@ -16,6 +16,7 @@ package textextract
 import (
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -42,6 +43,26 @@ type HTMLPage struct {
 	// a page.
 	Truncated bool
 	Links     []Link
+	// Images the page offers as its own mark, best candidate first. Empty for
+	// a page that declares none — most pages declare at least a favicon.
+	Images []ImageCandidate
+}
+
+// ImageCandidate is one image a page presents as identifying itself.
+//
+// Collected because a logo cannot be read out of text: it is declared in markup
+// the text extraction deliberately drops (head, and img attributes). Ranked
+// rather than filtered, so a caller can prefer an apple-touch-icon — typically
+// a square PNG made for exactly this purpose — over a social banner that is the
+// wrong shape for a logo tile.
+type ImageCandidate struct {
+	URL string
+	// Where it was declared: "apple-touch-icon", "icon", "og:image" or "img".
+	Source string
+	// The img element's alt text, where there was one.
+	Alt string
+	// Lower sorts first. A property of where it was found, not of the image.
+	Rank int
 }
 
 // dropped elements never contribute visible text; their contents would arrive
@@ -117,6 +138,7 @@ func FromHTML(r io.Reader, pageURL string) (HTMLPage, error) {
 	walk(doc)
 
 	page.Text = tidyLines(out.String())
+	page.Images = collectImages(doc, base)
 	return page, nil
 }
 
@@ -238,4 +260,99 @@ func FindImprintLink(page HTMLPage, pageURL string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// maxImageCandidates bounds what one page can offer. A caller fetches these,
+// so an unbounded list would be an unbounded number of requests.
+const maxImageCandidates = 8
+
+// collectImages walks the document for images that identify the site.
+//
+// A separate pass from the text walk on purpose: that one returns early for
+// <head>, which is exactly where the icons and og:image are declared, and
+// teaching it to descend selectively would tangle two unrelated jobs.
+func collectImages(doc *html.Node, base *url.URL) []ImageCandidate {
+	var found []ImageCandidate
+	seen := map[string]bool{}
+
+	add := func(raw, source, alt string, rank int) {
+		resolved, ok := resolveURL(raw, base)
+		if !ok || seen[resolved] {
+			return
+		}
+		seen[resolved] = true
+		found = append(found, ImageCandidate{URL: resolved, Source: source, Alt: alt, Rank: rank})
+	}
+
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "link":
+				rel := strings.ToLower(attr(n, "rel"))
+				switch {
+				case strings.Contains(rel, "apple-touch-icon"):
+					// Square, made to be shown on its own, and almost always a
+					// PNG: the best logo a page routinely declares.
+					add(attr(n, "href"), "apple-touch-icon", "", 1)
+				case strings.Contains(rel, "icon"):
+					add(attr(n, "href"), "icon", "", 3)
+				}
+			case "meta":
+				property := strings.ToLower(attr(n, "property") + " " + attr(n, "name"))
+				if strings.Contains(property, "og:image") {
+					// A social card: usually 1200x630 and not a logo at all, so
+					// it ranks last and is only worth offering as a fallback.
+					add(attr(n, "content"), "og:image", "", 4)
+				}
+			case "img":
+				alt := attr(n, "alt")
+				haystack := strings.ToLower(alt + " " + attr(n, "class") + " " + attr(n, "id") + " " + attr(n, "src"))
+				if strings.Contains(haystack, "logo") {
+					add(attr(n, "src"), "img", strings.TrimSpace(alt), 2)
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+
+	sort.SliceStable(found, func(i, j int) bool { return found[i].Rank < found[j].Rank })
+	if len(found) > maxImageCandidates {
+		found = found[:maxImageCandidates]
+	}
+	return found
+}
+
+func attr(n *html.Node, name string) string {
+	for _, a := range n.Attr {
+		if strings.EqualFold(a.Key, name) {
+			return a.Val
+		}
+	}
+	return ""
+}
+
+// resolveURL turns a possibly relative reference into an absolute http(s) URL.
+// Anything else — data:, javascript:, a malformed reference — is not something
+// a caller can fetch, so it is not offered.
+func resolveURL(raw string, base *url.URL) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	ref, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	resolved := ref
+	if base != nil {
+		resolved = base.ResolveReference(ref)
+	}
+	if resolved.Scheme != "http" && resolved.Scheme != "https" {
+		return "", false
+	}
+	return resolved.String(), true
 }
