@@ -47,7 +47,7 @@ func TestResolveNetwork(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveNetwork(tt.cidr)
+			got, err := resolveNetwork(tt.cidr, "")
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatalf("resolveNetwork(%q) = %v, want error containing %q", tt.cidr, got, tt.wantErr)
@@ -385,5 +385,51 @@ func TestProbe_CapturesCertificateDetail(t *testing.T) {
 	}
 	if len(h.CertDNSNames) == 0 {
 		t.Errorf("certDnsNames empty — httptest certs carry example.com; got %+v", h.CertDNSNames)
+	}
+}
+
+// A range rejected from the command line must name the flag, not a config key
+// the operator never touched.
+func TestResolveNetworkNamesItsSource(t *testing.T) {
+	if _, err := resolveNetwork("8.8.8.0/24", "--network"); err == nil {
+		t.Fatal("a public range was accepted")
+	} else if !strings.Contains(err.Error(), "--network") {
+		t.Errorf("error = %q, want it to name --network", err)
+	}
+
+	// Unset source still reports the config key, for the daemon's path.
+	if _, err := resolveNetwork("8.8.8.0/24", ""); err == nil {
+		t.Fatal("a public range was accepted")
+	} else if !strings.Contains(err.Error(), "netscan.network") {
+		t.Errorf("error = %q, want it to name netscan.network", err)
+	}
+}
+
+// Ports() reports what is actually swept. The configured list and the effective
+// one differ exactly when the config leaves ports empty, which is when a banner
+// printing the configured value would mislead.
+func TestScannerPortsReportsTheEffectiveList(t *testing.T) {
+	s, err := New(Config{Network: "192.168.1.0/24"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := s.Ports(); len(got) != 1 || got[0] != 443 {
+		t.Errorf("Ports() = %v, want the default [443] when none is configured", got)
+	}
+
+	s, err = New(Config{Network: "192.168.1.0/24", Ports: []int{8443, 9392}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := s.Ports(); len(got) != 2 || got[0] != 8443 || got[1] != 9392 {
+		t.Errorf("Ports() = %v, want [8443 9392]", got)
+	}
+
+	// The returned slice is a copy: a caller must not be able to change what
+	// the scanner sweeps by writing into it.
+	p := s.Ports()
+	p[0] = 1
+	if s.Ports()[0] != 8443 {
+		t.Error("Ports() handed out the scanner's own slice")
 	}
 }

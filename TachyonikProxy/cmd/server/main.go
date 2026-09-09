@@ -627,10 +627,41 @@ func runNetScan() {
 	}
 
 	cfg := config.Load()
+
+	// --network and --ports override the configured sweep for this invocation
+	// only, on the same reasoning that lets this command ignore
+	// netscan.enabled: the operator is asking for a specific sweep now, not
+	// changing what the daemon does in the background. Nothing is written back
+	// to config.yaml.
+	//
+	// The overrides buy no extra reach: the CIDR still goes through
+	// netscan.New, which refuses anything public or wider than /22.
+	network, networkSource := cfg.NetScan.Network, "netscan.network"
+	if v, found, err := flagValue(os.Args[1:], "network"); err != nil {
+		fmt.Fprintf(os.Stderr, "netscan: %v\n", err)
+		os.Exit(1)
+	} else if found {
+		network, networkSource = v, "--network"
+	}
+
+	ports := cfg.NetScan.Ports
+	if v, found, err := flagValue(os.Args[1:], "ports"); err != nil {
+		fmt.Fprintf(os.Stderr, "netscan: %v\n", err)
+		os.Exit(1)
+	} else if found {
+		parsed, perr := parsePorts(v)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "netscan: --ports: %v\n", perr)
+			os.Exit(1)
+		}
+		ports = parsed
+	}
+
 	scanner, err := netscan.New(netscan.Config{
 		IntervalMinutes:        cfg.NetScan.IntervalMinutes,
-		Network:                cfg.NetScan.Network,
-		Ports:                  cfg.NetScan.Ports,
+		Network:                network,
+		NetworkSource:          networkSource,
+		Ports:                  ports,
 		Concurrency:            cfg.NetScan.Concurrency,
 		TimeoutSeconds:         cfg.NetScan.TimeoutSeconds,
 		MaxBodyBytes:           cfg.NetScan.MaxBodyBytes,
@@ -641,8 +672,11 @@ func runNetScan() {
 		os.Exit(1)
 	}
 
-	// Progress goes to stderr so stdout stays pipeable.
-	fmt.Fprintf(os.Stderr, "Sweeping %s on port(s) %v ...\n", scanner.Network(), cfg.NetScan.Ports)
+	// Progress goes to stderr so stdout stays pipeable. Both values come from
+	// the scanner, not from cfg: an empty configured port list is filled in
+	// with the default, and reporting the configured one would then name ports
+	// that were never probed.
+	fmt.Fprintf(os.Stderr, "Sweeping %s on port(s) %v ...\n", scanner.Network(), scanner.Ports())
 
 	scanner.ScanOnce(context.Background())
 	snap := scanner.Snapshot()
@@ -782,6 +816,8 @@ func runHelp() {
 	fmt.Println("  reset-enrollment   Clear all enrollment material and reset TLS config")
 	fmt.Println("  scan               Scan for available tools on this host")
 	fmt.Println("  netscan            Sweep the local network over HTTPS and list what answered")
+	fmt.Println("                       --network <cidr>          sweep this range instead of the configured one")
+	fmt.Println("                       --ports <list>            comma-separated ports, e.g. 443,8443")
 	fmt.Println("                       --json                    full records including response bodies")
 	fmt.Println("  self-update        Check (and optionally apply) an auto-update")
 	fmt.Println("                       --dry-run                  check only, no changes")

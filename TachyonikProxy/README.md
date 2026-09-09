@@ -272,7 +272,7 @@ The same binary handles operational subcommands. Flags may appear before or afte
 | `enroll --listen [--san <names>]` | Reverse enrollment — wait for Tachyonik to dial in and complete the handshake |
 | `reset-enrollment [--force]`    | Delete on-disk certs and clear `tls.*`, `reverse_connect.*`, `connection_mode`, `proxy.name` |
 | `scan [--json]`                 | Run the local tool-detection scanner and print results                  |
-| `netscan [--json]`              | Sweep the local network over HTTPS and list what answered               |
+| `netscan [--network <cidr>] [--ports <list>] [--json]` | Sweep the local network over HTTPS and list what answered |
 | `self-update`                   | Check + apply an auto-update; rolls back automatically on health failure |
 | `self-update --dry-run`         | Check the auto-update manifest and report what an apply would do        |
 | `self-update --status`          | Print the local `update-state.json` summary                              |
@@ -306,8 +306,11 @@ Tool detection is **driven from ToolManager**, not from a hard-coded list inside
 ### Inspecting the sweep from the command line
 
 ```bash
-tachyonikproxy netscan          # banner table
-tachyonikproxy netscan --json   # full records, including response bodies
+tachyonikproxy netscan                              # banner table
+tachyonikproxy netscan --json                       # full records, including response bodies
+tachyonikproxy netscan --network 10.0.5.0/24        # a range other than the configured one
+tachyonikproxy netscan --ports 443,8443,9392        # ports other than the configured ones
+tachyonikproxy netscan --network=192.168.10.0/24 --ports=443 --json
 ```
 
 ```
@@ -327,9 +330,23 @@ network before deployment), it costs a full sweep (~24 s at the defaults), and
 `netscan.enabled: false` does not suppress it, since running the command is an
 explicit request rather than background behaviour.
 
+`--network` and `--ports` override `netscan.network` and `netscan.ports` for
+that invocation only — nothing is written back to `config.yaml` and the running
+daemon's periodic sweep is unaffected. They are per-run arguments for the same
+reason the command ignores `netscan.enabled`: an operator at a shell is making
+an explicit request, not changing background behaviour.
+
+The overrides grant no extra reach. A CIDR given on the command line goes
+through the same validation as a configured one, so it must still fall inside
+`10/8`, `172.16/12`, `192.168/16` or `127/8` and be no wider than `/22`;
+anything else is refused. `--ports` takes a comma-separated list, deduplicated
+and sorted, each between 1 and 65535. There is no limit on how many — a sweep
+that grows too large is bounded by `max_scan_duration_minutes` instead.
+
 Progress goes to stderr and the table to stdout, so `netscan --json` pipes
 cleanly. A range the proxy may not sweep is reported on stderr with exit
-status 1.
+status 1, naming `--network` or `netscan.network` according to where the value
+came from.
 
 ### Local `scan` subcommand
 

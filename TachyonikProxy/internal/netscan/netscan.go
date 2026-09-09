@@ -43,9 +43,14 @@ const minPrefixLen = 22
 // Config carries the netscan knobs. Zero values are replaced by defaults in
 // New, so a caller may pass a partially filled struct.
 type Config struct {
-	Enabled                bool
-	IntervalMinutes        int
-	Network                string // explicit CIDR; empty means derive from the primary IPv4
+	Enabled         bool
+	IntervalMinutes int
+	Network         string // explicit CIDR; empty means derive from the primary IPv4
+	// NetworkSource names where Network came from, for error messages only.
+	// Defaults to "netscan.network", the config key. The CLI sets "--network"
+	// so a rejected range points at the flag the operator actually typed
+	// rather than at a config key they never touched.
+	NetworkSource          string
 	Ports                  []int
 	Concurrency            int
 	TimeoutSeconds         int
@@ -124,7 +129,7 @@ type Scanner struct {
 func New(cfg Config) (*Scanner, error) {
 	applyDefaults(&cfg)
 
-	ipNet, err := resolveNetwork(cfg.Network)
+	ipNet, err := resolveNetwork(cfg.Network, cfg.NetworkSource)
 	if err != nil {
 		return nil, err
 	}
@@ -173,35 +178,44 @@ func applyDefaults(cfg *Config) {
 	if len(cfg.Ports) == 0 {
 		cfg.Ports = append([]int(nil), DefaultPorts...)
 	}
+	if cfg.NetworkSource == "" {
+		cfg.NetworkSource = "netscan.network"
+	}
 }
 
 // resolveNetwork returns the network to sweep: the given CIDR, or the /24
 // around the primary IPv4 when cidr is empty. Either way the result must be
 // private and no larger than minPrefixLen.
-func resolveNetwork(cidr string) (*net.IPNet, error) {
+//
+// source names what supplied cidr, and appears in every message so the operator
+// is told where to make the correction — the config key or the flag.
+func resolveNetwork(cidr, source string) (*net.IPNet, error) {
+	if source == "" {
+		source = "netscan.network"
+	}
 	if strings.TrimSpace(cidr) == "" {
 		ip := PrimaryIPv4()
 		if ip == "" {
-			return nil, fmt.Errorf("no non-loopback IPv4 address found; set netscan.network explicitly")
+			return nil, fmt.Errorf("no non-loopback IPv4 address found; set %s explicitly", source)
 		}
 		cidr = ip + "/24"
 	}
 
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid netscan.network %q: %w", cidr, err)
+		return nil, fmt.Errorf("invalid %s %q: %w", source, cidr, err)
 	}
 	ip4 := ipNet.IP.To4()
 	if ip4 == nil {
-		return nil, fmt.Errorf("netscan.network %q is not IPv4; only IPv4 networks are swept", cidr)
+		return nil, fmt.Errorf("%s %q is not IPv4; only IPv4 networks are swept", source, cidr)
 	}
 	if !isSweepableIPv4(ip4) {
 		return nil, fmt.Errorf(
-			"netscan.network %q is outside the sweepable ranges (10/8, 172.16/12, 192.168/16, 127/8); "+
-				"refusing to sweep a public network", ipNet.String())
+			"%s %q is outside the sweepable ranges (10/8, 172.16/12, 192.168/16, 127/8); "+
+				"refusing to sweep a public network", source, ipNet.String())
 	}
 	if ones, _ := ipNet.Mask.Size(); ones < minPrefixLen {
-		return nil, fmt.Errorf("netscan.network %q is larger than /%d; narrow the range", ipNet.String(), minPrefixLen)
+		return nil, fmt.Errorf("%s %q is larger than /%d; narrow the range", source, ipNet.String(), minPrefixLen)
 	}
 	return ipNet, nil
 }
@@ -252,6 +266,12 @@ func PrimaryIPv4() string {
 
 // Network returns the CIDR this scanner sweeps.
 func (s *Scanner) Network() string { return s.network.String() }
+
+// Ports is the port list actually swept, after defaults have been applied.
+// Callers must report this rather than the configured list: an empty config
+// value is filled in with DefaultPorts, so the two disagree exactly when the
+// operator most needs to know what was probed.
+func (s *Scanner) Ports() []int { return append([]int(nil), s.cfg.Ports...) }
 
 // Snapshot returns the current cached view. Safe for concurrent use; the
 // returned Hosts slice is not modified after publication.
