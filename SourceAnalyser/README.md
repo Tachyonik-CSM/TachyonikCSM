@@ -1,3 +1,9 @@
+<!--
+SourceAnalyser
+SPDX-FileCopyrightText: 2026 Tachyonik GmbH
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # SourceAnalyser
 
 SourceAnalyser is a daemon that identifies the format of sources uploaded to
@@ -13,6 +19,7 @@ changing this code.
 
 - [Overview](#overview)
 - [Building](#building)
+- [Versioning](#versioning)
 - [Configuration](#configuration)
 - [Operation](#operation)
 - [Analysis rules and AI](#analysis-rules-and-ai)
@@ -51,10 +58,13 @@ re-analysis — see [Re-analysis triggers](#re-analysis-triggers).
 
 ```bash
 cd TachyonikCSM/SourceAnalyser
-go build -o tachyonik-sourceanalyser ./cmd/daemon
+make build          # embeds the version — see Versioning below
 ```
 
 This creates the `tachyonik-sourceanalyser` binary in the current directory.
+
+A plain `go build -o tachyonik-sourceanalyser ./cmd/daemon` also works, but the
+binary then reports `0.0.0-dev` because nothing injected a version.
 
 From the repository root, `make go-build` builds every service binary, and
 `make lib-check` builds, vets and tests this module together with TachyonikLib
@@ -72,6 +82,58 @@ Managed via `go.mod`:
 
 Pulled in indirectly: `github.com/ledongthuc/pdf` (PDF text extraction, via
 TachyonikLib) and `github.com/gorilla/websocket` (AIManager watcher).
+
+## Versioning
+
+SourceAnalyser carries **its own version**, resolved from its own namespaced git
+tag. It is deliberately independent of the TachyonikCSM application version
+(which lives in `WebUI/package.json`) and of every other module's: the module is
+released when its analysis behaviour changes, which is not the same rhythm.
+
+```bash
+git tag sourceanalyser/1.1.2     # cut a release
+make version                     # what this tree would build as
+./tachyonik-sourceanalyser version
+```
+
+The version is derived with `git describe --tags --match 'sourceanalyser/*'`,
+stripped to a numeric `x.y.z`, and injected at build time:
+
+```
+-ldflags "-X tachyonik/sourceanalyser/internal/version.Version=<version>"
+```
+
+`--match` is what keeps it independent — every other tag in the monorepo is
+ignored. Off-tag or dirty builds get a descriptive suffix (`1.1.2-3-gabc123`,
+`1.1.2-dirty`); a tree with no matching tag falls back to `0.0.0-dev`.
+
+Three build paths inject it, and all three must, or a build silently ships the
+fallback:
+
+| Path | How |
+|---|---|
+| `make build` in this directory | derives it from git |
+| `make go-build` at the repo root | `SOURCEANALYSER_VERSION`, derived from git |
+| The container image | `VERSION` build arg, passed by `compose.yaml` — the build stage has no git |
+
+### Why the version matters beyond identity
+
+Unlike a pure release banner, this value is **data**. It is written into
+ResourceManager's `sources.analyser_version` for every source the daemon
+analyses, and `version.NeedsReanalysis` compares a source's stored value against
+the running build: a source left as *Unsupported* by an older analyser is picked
+up again by a newer one.
+
+That is why the `0.0.0-dev` fallback is chosen rather than something arbitrary.
+`IsOlderThan` parses it as `0.0.0`, which gives the right behaviour in both
+directions: a development build never re-analyses sources left by a real
+release, and a later release does re-analyse anything a development build
+touched — a development build's verdict being provisional.
+
+**Bump the tag whenever analysis behaviour changes**, not only when something
+user-visible does. A change that would make the analyser reach a different
+verdict on a source it previously called *Unsupported* needs a new version, or
+those sources are never revisited.
 
 ## Configuration
 

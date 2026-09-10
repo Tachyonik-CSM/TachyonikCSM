@@ -13,8 +13,23 @@ import (
 	"strings"
 )
 
-// Version is the current version of SourceAnalyser
-const Version = "1.1.1"
+// Version is the current version of SourceAnalyser, resolved from this module's
+// own git tag `sourceanalyser/X.Y.Z` and injected at build time with
+//
+//	-ldflags "-X tachyonik/sourceanalyser/internal/version.Version=X.Y.Z"
+//
+// A var rather than a const because ldflags cannot write a const. There is no
+// hardcoded release number here: the tag is the single source of truth, and
+// this module's version is independent of TachyonikCSM's (which lives in
+// WebUI/package.json) and of every other module's.
+//
+// The default is what an untagged or un-injected build honestly reports. It is
+// also safe for the analyser_version column this value is stamped into:
+// IsOlderThan parses it as 0.0.0, so a development build never re-analyses
+// sources left by a real release, while a later release does re-analyse
+// anything a development build touched — which is the right way round, since a
+// development build's verdict is provisional.
+var Version = "0.0.0-dev"
 
 // IsOlderThan compares two semantic version strings
 // Returns true if v1 is older than v2

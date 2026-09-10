@@ -146,11 +146,16 @@ func main() {
 		defer logFile.Close()
 	}
 
-	// Route subcommand
+	// Route subcommand. Flags are accepted as well as bare words, matching
+	// TachyonikProxy: `sourceanalyser version` and `sourceanalyser --version`
+	// both work, so neither habit is wrong.
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "help":
+		case "help", "--help", "-h":
 			runHelp()
+			return
+		case "version", "--version", "-v":
+			fmt.Printf("Tachyonik SourceAnalyser %s\n", version.Version)
 			return
 		}
 	}
@@ -159,12 +164,13 @@ func main() {
 }
 
 func runHelp() {
-	fmt.Println("Tachyonik SourceAnalyser")
+	fmt.Printf("Tachyonik SourceAnalyser %s\n", version.Version)
 	fmt.Println()
 	fmt.Println("Usage: sourceanalyser [command]")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  (none)      Start the SourceAnalyser daemon (default)")
+	fmt.Println("  version     Print version and exit")
 	fmt.Println("  help        Show this help message")
 }
 
