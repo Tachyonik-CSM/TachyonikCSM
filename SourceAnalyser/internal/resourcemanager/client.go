@@ -5,7 +5,7 @@
 // Package resourcemanager is an outbound HTTP client for the ResourceManager
 // REST API. It lists the sources awaiting analysis, downloads their content,
 // and writes the identified type and status back. The request plumbing lives in
-// internal/restclient; what remains here is the wire types and one line per
+// tachyonik/lib/restclient; what remains here is the wire types and one line per
 // endpoint, plus the bounded file download.
 package resourcemanager
 
@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"time"
 
-	"tachyonik/sourceanalyser/internal/restclient"
+	"tachyonik/lib/restclient"
 )
 
 // Client handles communication with ResourceManager API

@@ -5,7 +5,7 @@
 // Package aimanager is an outbound HTTP client for the AIManager REST API. It
 // fetches analysis rules, AI provider entries, and this module's AI settings,
 // and creates and reads the generated analysis routines that AIManager stores.
-// The request plumbing lives in internal/restclient; what remains here is the
+// The request plumbing lives in tachyonik/lib/restclient; what remains here is the
 // wire types and one line per endpoint.
 package aimanager
 
@@ -16,7 +16,7 @@ import (
 	"net/url"
 	"time"
 
-	"tachyonik/sourceanalyser/internal/restclient"
+	"tachyonik/lib/restclient"
 )
 
 // AIEntry represents an AI provider entry returned by AIManager.
