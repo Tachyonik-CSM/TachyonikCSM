@@ -1,0 +1,43 @@
+# SourceImporter Configuration File Example
+#
+# Copy this file to config.yaml and adjust the values as needed.
+#
+# Precedence: environment variables > this file > built-in defaults.
+# Every value below is optional — omitting a key leaves the default shown in
+# its comment. The internal service keys are the exception: without them the
+# daemon cannot authenticate to the other services.
+
+# Sources are retrieved from ResourceManager. That is its only purpose here;
+# no data is sent back.
+rscmanager:
+  url: http://localhost:8080          # default: http://localhost:8080
+  internal_service_key: ""            # required; no default
+
+# Asset data is sent to AssetManager. That is its only purpose here; nothing
+# is retrieved.
+assetmanager:
+  url: http://localhost:8081          # default: http://localhost:8081
+  internal_service_key: ""            # required; no default
+
+# Log entries and the liveness heartbeat go to SystemManager.
+systemmanager:
+  url: http://localhost:8083          # default: http://localhost:8083
+  internal_service_key: ""            # required; no default
+
+# The AI provider and system prompt for import routines are read from
+# AIManager at runtime; nothing about them is configured here.
+ai_manager:
+  url: http://localhost:8085          # default: http://localhost:8085
+  internal_service_key: ""            # required; no default
+
+importer:
+  poll_interval: 5                    # seconds between polls for new sources; default: 5
+
+heartbeat:
+  interval_seconds: 10                # liveness signal to SystemManager; default: 10
+
+log:
+  file_path: /home/tachyon/log/tachyonik-sourceimporter.log   # default: ./sourceimporter.log
+  to_console: false                   # default: true
+  to_file: true                       # default: true
+  level: INFO                         # One of DEBUG, INFO, WARN, ERROR; default: INFO
