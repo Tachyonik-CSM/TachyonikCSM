@@ -17,6 +17,7 @@ replace tachyonik/lib => ../TachyonikLib
 | `heartbeat` | Sends periodic liveness signals from a daemon (no HTTP server of its own) to SystemManager. Parameterized via `heartbeat.Config{ServiceName, …}`. |
 | `aimwatcher` | Maintains one WebSocket connection to AIManager and dispatches analysis-rule changes, bulk feed imports, and module-AI-setting updates to caller-registered handlers, reconnecting automatically. |
 | `systemmanager` | Thin outbound client for reporting audit-trail events to SystemManager. Modules needing further endpoints embed this `Client` and add methods locally. |
+| `restclient` | The request mechanics every service client repeats: join a path onto the base URL, attach `X-Internal-Service-Key`, send, check the status, decode JSON. Leaves a client holding only its wire types and one line per endpoint. Redirects are never followed — Go strips `Authorization` across hosts but forwards custom headers verbatim, so a 302 would hand the service key to whatever host it names. A wrong status comes back as a typed `*StatusError`, so a caller can react to one code (a 404 becoming "not found") without matching on message text. |
 | `textextract` | Turns a file or a retrieved web page into the text that analysis, import routines and prompts work on. Text formats pass through unchanged; a PDF's text layer is extracted; HTML is rendered as the text a visitor sees (scripts and styling dropped, block elements kept on separate lines) together with its resolved links and a helper that picks out an imprint/contact link. Bounded at both ends (see below). Best-effort and never fatal. |
 | `httpguard` | Makes an outbound request to a user-influenced address survivable: refuses loopback, unspecified, link-local (cloud metadata), multicast and private/ULA addresses. Three layers — validate the URL up front, re-validate every redirect hop, and check again in the dialer at connect time, which is what defeats DNS rebinding. Used by ChatAI for user-supplied AI endpoints and by SystemManager for the organisation homepage fetch. |
 | `providererr` | Turns a failed AI-provider HTTP response into a short reason that is safe to show the user who configured that provider. Echoes no bytes of the body: it lifts at most `message` and `type` out of a document that has to declare a JSON content type and parse as a provider error envelope (`{"error":{"message":…}}` or `{"error":"…"}`), then flattens it to one line and cuts it to 300 runes. Lets a user see "credit balance is too low" instead of "status 400" without turning a user-supplied endpoint into an SSRF read primitive. |
@@ -88,8 +89,8 @@ All twelve service modules depend on this library:
 | AssetManager | `logger`, `systemmanager` |
 | ChatAI | `logger`, `aimwatcher`, `providererr` |
 | ResourceManager | `logger`, `systemmanager` |
-| SourceAnalyser | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `textextract`, `aiclient/*` |
-| SourceImporter | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `textextract`, `aiclient/*` |
+| SourceAnalyser | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
+| SourceImporter | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
 | SystemManager | `logger` |
 | TachyonikProxy | `logger` |
 | ToolManager | `logger`, `aimwatcher`, `providererr` |
