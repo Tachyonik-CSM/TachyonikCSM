@@ -2,6 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Running one tool, and validating the arguments before it runs.
+//
+// A tool is executed directly, never through a shell, so no metacharacter in an
+// argument can expand. That alone is not sufficient: the rendered command line
+// is re-tokenised on whitespace, so a value like "10.0.0.1 --script=evil" would
+// otherwise smuggle in argv flags the tool author never intended. Hence the
+// second rule on top of the per-tool character allowlist — every
+// whitespace-separated field of a value must not begin with '-'. Values
+// constrained by a JSON-schema enum are exempt, being author-approved and
+// sometimes legitimately flags themselves.
+
 package tools
 
 import (

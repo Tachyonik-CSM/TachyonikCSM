@@ -2,6 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Where the files live, which depends on how the proxy was installed: a
+// system install is root-owned under /opt and /usr/local/bin, a user install
+// sits in the user's own directories. The layout is resolved from the running
+// binary rather than assumed.
+
 package selfupdate
 
 import (

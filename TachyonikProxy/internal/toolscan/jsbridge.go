@@ -2,6 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// What a scan routine can reach from JavaScript.
+//
+// Two globals, both bounded. httpGet fetches a URL under time and size limits,
+// so a routine reaching outside the periodic sweep still cannot hang the scanner
+// or exhaust its memory. netscan is a read-only view of the most recent
+// local-network sweep and performs no I/O at all — which is what turns scanning
+// a /24 from 254 separate executions, far beyond any per-routine budget, into a
+// set of string matches over data already collected.
+
 package toolscan
 
 import (

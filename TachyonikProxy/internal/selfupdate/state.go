@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The persistent record of what the updater is doing and has done.
+//
+// It is written before each step rather than after, so a process that dies
+// mid-update leaves behind an honest account of where it got to. It also
+// remembers which versions have already been rolled back, so a bad release is
+// not retried in a loop.
+
 package selfupdate
 
 import (

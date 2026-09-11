@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The listening side of enrollment, used when the platform cannot reach the
+// proxy at the time an operator sets it up.
+//
+// The proxy opens a short-lived endpoint and waits to be dialled: the platform
+// says hello, the two exchange what each needs, and the exchange completes with
+// the certificates written to disk.
+
 package enroll
 
 import (

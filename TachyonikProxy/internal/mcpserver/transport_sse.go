@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The SSE half of the MCP transport: a long-lived GET carrying server-to-client
+// events, paired with ordinary POSTs for the other direction.
+
 package mcpserver
 
 import (

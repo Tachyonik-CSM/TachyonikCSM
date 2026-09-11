@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Removing obsolete version directories so an updating proxy does not grow
+// without bound.
+//
+// The keep-set is deliberate: the active version, the previous one to roll back
+// to, and any version already known to have been rolled back — that last so a
+// bad release is not re-downloaded only to fail again.
+
 package selfupdate
 
 import (

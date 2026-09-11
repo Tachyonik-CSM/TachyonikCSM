@@ -2,6 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The refusal to self-update a package-managed install.
+//
+// Self-update is for the standalone tarball only. A .deb or .rpm install belongs
+// to dpkg or rpm — they record every file they own, and replacing one underneath
+// them corrupts that record; it also simply did not work, since the packages put
+// the binary somewhere else. The packages write a marker beside the default
+// config, and nothing else does, so its presence is the signal.
+
 package selfupdate
 
 import (

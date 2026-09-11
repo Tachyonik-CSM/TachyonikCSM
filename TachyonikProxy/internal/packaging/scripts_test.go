@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests the .deb/.rpm maintainer scripts, which are easy to get subtly wrong and
+// only fail on a real machine.
+//
+// Two halves: a preremove must act only on an actual removal and not on the
+// remove step of an upgrade, and a postinstall must put the service back on the
+// new binary after one.
+
 package packaging
 
 import (

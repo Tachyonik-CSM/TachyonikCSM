@@ -2,6 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Package config loads and saves the proxy's configuration file.
+//
+// Where that file lives is resolved rather than fixed, because a proxy may be
+// installed system-wide or into a single user's home: an explicit environment
+// variable wins, then the working directory, then the user's XDG configuration
+// directory, then the system location. Paths inside the file are resolved
+// relative to it, so a configuration directory can be moved as a unit.
+//
+// Saving preserves an existing file's mode and creates a new one at 0640 — the
+// file names the certificate material and the pairing, and is not world-readable.
 package config
 
 import (

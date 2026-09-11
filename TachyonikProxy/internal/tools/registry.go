@@ -2,6 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Package tools runs the security tools installed on the proxy's host and
+// presents them, together with any upstream MCP servers configured, as one set
+// of MCP tools.
+//
+// Arguments are the security boundary here. A tool is invoked directly, never
+// through a shell, but that alone is not enough: the rendered command line is
+// re-tokenised on whitespace, so a value like "10.0.0.1 --script=evil" would
+// otherwise smuggle in argv flags the tool author never intended. So every
+// whitespace-separated field of a value must also not begin with '-', on top of
+// the per-tool character allowlist. Values constrained by a JSON-schema enum are
+// exempt, since those are author-approved and may legitimately be flags.
+//
+// Executions are bounded by the resource limits in rlimit_*.go.
 package tools
 
 import (

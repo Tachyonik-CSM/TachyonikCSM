@@ -2,6 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The exclusive lock that keeps two self-updates from running at once.
+//
+// A non-blocking flock on the state directory: a second process is told the lock
+// is busy rather than queueing behind the first. The file is 0600, since it sits
+// in a directory an unprivileged user may be able to reach.
+
 package selfupdate
 
 import (

@@ -2,6 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Package toolscan runs the detection routines that discover which tools exist
+// on this host and on its network, in an embedded JavaScript engine.
+//
+// The routines come from ToolManager and are AI-generated, so they are bounded
+// rather than trusted — necessarily, not as defence in depth: the scanner holds
+// one mutex for a whole batch, so a single routine that never returns would
+// block every later scan. Each routine therefore runs under a time and output
+// budget.
+//
+// jsbridge.go defines what a routine can reach: httpGet, itself bounded in time
+// and size, and netscan, a read-only view of the most recent local-network
+// sweep. The sweep runs on its own schedule and netscan performs no I/O, which
+// is what makes scanning a /24 a set of string matches rather than 254 separate
+// executions no routine budget could accommodate.
 package toolscan
 
 import (

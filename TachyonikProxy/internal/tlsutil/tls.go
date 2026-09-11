@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Package tlsutil builds the proxy's server TLS configuration from the enrolled
+// certificate material, requiring and verifying a client certificate — the
+// platform side of the mTLS link that every request to this proxy must present.
 package tlsutil
 
 import (

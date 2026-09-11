@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The trust-chain check that decides whether an update exists and may be
+// applied: fetch the manifest, verify its signature, and compare what it offers
+// against what is running. An update is reported only when every step holds.
+
 package selfupdate
 
 import (

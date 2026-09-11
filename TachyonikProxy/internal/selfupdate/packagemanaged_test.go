@@ -2,6 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests the package-managed marker, including that an unreadable marker path is
+// not treated as absent — failing open there would let a self-update proceed on
+// exactly the install it must not touch. It also pins that the path the
+// packaging writes and the path this code reads are the same.
+
 package selfupdate
 
 import (

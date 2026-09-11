@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Migrating an older single-binary install to the versioned layout the updater
+// needs, so a proxy installed before self-update existed can still take one.
+
 package selfupdate
 
 import (

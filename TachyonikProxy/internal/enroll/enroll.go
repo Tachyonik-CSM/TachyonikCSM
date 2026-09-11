@@ -2,6 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Package enroll pairs a proxy with a TachyonikCSM installation and writes the
+// result to disk: the signed certificates for both directions of the mTLS link,
+// and the configuration that records the pairing.
+//
+// Two directions are supported. The ordinary one has the proxy call the
+// platform's enrollment endpoint; the listen variant has it wait for the
+// platform to come to it, which is what an operator uses when the platform
+// cannot reach the proxy's network at the time of enrollment.
+//
+// Files are written with ownership and permissions appropriate to the install
+// (see owner_unix.go and owner_windows.go), and the operator is told how to
+// actually start the service afterwards — which differs between a system and a
+// user-space install.
 package enroll
 
 import (

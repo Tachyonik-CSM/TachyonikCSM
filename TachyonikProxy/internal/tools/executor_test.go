@@ -2,6 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests the two argument-injection defences.
+//
+// The first is that tools are exec'd directly rather than through a shell, so a
+// metacharacter in an argument is a literal character. The second is the flag
+// guard: because the rendered line is re-tokenised on whitespace, a value
+// containing a space must not be able to introduce a new argv flag. Both are
+// exercised against inputs that would have succeeded before the fixes.
+
 package tools
 
 import (

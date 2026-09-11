@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Package reverseconnect is the proxy's answer to being unreachable. Instead of
+// listening for ToolManager, it dials out over a WebSocket, registers itself,
+// and forwards the JSON-RPC requests that arrive on that connection to the local
+// MCP server.
+//
+// The connection is maintained: it reconnects on its own when it drops, so a
+// proxy behind NAT stays usable without any inbound firewall rule.
 package reverseconnect
 
 import (

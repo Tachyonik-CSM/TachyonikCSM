@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests the update lock: that the file is 0600, that a lock left 0644 by an
+// earlier release is migrated rather than trusted, and that acquire and release
+// behave when a second process is already holding it.
+
 package selfupdate
 
 import (

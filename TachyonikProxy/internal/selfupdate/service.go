@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Starting, stopping and restarting the proxy service, over whichever init
+// system the platform provides — systemd, launchd, or the Windows service
+// manager.
+
 package selfupdate
 
 import (

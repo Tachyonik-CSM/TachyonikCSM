@@ -2,6 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests where the configuration file is found and how it is written.
+//
+// The search order is the substance: an explicit environment variable wins, then
+// the working directory, then the user's XDG directory, then the system
+// location — because a proxy may be installed system-wide or into one user's
+// home. The write tests pin that an existing file keeps its mode and a new one
+// is created 0640, since the file names the certificate material.
+
 package config
 
 import (

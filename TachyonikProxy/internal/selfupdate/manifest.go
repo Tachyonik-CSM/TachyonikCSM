@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The published update manifest and its per-platform artifacts, keyed
+// "<goos>/<goarch>". The signature is carried separately from the body, so the
+// bytes that were signed are exactly the bytes that are verified.
+
 package selfupdate
 
 import (

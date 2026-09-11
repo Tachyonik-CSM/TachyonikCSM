@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests what enrollment writes to disk.
+//
+// Certificate paths are stored relative to the configuration file when they sit
+// beside it, so the whole directory can be moved as a unit, and absolute when an
+// explicit --cert-dir puts them elsewhere. An existing log setting is preserved
+// rather than reset by a re-enrollment.
+
 package enroll
 
 import (

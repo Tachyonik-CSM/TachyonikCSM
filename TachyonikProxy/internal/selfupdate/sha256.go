@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// SHA-256 verification of an artifact, from a file or a stream, against the hex
+// digest the manifest names.
+
 package selfupdate
 
 import (

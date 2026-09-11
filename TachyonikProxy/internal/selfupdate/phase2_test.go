@@ -2,6 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests the state file and the install layout: that a missing file reads as
+// empty rather than failing, that a written state round-trips, that recording a
+// rollback twice is idempotent, that a corrupt file is handled, and that the
+// version directories resolve where the apply path expects them.
+
 package selfupdate
 
 import (

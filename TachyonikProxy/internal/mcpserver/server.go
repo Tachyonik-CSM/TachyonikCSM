@@ -2,6 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Package mcpserver implements the MCP (Model Context Protocol) server that
+// ToolManager talks to: JSON-RPC over HTTP, with an SSE transport for clients
+// that want a stream.
+//
+// It is the proxy's whole public surface — every tool listing, tool call and
+// scan reaches the machine through here, and nothing else is exposed.
 package mcpserver
 
 import (

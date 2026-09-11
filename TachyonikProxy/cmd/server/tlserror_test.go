@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Pins that a TLS file which exists but cannot be read reports differently from
+// one that is missing. The proxy refuses to start either way, and an operator
+// chasing a permissions problem should not be told the file is absent.
+
 package main
 
 import (

@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Fetching an artifact and proving it is the right one.
+//
+// The hash is checked after the file is fully written and synced, not while it
+// streams, so what is verified is what is on disk rather than what passed
+// through memory. Extraction accepts exactly one filename and rejects anything
+// else in the archive, so a tampered tarball cannot place a second file.
+
 package selfupdate
 
 import (

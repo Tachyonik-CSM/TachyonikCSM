@@ -2,6 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Command tachyonikproxy is the TachyonikProxy entry point — the agent installed
+// on a customer's own network that runs security tools there on the platform's
+// behalf, so the tools and the hosts they examine never have to be reachable
+// from outside.
+//
+// Without a subcommand it runs the MCP server, serving ToolManager over mTLS —
+// either by listening, or, when the proxy sits behind NAT, by dialling out and
+// keeping a reverse connection open. TLS is required in both directions and the
+// process refuses to start without usable material rather than falling back to
+// plaintext.
+//
+// The subcommands cover the rest of its life: enroll (and its listen variant)
+// pairs the proxy with an installation, reset-enrollment undoes that, scan and
+// netscan run a detection sweep or a local-network sweep from the command line,
+// and self-update replaces the binary in place.
 package main
 
 import (

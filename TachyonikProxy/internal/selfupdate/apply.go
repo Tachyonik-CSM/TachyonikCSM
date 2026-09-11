@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The apply state machine: download, stage, swap, restart, and roll back if the
+// health probe does not come good.
+//
+// Every step is recorded to the state file before it is taken, so an update
+// interrupted by a crash or a power cut is recoverable rather than leaving the
+// install in an unknown half-swapped condition.
+
 package selfupdate
 
 import (

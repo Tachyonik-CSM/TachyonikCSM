@@ -2,6 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests the bounds and the identity a scan produces.
+//
+// The timeout test is the canary for a routine that never returns: the scanner
+// holds one mutex for a whole batch, so without the budget a single runaway
+// routine blocks every later scan. The rest pin that each result carries the
+// tool overview it was registered against, including the data-bug case where it
+// carries none.
+
 package toolscan
 
 import (

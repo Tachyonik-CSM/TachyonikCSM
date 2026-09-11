@@ -2,6 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// The health probe that decides whether an update is kept or rolled back.
+//
+// It blocks until the restarted proxy proves healthy or the window expires, so
+// a version that starts and immediately fails is caught here rather than left
+// running.
+
 package selfupdate
 
 import (

@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests manifest verification: a correctly signed manifest round-trips, and a
+// manifest whose body or signature was altered is rejected. This is the root of
+// the update trust chain — everything downstream assumes it held.
+
 package selfupdate
 
 import (

@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests the argument scanning and port-list parsing: that a flag is found
+// wherever it appears, and that a port list is normalised to the sorted,
+// duplicate-free form the banner and the sweep both read.
+
 package main
 
 import (

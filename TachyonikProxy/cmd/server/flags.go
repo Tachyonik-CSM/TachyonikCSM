@@ -2,6 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Flag parsing for the subcommands that take values.
+//
+// Deliberately not flag.FlagSet: main() scans every argument itself so a flag
+// can appear before or after a subcommand, which a FlagSet would not allow.
+// Port lists are de-duplicated and sorted, so the startup banner and the sweep
+// agree on what was asked for.
+
 package main
 
 import (

@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests what pruning keeps: the active version, the previous one, and any
+// version recorded as rolled back — and that the hard cap on retained versions
+// applies once there is no rollback left to protect.
+
 package selfupdate
 
 import (
