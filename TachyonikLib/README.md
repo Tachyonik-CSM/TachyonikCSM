@@ -21,6 +21,7 @@ replace tachyonik/lib => ../TachyonikLib
 | `textextract` | Turns a file or a retrieved web page into the text that analysis, import routines and prompts work on. Text formats pass through unchanged; a PDF's text layer is extracted; HTML is rendered as the text a visitor sees (scripts and styling dropped, block elements kept on separate lines) together with its resolved links and a helper that picks out an imprint/contact link. Bounded at both ends (see below). Best-effort and never fatal. |
 | `httpguard` | Makes an outbound request to a user-influenced address survivable: refuses loopback, unspecified, link-local (cloud metadata), multicast and private/ULA addresses. Three layers — validate the URL up front, re-validate every redirect hop, and check again in the dialer at connect time, which is what defeats DNS rebinding. Used by ChatAI for user-supplied AI endpoints and by SystemManager for the organisation homepage fetch. |
 | `providererr` | Turns a failed AI-provider HTTP response into a short reason that is safe to show the user who configured that provider. Echoes no bytes of the body: it lifts at most `message` and `type` out of a document that has to declare a JSON content type and parse as a provider error envelope (`{"error":{"message":…}}` or `{"error":"…"}`), then flattens it to one line and cuts it to 300 runes. Lets a user see "credit balance is too low" instead of "status 400" without turning a user-supplied endpoint into an SSRF read primitive. |
+| `jsctxtrace` | Records which properties JavaScript reads from a context object — the `ctx` a generated rule routine is handed — by path (`questionnaires.nis2Impact.level`, with `[]` for array elements), and which of those do not exist. Behaves like a plain goja conversion otherwise: array methods, `Object.keys`, JSON and `in` work, writes go to a private copy. Used by ActionGenerator's validation and ActionExecutor's dry run to tell a misspelt field from a correct rule no scenario satisfies. |
 | `aiclient/claude` | Client for the Anthropic (Claude) Messages API. |
 | `aiclient/openai` | Client for OpenAI-compatible APIs (OpenAI, Mistral, Google OpenAI-compat, self-hosted). |
 | `aiclient/ollama` | Client for the Ollama API (optional Bearer auth for fronted installs). |
@@ -71,10 +72,12 @@ release line — worth re-running after a toolchain bump.
 ## Requirements
 
 - Go 1.24 or later.
-- Two third-party dependencies, each confined to a single package:
-  `github.com/gorilla/websocket` (used by `aimwatcher`) and
-  `github.com/ledongthuc/pdf` (used by `textextract`). Every other package uses
-  only the standard library.
+- Three third-party dependencies, each confined to a single package:
+  `github.com/gorilla/websocket` (used by `aimwatcher`),
+  `github.com/ledongthuc/pdf` (used by `textextract`) and
+  `github.com/dop251/goja` (used by `jsctxtrace`). Every other package uses
+  only the standard library. goja is required at the same version ActionGenerator
+  and ActionExecutor use, so depending on this library does not move theirs.
 
 ## Consumers
 
@@ -82,8 +85,8 @@ All twelve service modules depend on this library:
 
 | Module | Packages used |
 |--------|---------------|
-| ActionExecutor | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `aiclient/*` |
-| ActionGenerator | `logger`, `heartbeat`, `aimwatcher`, `aiclient/*` |
+| ActionExecutor | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `jsctxtrace`, `aiclient/*` |
+| ActionGenerator | `logger`, `heartbeat`, `aimwatcher`, `jsctxtrace`, `aiclient/*` |
 | ActionManager | `logger` |
 | AIManager | `logger`, `textextract`, `aiclient/*` |
 | AssetManager | `logger`, `systemmanager` |
