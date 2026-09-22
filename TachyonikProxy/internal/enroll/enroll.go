@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,6 +32,7 @@ import (
 	"time"
 
 	"tachyonik/tachyonikproxy/internal/config"
+	"tachyonik/tachyonikproxy/internal/netinfo"
 )
 
 // Request is sent to the enrollment endpoint.
@@ -558,35 +558,9 @@ func writeFileAtomicOwned(path string, data []byte, mode os.FileMode, owner Owne
 }
 
 // getLocalIPs returns a list of non-loopback IP addresses.
+//
+// Thin wrapper over netinfo so enrollment and the inbound register frame report
+// the same addresses; they used to have separate copies of this loop.
 func getLocalIPs() []string {
-	var ips []string
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return ips
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip != nil && !ip.IsLoopback() {
-				ips = append(ips, ip.String())
-			}
-		}
-	}
-	return ips
+	return netinfo.LocalIPs()
 }

@@ -555,7 +555,8 @@ TachyonikProxy supports two mutually exclusive connection modes. The mode is dec
 ```
 
 - The proxy dials `reverse_connect.toolmanager_url` (a `wss://` URL) using its client certificate and the platform CA. Handshake timeout is 30 s.
-- After the WebSocket is up, the proxy sends a `register` message announcing its `proxyName`. ToolManager attaches the connection to the named proxy.
+- After the WebSocket is up, the proxy sends a `register` message announcing its `proxyName` and its `ipAddress`. ToolManager attaches the connection to the named proxy and forwards the address to the platform, where it appears in the Proxies list.
+  - `ipAddress` is this host's own primary IPv4 — the same address the local-network sweep derives its `/24` from, not the source address ToolManager sees (behind NAT those differ, and the LAN address is the useful one). It is reported on every reconnect, so a DHCP change shows up without re-enrolling; it is omitted when the host has no non-loopback address, and the platform then keeps the last address it knew.
 - All MCP traffic is multiplexed over this single WebSocket as JSON-RPC frames. The proxy reads requests, dispatches them to the local MCP server, and writes responses back.
 - The dialer pings every 30 s and reconnects with exponential backoff (5 s → 60 s) on any failure, indefinitely until `SIGINT`/`SIGTERM`.
 - A localhost-only `/health` endpoint is exposed for local diagnostics (`{"status":"ok","mode":"inbound"}`); no external listener is opened.

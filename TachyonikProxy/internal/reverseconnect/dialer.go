@@ -25,12 +25,26 @@ import (
 	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
 	"tachyonik/tachyonikproxy/internal/mcpserver"
+	"tachyonik/tachyonikproxy/internal/netinfo"
 )
 
 // registerMessage is sent to ToolManager immediately after connecting.
 type registerMessage struct {
 	Type      string `json:"type"`
 	ProxyName string `json:"proxyName"`
+	// IPAddress is this host's own address, as the Proxies list shows it.
+	//
+	// An inbound proxy is never dialled, so the platform has no address for it
+	// beyond whatever it reported when it enrolled — and enrolling is a
+	// once-ever act, while a DHCP lease is not. Reporting it on every connect
+	// is what keeps the displayed address true after the proxy moves or its
+	// lease changes.
+	//
+	// Empty when the host has no usable address (network down as the proxy
+	// started); the server keeps the last good value rather than blanking it.
+	// An older ToolManager ignores the field, and an older proxy omits it — in
+	// both directions the connection is unaffected.
+	IPAddress string `json:"ipAddress,omitempty"`
 }
 
 // Dialer maintains a persistent WebSocket connection to ToolManager,
@@ -135,13 +149,14 @@ func (d *Dialer) connectAndServe() error {
 	reg := registerMessage{
 		Type:      "register",
 		ProxyName: d.cfg.Proxy.Name,
+		IPAddress: netinfo.PrimaryIPv4(),
 	}
 	regBytes, _ := json.Marshal(reg)
 	if err := conn.WriteMessage(websocket.TextMessage, regBytes); err != nil {
 		return fmt.Errorf("failed to send register message: %w", err)
 	}
 
-	logger.Infof("Registered with ToolManager as %s", d.cfg.Proxy.Name)
+	logger.Infof("Registered with ToolManager as %s (ip=%q)", d.cfg.Proxy.Name, reg.IPAddress)
 
 	// Setup ping ticker
 	pingTicker := time.NewTicker(30 * time.Second)
