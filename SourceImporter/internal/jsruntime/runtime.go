@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"tachyonik/lib/jsmap"
 	"tachyonik/lib/logger"
 )
 
@@ -317,9 +318,9 @@ func extractResult(vm *goja.Runtime, val goja.Value) (*ImportResult, error) {
 			for _, item := range assetsSlice {
 				if m, ok := item.(map[string]interface{}); ok {
 					result.Assets = append(result.Assets, AssetResult{
-						Name:     getStringField(m, "name"),
-						Type:     getStringField(m, "type"),
-						LastSeen: getStringField(m, "lastSeen"),
+						Name:     jsmap.String(m, "name"),
+						Type:     jsmap.String(m, "type"),
+						LastSeen: jsmap.String(m, "lastSeen"),
 					})
 				}
 			}
@@ -334,11 +335,11 @@ func extractResult(vm *goja.Runtime, val goja.Value) (*ImportResult, error) {
 			for _, item := range vulnsSlice {
 				if m, ok := item.(map[string]interface{}); ok {
 					result.Vulnerabilities = append(result.Vulnerabilities, VulnerabilityResult{
-						Name:     getStringField(m, "name"),
-						Host:     getStringField(m, "host"),
-						Port:     getStringField(m, "port"),
-						Severity: getIntField(m, "severity"),
-						LastSeen: getStringField(m, "lastSeen"),
+						Name:     jsmap.String(m, "name"),
+						Host:     jsmap.String(m, "host"),
+						Port:     jsmap.String(m, "port"),
+						Severity: jsmap.Int(m, "severity"),
+						LastSeen: jsmap.String(m, "lastSeen"),
 					})
 				}
 			}
@@ -353,10 +354,10 @@ func extractResult(vm *goja.Runtime, val goja.Value) (*ImportResult, error) {
 			for _, item := range detectionsSlice {
 				if m, ok := item.(map[string]interface{}); ok {
 					result.Detections = append(result.Detections, DetectionResult{
-						Name:     getStringField(m, "name"),
-						Host:     getStringField(m, "host"),
-						Port:     getStringField(m, "port"),
-						LastSeen: getStringField(m, "lastSeen"),
+						Name:     jsmap.String(m, "name"),
+						Host:     jsmap.String(m, "host"),
+						Port:     jsmap.String(m, "port"),
+						LastSeen: jsmap.String(m, "lastSeen"),
 					})
 				}
 			}
@@ -463,27 +464,4 @@ func (e *JSImportExecutor) ValidateWithMockCtx() []error {
 	}
 
 	return errs
-}
-
-func getStringField(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func getIntField(m map[string]interface{}, key string) int {
-	if v, ok := m[key]; ok {
-		switch n := v.(type) {
-		case int64:
-			return int(n)
-		case float64:
-			return int(n)
-		case int:
-			return n
-		}
-	}
-	return 0
 }
