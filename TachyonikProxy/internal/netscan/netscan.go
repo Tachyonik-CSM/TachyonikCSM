@@ -271,7 +271,33 @@ func (s *Scanner) Network() string { return s.network.String() }
 // Callers must report this rather than the configured list: an empty config
 // value is filled in with DefaultPorts, so the two disagree exactly when the
 // operator most needs to know what was probed.
-func (s *Scanner) Ports() []int { return append([]int(nil), s.cfg.Ports...) }
+func (s *Scanner) Ports() []int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]int(nil), s.cfg.Ports...)
+}
+
+// SetPorts replaces the port list the next sweep will probe.
+//
+// This is how a port list configured centrally in TachyonikCSM reaches a
+// running proxy: the alternative was restarting it, which for a machine in
+// someone else's network is a far larger ask than a configuration change.
+//
+// It takes effect on the next sweep, not the one in flight — see targets(),
+// which reads the list once at the start of a sweep. An empty or nil list is
+// ignored: "sweep nothing" is not a state any caller means, and accepting it
+// would quietly turn the sweep off.
+//
+// A nil receiver is a no-op, which is the "netscan disabled" path: the
+// scanner is held behind an interface that may hold a nil pointer.
+func (s *Scanner) SetPorts(ports []int) {
+	if s == nil || len(ports) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg.Ports = append([]int(nil), ports...)
+}
 
 // Snapshot returns the current cached view. Safe for concurrent use; the
 // returned Hosts slice is not modified after publication.
@@ -294,7 +320,7 @@ func (s *Scanner) Snapshot() Snapshot {
 // caller's path, and a sweep in progress never blocks Snapshot.
 func (s *Scanner) Run(ctx context.Context) {
 	logger.Infof("netscan: sweeping %s every %d minute(s), ports %v, concurrency %d",
-		s.network.String(), s.cfg.IntervalMinutes, s.cfg.Ports, s.cfg.Concurrency)
+		s.network.String(), s.cfg.IntervalMinutes, s.Ports(), s.cfg.Concurrency)
 
 	s.ScanOnce(ctx)
 
@@ -353,6 +379,11 @@ type target struct {
 // targets enumerates every usable address in the network, crossed with the
 // configured ports. The network and broadcast addresses are skipped.
 func (s *Scanner) targets() []target {
+	// Read once, up front: the list can be replaced mid-life by SetPorts, and
+	// a sweep that changed its mind halfway through would probe an incoherent
+	// mixture and report it as one snapshot.
+	ports := s.Ports()
+
 	baseIP := s.network.IP.Mask(s.network.Mask).To4()
 	if baseIP == nil {
 		return nil
@@ -369,7 +400,7 @@ func (s *Scanner) targets() []target {
 		var b [4]byte
 		binary.BigEndian.PutUint32(b[:], base+i)
 		ip := net.IP(b[:]).String()
-		for _, p := range s.cfg.Ports {
+		for _, p := range ports {
 			out = append(out, target{ip: ip, port: p})
 		}
 	}
@@ -377,7 +408,7 @@ func (s *Scanner) targets() []target {
 	// A /31 or /32 has no usable range under that rule; probe the address
 	// itself rather than nothing.
 	if len(out) == 0 {
-		for _, p := range s.cfg.Ports {
+		for _, p := range ports {
 			out = append(out, target{ip: baseIP.String(), port: p})
 		}
 	}

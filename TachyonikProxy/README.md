@@ -391,6 +391,42 @@ not sweep its neighbours.
 This is why a detection rule does **not** need to check that it is on a private
 network before scanning: the platform guarantees it.
 
+### Setting the ports from TachyonikCSM
+
+The port list can also be configured centrally, per proxy, in TachyonikCSM's
+**Edit Proxy** dialog. A proxy that names no list of its own follows the
+installation default set under **System → Settings → Proxy defaults** (admin
+only), where the ports sit beside a free-text note for recording why each one
+is there; clearing a proxy's own list returns it to that default, and revising
+the default moves every proxy that has not overridden it.
+
+Note what that means for a proxy configured by hand: once an installation
+default exists, it is pushed to any proxy without its own list, overriding a
+locally edited `netscan.ports`. To keep a proxy on its local configuration,
+give it that same list explicitly in the Edit Proxy dialog.
+
+A configured list rides along with the tool configuration that
+ResourceManager already pushes to every enrolled proxy, as a `netScanPorts`
+field on MCP `config/update`. The proxy validates it (each entry a port,
+1-65535, no duplicates), applies it to the **next** sweep without restarting,
+and persists it to `netscan.ports` in `config.yaml` so it survives one.
+
+Nothing changes for a proxy whose list is not set centrally: the field is then
+absent from the push and the local `netscan.ports` stands. This matters more
+than it sounds — `config/update` arrives every few minutes, so an absent field
+has to mean "leave it alone" rather than "clear it".
+
+How many ports may be configured is TachyonikCSM's policy
+(`proxy.max_netscan_ports` in ResourceManager's configuration, 32 by default),
+enforced when an admin saves. The proxy deliberately imposes no second limit of
+its own: a list an admin was just told was acceptable must not then be refused
+here for a reason they cannot see. As always, `max_scan_duration_minutes`
+remains the backstop on a sweep that grows too large.
+
+Remote configuration requires `allow_remote_config`, which enrollment sets and
+unenrolling clears. A proxy configured by hand and never enrolled keeps its
+local list.
+
 ### The `netscan` JS API
 
 ```js

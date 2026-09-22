@@ -115,11 +115,22 @@ type ConfigGetResult struct {
 	Tools             []config.ToolConfig      `json:"tools"`
 	MCPServers        []config.MCPServerConfig `json:"mcpServers"`
 	AllowRemoteConfig bool                     `json:"allowRemoteConfig"`
+	// NetScanPorts is what the local-network sweep currently probes, so a
+	// reader can see what the proxy is actually doing rather than what was
+	// last pushed to it.
+	NetScanPorts []int `json:"netScanPorts,omitempty"`
 }
 
 type ConfigUpdateParams struct {
 	Tools      []config.ToolConfig      `json:"tools,omitempty"`
 	MCPServers []config.MCPServerConfig `json:"mcpServers,omitempty"`
+	// NetScanPorts replaces the ports the local-network sweep probes.
+	//
+	// Absent — which is what every push carries unless TachyonikCSM has a port
+	// list configured for this proxy — leaves the local setting alone. That
+	// matters because config/update arrives every few minutes: a field that
+	// meant "clear it" when missing would blank the local config repeatedly.
+	NetScanPorts []int `json:"netScanPorts,omitempty"`
 }
 
 type ToolsScanResult struct {
@@ -283,6 +294,7 @@ func (s *Server) handleConfigGet(req Request) *Response {
 		Tools:             s.config.Tools,
 		MCPServers:        s.config.MCPServers,
 		AllowRemoteConfig: s.config.AllowRemoteConfig,
+		NetScanPorts:      s.config.NetScan.Ports,
 	})
 }
 
@@ -301,6 +313,33 @@ func validatePushedTools(tools []config.ToolConfig) error {
 		}
 	}
 	return nil
+}
+
+// validatePushedNetScanPorts checks a remotely pushed port list.
+//
+// Only what the proxy itself must guarantee: that every entry is a port. How
+// MANY ports are reasonable is TachyonikCSM's policy (proxy.max_netscan_ports
+// there), deliberately not duplicated here — a second, invisible limit on this
+// side would reject a list an admin had just been told was acceptable.
+func validatePushedNetScanPorts(ports []int) error {
+	seen := make(map[int]struct{}, len(ports))
+	for _, p := range ports {
+		if p < 1 || p > 65535 {
+			return fmt.Errorf("rejected config update: %d is not a port (1-65535)", p)
+		}
+		if _, dup := seen[p]; dup {
+			return fmt.Errorf("rejected config update: port %d is listed twice", p)
+		}
+		seen[p] = struct{}{}
+	}
+	return nil
+}
+
+// netScanPortSetter is the part of the netscan scanner this file needs.
+// Asserted rather than required, so a build with no sweep — where netScan is a
+// nil interface — simply has nothing to reconfigure.
+type netScanPortSetter interface {
+	SetPorts([]int)
 }
 
 func (s *Server) handleConfigUpdate(req Request) *Response {
@@ -322,6 +361,11 @@ func (s *Server) handleConfigUpdate(req Request) *Response {
 			return errResp(req.ID, codeInvalidParams, err.Error())
 		}
 	}
+	if len(params.NetScanPorts) > 0 {
+		if err := validatePushedNetScanPorts(params.NetScanPorts); err != nil {
+			return errResp(req.ID, codeInvalidParams, err.Error())
+		}
+	}
 
 	s.mu.Lock()
 	if params.Tools != nil {
@@ -331,7 +375,24 @@ func (s *Server) handleConfigUpdate(req Request) *Response {
 	if params.MCPServers != nil {
 		s.config.MCPServers = params.MCPServers
 	}
+	if len(params.NetScanPorts) > 0 {
+		s.config.NetScan.Ports = append([]int(nil), params.NetScanPorts...)
+	}
 	s.mu.Unlock()
+
+	// Apply to the running sweep. Unlike a pushed mcpServers list, which waits
+	// for a restart, this takes effect on the next sweep — a proxy in someone
+	// else's network should not need restarting to change what it probes.
+	if len(params.NetScanPorts) > 0 {
+		if setter, ok := s.netScan.(netScanPortSetter); ok {
+			setter.SetPorts(params.NetScanPorts)
+			logger.Infof("netscan ports set remotely to %v", params.NetScanPorts)
+		} else {
+			// Stored and persisted, so a restart picks it up; there is just no
+			// running sweep to retarget.
+			logger.Infof("netscan ports stored as %v; no sweep is running to apply them to", params.NetScanPorts)
+		}
+	}
 
 	// Persist config — to the same resolved path the config was loaded
 	// from, never a CWD-relative fallback (a remote config push must not
