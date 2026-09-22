@@ -382,14 +382,28 @@ routines only ever read the last completed snapshot.
 
 ### The range is always private
 
-The network is derived from this host's primary IPv4 as a `/24`, or set
-explicitly with `netscan.network`. Either way it must fall inside `10/8`,
-`172.16/12`, `192.168/16` or `127/8`, and be no wider than `/22`. A proxy
-holding a public address logs that netscan is disabled and carries on — it will
-not sweep its neighbours.
+A sweep covers the proxy's **own** network, plus any **added** ones.
+
+The own network — the default — is derived from this host's primary IPv4 as a
+`/24`, or set explicitly with `netscan.network`. It is the proxy's fact about
+where it was installed: TachyonikCSM can switch it off, but cannot change or
+remove it. It must fall inside `10/8`, `172.16/12`, `192.168/16` or `127/8`,
+and be no wider than `/22`. A proxy holding a public address logs that netscan
+is disabled and carries on — it will not sweep its neighbours.
+
+Added networks (`netscan.extra_networks`, or the Edit Proxy dialog) face the
+same private-range rule and a stricter size limit: **at most a `/24`**. The own
+network's size is a fact about the installation; an added one is a typed range,
+where one character is the difference between 254 addresses and four thousand.
+An added network that fails either rule is skipped with a warning and the rest
+are still swept — one bad entry must never switch scanning off altogether.
+
+Selecting nothing at all — the own network disabled and none added — is
+allowed. The sweep then idles and reports itself **not ready**, which is how a
+routine is told it has no basis to judge either way.
 
 This is why a detection rule does **not** need to check that it is on a private
-network before scanning: the platform guarantees it.
+network before scanning: the platform guarantees it, however the range arrived.
 
 ### Setting the ports from TachyonikCSM
 
@@ -411,16 +425,25 @@ field on MCP `config/update`. The proxy validates it (each entry a port,
 1-65535, no duplicates), applies it to the **next** sweep without restarting,
 and persists it to `netscan.ports` in `config.yaml` so it survives one.
 
+The **networks** ride along the same way, as `netScanDefaultEnabled` and
+`netScanExtraNetworks`. What is never sent is the proxy's own network itself —
+only whether to include it — so a proxy that moves to another subnet keeps
+sweeping the right range without the platform being told. The proxy reports
+that network back through MCP `config/get` when it connects, which is the only
+way TachyonikCSM learns it at all.
+
 Nothing changes for a proxy whose list is not set centrally: the field is then
 absent from the push and the local `netscan.ports` stands. This matters more
 than it sounds — `config/update` arrives every few minutes, so an absent field
 has to mean "leave it alone" rather than "clear it".
 
-How many ports may be configured is TachyonikCSM's policy
-(`proxy.max_netscan_ports` in ResourceManager's configuration, 32 by default),
-enforced when an admin saves. The proxy deliberately imposes no second limit of
-its own: a list an admin was just told was acceptable must not then be refused
-here for a reason they cannot see. As always, `max_scan_duration_minutes`
+How many ports and how many networks may be configured is TachyonikCSM's
+policy (`proxy.max_netscan_ports` and `proxy.max_netscan_networks` in
+ResourceManager's configuration, 32 and 8 by default), enforced when an admin
+saves. The proxy imposes no second *count* limit of its own: a list an admin
+was just told was acceptable must not then be refused here for a reason they
+cannot see. The private-range and `/24` rules are different — those are safety
+bounds on what this proxy may probe, so it enforces them whatever arrives. As always, `max_scan_duration_minutes`
 remains the backstop on a sweep that grows too large.
 
 Remote configuration requires `allow_remote_config`, which enrollment sets and
@@ -510,7 +533,9 @@ the address it was found at.
 |---|---|---|
 | `enabled` | `true` | Sweep at startup and on each interval |
 | `interval_minutes` | `60` | Time between sweeps |
-| `network` | `""` | Explicit CIDR; empty derives the `/24` from the primary IPv4 |
+| `network` | `""` | The proxy's own network. Explicit CIDR; empty derives the `/24` from the primary IPv4 |
+| `network_enabled` | `true` | Whether to sweep that network. Absent means yes |
+| `extra_networks` | `[]` | Additional CIDRs to sweep, each at most a `/24` and private. Written here when TachyonikCSM pushes a selection |
 | `ports` | `[443]` | Ports probed per address; each one multiplies the sweep |
 | `concurrency` | `32` | Simultaneous probes — the main tuning knob |
 | `timeout_seconds` | `3` | Per-probe timeout |

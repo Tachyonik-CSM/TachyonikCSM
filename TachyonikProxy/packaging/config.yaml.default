@@ -42,7 +42,10 @@ allow_remote_config: false
 netscan:
   enabled: true
   interval_minutes: 60        # also sweeps once immediately at startup
-  network: ""                 # empty = derive the /24 from the primary IPv4
+  network: ""                 # the proxy's own network; empty = derive the /24 from the primary IPv4
+  network_enabled: true       # sweep that network at all (absent also means yes)
+  extra_networks: []          # additional CIDRs, each at most a /24 and private;
+                              # set from TachyonikCSM's Edit Proxy dialog
   ports: [443]                # each extra port multiplies the sweep by the host count
   concurrency: 32             # main tuning knob: 254 hosts / 32 x 3s ~= 24s worst case
   timeout_seconds: 3          # LAN services answer in well under this

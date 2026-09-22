@@ -94,3 +94,16 @@ func parsePorts(list string) ([]int, error) {
 	sort.Ints(ports)
 	return ports, nil
 }
+
+// splitList reads a comma-separated flag value into its trimmed, non-empty
+// parts. The same shape as parsePorts takes, so "--network a,b" and
+// "--ports 1,2" are typed the same way.
+func splitList(v string) []string {
+	var out []string
+	for _, field := range strings.Split(v, ",") {
+		if field = strings.TrimSpace(field); field != "" {
+			out = append(out, field)
+		}
+	}
+	return out
+}

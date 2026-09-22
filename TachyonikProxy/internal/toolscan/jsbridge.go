@@ -57,14 +57,25 @@ func (s *Scanner) registerNetScan(vm *goja.Runtime) {
 	}
 
 	api := map[string]interface{}{
-		// info() — { network, ready, scanning, lastScan, durationMs, hostCount }
+		// info() — { network, networks, ready, scanning, lastScan, durationMs,
+		// hostCount }
 		//
-		// ready is the one a routine must check first: false means no sweep has
-		// completed yet, so an empty host list says nothing about whether a
-		// tool is present.
+		// ready is the one a routine must check first: false means there is no
+		// completed sweep to read — either none has finished yet, or no
+		// network is selected at all — so an empty host list says nothing
+		// about whether a tool is present.
+		//
+		// network is the proxy's own network and stays a string, as it has
+		// always been. networks is every range the sweep covered, which with
+		// several in play is what a routine should read.
 		"info": func(goja.FunctionCall) goja.Value {
+			networks := make([]interface{}, 0, len(snap.Networks))
+			for _, n := range snap.Networks {
+				networks = append(networks, n)
+			}
 			return vm.ToValue(map[string]interface{}{
 				"network":    snap.Network,
+				"networks":   networks,
 				"ready":      snap.Ready,
 				"scanning":   snap.Scanning,
 				"lastScan":   snap.LastScan.Format(time.RFC3339),
@@ -147,7 +158,10 @@ func hostToMap(h netscan.Host) map[string]interface{} {
 		dnsNames = append(dnsNames, n)
 	}
 	return map[string]interface{}{
-		"ip":           h.IP,
+		"ip": h.IP,
+		// Which swept range this address came from — empty on a host recorded
+		// before the sweep knew about several networks.
+		"network":      h.Network,
 		"port":         h.Port,
 		"url":          h.URL,
 		"finalUrl":     h.FinalURL,

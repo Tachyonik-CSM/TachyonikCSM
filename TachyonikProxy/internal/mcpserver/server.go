@@ -119,6 +119,15 @@ type ConfigGetResult struct {
 	// reader can see what the proxy is actually doing rather than what was
 	// last pushed to it.
 	NetScanPorts []int `json:"netScanPorts,omitempty"`
+	// NetScanDefaultNetwork is the network this proxy derived from where it is
+	// installed. TachyonikCSM has no way to know it otherwise — the proxy owns
+	// the fact — and shows it as the default network that may be disabled but
+	// not removed. Empty when netscan is off or the network could not be
+	// resolved.
+	NetScanDefaultNetwork string `json:"netScanDefaultNetwork,omitempty"`
+	// NetScanNetworks is every range the sweep currently covers, which is the
+	// default (unless disabled) plus any added ones.
+	NetScanNetworks []string `json:"netScanNetworks,omitempty"`
 }
 
 type ConfigUpdateParams struct {
@@ -131,6 +140,18 @@ type ConfigUpdateParams struct {
 	// matters because config/update arrives every few minutes: a field that
 	// meant "clear it" when missing would blank the local config repeatedly.
 	NetScanPorts []int `json:"netScanPorts,omitempty"`
+	// NetScanExtraNetworks replaces the networks swept ALONGSIDE the proxy's
+	// own. The proxy's own network is never sent: it belongs to the proxy, and
+	// a copy held by the platform would go stale the moment the proxy moved.
+	//
+	// nil (the key absent) leaves the selection alone; an empty array clears
+	// the added networks, which is a thing an operator can legitimately ask
+	// for. The two are distinguishable here precisely because they mean
+	// different things.
+	NetScanExtraNetworks []string `json:"netScanExtraNetworks"`
+	// NetScanDefaultEnabled says whether to sweep the proxy's own network.
+	// Absent leaves it as it is.
+	NetScanDefaultEnabled *bool `json:"netScanDefaultEnabled,omitempty"`
 }
 
 type ToolsScanResult struct {
@@ -295,6 +316,12 @@ func (s *Server) handleConfigGet(req Request) *Response {
 		MCPServers:        s.config.MCPServers,
 		AllowRemoteConfig: s.config.AllowRemoteConfig,
 		NetScanPorts:      s.config.NetScan.Ports,
+		// Read from the scanner, not re-derived from the config: what an
+		// operator is shown has to be the network the sweep actually uses.
+		// There is more than one "primary IPv4" in this codebase and they can
+		// disagree on a multi-homed host.
+		NetScanDefaultNetwork: s.netScanDefaultNetwork(),
+		NetScanNetworks:       s.netScanNetworks(),
 	})
 }
 
@@ -342,6 +369,76 @@ type netScanPortSetter interface {
 	SetPorts([]int)
 }
 
+// netScanNetworkSetter is the same arrangement for the swept networks. Kept
+// separate from the provider interface so that interface stays the single
+// Snapshot() method the JS bridge relies on, nil-receiver behaviour included.
+type netScanNetworkSetter interface {
+	SetNetworkSelection(defaultEnabled bool, extraCIDRs []string) error
+	Network() string
+	Networks() []string
+}
+
+// netScanDefaultNetwork reports the proxy's own network, or "" when there is
+// no sweep to ask.
+func (s *Server) netScanDefaultNetwork() string {
+	if r, ok := s.netScan.(netScanNetworkSetter); ok {
+		return r.Network()
+	}
+	return ""
+}
+
+// netScanNetworks reports every range currently swept.
+func (s *Server) netScanNetworks() []string {
+	if r, ok := s.netScan.(netScanNetworkSetter); ok {
+		return r.Networks()
+	}
+	return nil
+}
+
+// applyNetworkSelection validates and applies a pushed network selection to
+// the running sweep.
+//
+// Applied BEFORE the config is written, so a selection the scanner refuses
+// leaves both the sweep and the stored config exactly as they were — the
+// alternative is a config.yaml naming ranges the sweep never accepted.
+//
+// Fields the push leaves out keep their current values, which is why the
+// current ones are read back here rather than assumed.
+func (s *Server) applyNetworkSelection(params ConfigUpdateParams) error {
+	setter, ok := s.netScan.(netScanNetworkSetter)
+	if !ok {
+		// No sweep to retarget. The values are still stored and persisted, so
+		// a restart with netscan enabled picks them up.
+		return nil
+	}
+
+	s.mu.RLock()
+	defaultEnabled := s.config.NetScan.NetworkEnabled == nil || *s.config.NetScan.NetworkEnabled
+	extras := s.config.NetScan.ExtraNetworks
+	s.mu.RUnlock()
+
+	if params.NetScanDefaultEnabled != nil {
+		defaultEnabled = *params.NetScanDefaultEnabled
+	}
+	if params.NetScanExtraNetworks != nil {
+		extras = params.NetScanExtraNetworks
+	}
+	return setter.SetNetworkSelection(defaultEnabled, extras)
+}
+
+// enabledWord renders a tri-state flag for the log line: what a push said
+// about the proxy's own network, including having said nothing.
+func enabledWord(v *bool) string {
+	switch {
+	case v == nil:
+		return "unchanged"
+	case *v:
+		return "enabled"
+	default:
+		return "disabled"
+	}
+}
+
 func (s *Server) handleConfigUpdate(req Request) *Response {
 	if !s.config.AllowRemoteConfig {
 		return errResp(req.ID, codeInvalidRequest, "Remote configuration updates are disabled")
@@ -366,6 +463,17 @@ func (s *Server) handleConfigUpdate(req Request) *Response {
 			return errResp(req.ID, codeInvalidParams, err.Error())
 		}
 	}
+	// The networks a push may add are validated by the scanner itself, against
+	// the same private-range and size rules a locally configured one faces.
+	// The platform validates too, but this is the floor that does not depend
+	// on the platform being well behaved: whatever arrives, this proxy probes
+	// only RFC1918 space, and only in units of at most a /24.
+	networksChanged := params.NetScanExtraNetworks != nil || params.NetScanDefaultEnabled != nil
+	if networksChanged {
+		if err := s.applyNetworkSelection(params); err != nil {
+			return errResp(req.ID, codeInvalidParams, err.Error())
+		}
+	}
 
 	s.mu.Lock()
 	if params.Tools != nil {
@@ -377,6 +485,13 @@ func (s *Server) handleConfigUpdate(req Request) *Response {
 	}
 	if len(params.NetScanPorts) > 0 {
 		s.config.NetScan.Ports = append([]int(nil), params.NetScanPorts...)
+	}
+	if params.NetScanExtraNetworks != nil {
+		s.config.NetScan.ExtraNetworks = append([]string(nil), params.NetScanExtraNetworks...)
+	}
+	if params.NetScanDefaultEnabled != nil {
+		enabled := *params.NetScanDefaultEnabled
+		s.config.NetScan.NetworkEnabled = &enabled
 	}
 	s.mu.Unlock()
 
@@ -392,6 +507,11 @@ func (s *Server) handleConfigUpdate(req Request) *Response {
 			// running sweep to retarget.
 			logger.Infof("netscan ports stored as %v; no sweep is running to apply them to", params.NetScanPorts)
 		}
+	}
+
+	if networksChanged {
+		logger.Infof("netscan networks set remotely: own network %s, added %v",
+			enabledWord(params.NetScanDefaultEnabled), params.NetScanExtraNetworks)
 	}
 
 	// Persist config — to the same resolved path the config was loaded

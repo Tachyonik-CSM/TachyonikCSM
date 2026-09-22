@@ -40,6 +40,14 @@ import (
 // than an intent, and would keep a sweep running for many minutes.
 const minPrefixLen = 22
 
+// minExtraPrefixLen bounds an ADDED network, more tightly than the default
+// one. The default is the network the proxy sits in and its size is a fact
+// about where it was installed; an added network is somebody typing a range
+// into a form, where the cost of a slip is a sweep that probes four times what
+// was intended. /24 is the unit operators think in and the unit the default is
+// derived as.
+const minExtraPrefixLen = 24
+
 // Config carries the netscan knobs. Zero values are replaced by defaults in
 // New, so a caller may pass a partially filled struct.
 type Config struct {
@@ -50,7 +58,17 @@ type Config struct {
 	// Defaults to "netscan.network", the config key. The CLI sets "--network"
 	// so a rejected range points at the flag the operator actually typed
 	// rather than at a config key they never touched.
-	NetworkSource          string
+	NetworkSource string
+	// ExtraNetworks are additional CIDRs to sweep alongside the default one,
+	// configured centrally in TachyonikCSM. Each is validated like the default
+	// but may be no larger than a /24. An entry that does not validate is
+	// skipped with a warning rather than failing the scanner: one bad range
+	// pushed from a form must not switch off scanning altogether.
+	ExtraNetworks []string
+	// DefaultNetworkEnabled says whether to sweep the default network at all.
+	// nil means yes — the absent case has to be the enabled one, or a config
+	// written before this existed would silently stop sweeping.
+	DefaultNetworkEnabled  *bool
 	Ports                  []int
 	Concurrency            int
 	TimeoutSeconds         int
@@ -85,7 +103,10 @@ var DefaultPorts = []int{443}
 // shell that fills itself in via JavaScript, still presents a certificate
 // naming the product.
 type Host struct {
-	IP           string            `json:"ip"`
+	IP string `json:"ip"`
+	// Network is the swept range this address came from, which with several
+	// networks in play is the only way a routine can tell them apart.
+	Network      string            `json:"network"`
 	Port         int               `json:"port"`
 	URL          string            `json:"url"`
 	FinalURL     string            `json:"finalUrl"`
@@ -105,7 +126,13 @@ type Host struct {
 // Ready distinguishes "swept, found nothing" from "has not swept yet" — a
 // routine must not report a tool absent merely because the proxy just started.
 type Snapshot struct {
-	Network    string    `json:"network"`
+	// Network is the DEFAULT network — the one the proxy derived from where it
+	// is installed. Kept as a single string because that is what it has always
+	// been; Networks below is the full list actually swept.
+	Network string `json:"network"`
+	// Networks is every range the last sweep covered: the default (unless it
+	// has been disabled) followed by any added ones, in configured order.
+	Networks   []string  `json:"networks"`
 	Ready      bool      `json:"ready"`
 	Scanning   bool      `json:"scanning"`
 	LastScan   time.Time `json:"lastScan"`
@@ -115,13 +142,22 @@ type Snapshot struct {
 
 // Scanner owns the sweep schedule and the cached results.
 type Scanner struct {
-	cfg     Config
-	network *net.IPNet
-	client  *http.Client
-	roots   *x509.CertPool
+	cfg    Config
+	client *http.Client
+	roots  *x509.CertPool
 
-	mu   sync.RWMutex
-	snap Snapshot
+	// defaultNetwork is the network this proxy sits in — derived from its
+	// primary IPv4, or named by netscan.network. It is the proxy's own fact
+	// about where it was installed, which is why it can be disabled but never
+	// removed or replaced from outside. nil when it could not be resolved.
+	defaultNetwork *net.IPNet
+
+	mu sync.RWMutex
+	// Guarded by mu, because all three can be replaced at runtime by a push
+	// from TachyonikCSM.
+	defaultEnabled bool
+	extraNetworks  []*net.IPNet
+	snap           Snapshot
 }
 
 // New validates cfg, resolves the network to sweep, and returns a Scanner.
@@ -129,20 +165,44 @@ type Scanner struct {
 func New(cfg Config) (*Scanner, error) {
 	applyDefaults(&cfg)
 
+	extras, rejected := resolveExtraNetworks(cfg.ExtraNetworks)
+	for _, why := range rejected {
+		// Skipped, not fatal: one unusable range must not take the others with
+		// it, least of all the proxy's own network.
+		logger.Warnf("netscan: %v", why)
+	}
+
 	ipNet, err := resolveNetwork(cfg.Network, cfg.NetworkSource)
 	if err != nil {
-		return nil, err
+		// With nothing else to sweep this is the operator's configuration
+		// error and the scanner cannot be built — which is how it has always
+		// behaved. With added networks to fall back on, the sweep is still
+		// useful without the proxy's own range, so it carries on without it.
+		if len(extras) == 0 {
+			return nil, err
+		}
+		logger.Warnf("netscan: %v; sweeping the added network(s) only", err)
+		ipNet = nil
 	}
+
+	defaultEnabled := cfg.DefaultNetworkEnabled == nil || *cfg.DefaultNetworkEnabled
 
 	// System roots are used only to answer "would this have been trusted?".
 	// A failure to load them is not fatal: probing continues, and TLSTrusted
 	// is simply reported false throughout.
 	roots, _ := x509.SystemCertPool()
 
+	defaultCIDR := ""
+	if ipNet != nil {
+		defaultCIDR = ipNet.String()
+	}
+
 	return &Scanner{
-		cfg:     cfg,
-		network: ipNet,
-		roots:   roots,
+		cfg:            cfg,
+		defaultNetwork: ipNet,
+		defaultEnabled: defaultEnabled,
+		extraNetworks:  extras,
+		roots:          roots,
 		client: &http.Client{
 			Timeout:       time.Duration(cfg.TimeoutSeconds) * time.Second,
 			CheckRedirect: checkRedirect,
@@ -155,8 +215,50 @@ func New(cfg Config) (*Scanner, error) {
 				MaxIdleConnsPerHost: -1,
 			},
 		},
-		snap: Snapshot{Network: ipNet.String()},
+		snap: Snapshot{Network: defaultCIDR},
 	}, nil
+}
+
+// resolveExtraNetworks validates added networks, returning those that are
+// usable and a reason for each that is not. Nothing here is fatal: the caller
+// logs the rejects and sweeps the rest.
+func resolveExtraNetworks(cidrs []string) ([]*net.IPNet, []error) {
+	var out []*net.IPNet
+	var rejected []error
+	seen := make(map[string]struct{}, len(cidrs))
+	for _, cidr := range cidrs {
+		ipNet, err := resolveExtraNetwork(cidr)
+		if err != nil {
+			rejected = append(rejected, err)
+			continue
+		}
+		key := ipNet.String()
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ipNet)
+	}
+	return out, rejected
+}
+
+// resolveExtraNetwork validates one added network: everything resolveNetwork
+// requires, and no larger than a /24.
+//
+// The size rule is stricter here on purpose — see minExtraPrefixLen. The
+// private-range rule is not relaxed at all: an added network is still somebody
+// else's network if it is public, and the guarantee that this proxy only ever
+// probes RFC1918 space holds however the range arrived.
+func resolveExtraNetwork(cidr string) (*net.IPNet, error) {
+	ipNet, err := resolveNetwork(cidr, "netscan.extra_networks")
+	if err != nil {
+		return nil, err
+	}
+	if ones, _ := ipNet.Mask.Size(); ones < minExtraPrefixLen {
+		return nil, fmt.Errorf("added network %q is larger than /%d; a network added to the sweep may be at most a /%d",
+			ipNet.String(), minExtraPrefixLen, minExtraPrefixLen)
+	}
+	return ipNet, nil
 }
 
 func applyDefaults(cfg *Config) {
@@ -264,8 +366,73 @@ func PrimaryIPv4() string {
 	return ""
 }
 
-// Network returns the CIDR this scanner sweeps.
-func (s *Scanner) Network() string { return s.network.String() }
+// Network returns the proxy's DEFAULT network — the one derived from where it
+// is installed — whether or not it is currently being swept. Empty when it
+// could not be resolved.
+//
+// This is what gets reported to TachyonikCSM as the network the proxy owns, so
+// it deliberately reads the resolved value rather than re-deriving it: the
+// figure shown to an operator must be the one the sweep actually uses.
+func (s *Scanner) Network() string {
+	if s == nil || s.defaultNetwork == nil {
+		return ""
+	}
+	return s.defaultNetwork.String()
+}
+
+// Networks reports every range the next sweep will cover, in the order they
+// are probed: the default first when enabled, then the added ones. Empty means
+// there is nothing to sweep, which is a legitimate configuration.
+func (s *Scanner) Networks() []string {
+	nets := s.networks()
+	out := make([]string, 0, len(nets))
+	for _, n := range nets {
+		out = append(out, n.String())
+	}
+	return out
+}
+
+// networks is the effective list, read under the lock.
+func (s *Scanner) networks() []*net.IPNet {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*net.IPNet
+	if s.defaultEnabled && s.defaultNetwork != nil {
+		out = append(out, s.defaultNetwork)
+	}
+	return append(out, s.extraNetworks...)
+}
+
+// SetNetworkSelection replaces what the sweep covers: whether the proxy's own
+// network is included, and which additional networks to sweep alongside it.
+//
+// This is how a selection made in TachyonikCSM reaches a running proxy. The
+// default network itself is never passed in — it belongs to the proxy, and a
+// platform holding a copy of it would go stale the moment the proxy moved.
+//
+// Validation is all-or-nothing and happens before anything is applied, so a
+// rejected push leaves the sweep exactly as it was. Takes effect on the next
+// sweep, not the one in flight.
+//
+// A nil receiver is a no-op: netscan may be disabled entirely.
+func (s *Scanner) SetNetworkSelection(defaultEnabled bool, extraCIDRs []string) error {
+	if s == nil {
+		return nil
+	}
+	extras, rejected := resolveExtraNetworks(extraCIDRs)
+	if len(rejected) > 0 {
+		return rejected[0]
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.defaultEnabled = defaultEnabled
+	s.extraNetworks = extras
+	return nil
+}
 
 // Ports is the port list actually swept, after defaults have been applied.
 // Callers must report this rather than the configured list: an empty config
@@ -319,8 +486,8 @@ func (s *Scanner) Snapshot() Snapshot {
 // It is meant to be started in its own goroutine: nothing here touches the
 // caller's path, and a sweep in progress never blocks Snapshot.
 func (s *Scanner) Run(ctx context.Context) {
-	logger.Infof("netscan: sweeping %s every %d minute(s), ports %v, concurrency %d",
-		s.network.String(), s.cfg.IntervalMinutes, s.Ports(), s.cfg.Concurrency)
+	logger.Infof("netscan: sweeping %v every %d minute(s), ports %v, concurrency %d",
+		s.Networks(), s.cfg.IntervalMinutes, s.Ports(), s.cfg.Concurrency)
 
 	s.ScanOnce(ctx)
 
@@ -345,6 +512,21 @@ func (s *Scanner) ScanOnce(ctx context.Context) {
 	s.setScanning(true)
 	defer s.setScanning(false)
 
+	networks := s.Networks()
+	if len(networks) == 0 {
+		// Nothing selected: the default network has been switched off and no
+		// other was added. Publish an empty, NOT-ready snapshot rather than
+		// leaving the last sweep's hosts in place — stale results would read
+		// as current, and a routine would report a tool present long after the
+		// sweep that found it stopped running. Not ready is how a routine is
+		// told it has no basis to judge either way.
+		s.mu.Lock()
+		s.snap = Snapshot{Network: s.Network(), Networks: nil, Ready: false}
+		s.mu.Unlock()
+		logger.Infof("netscan: no network selected; nothing swept")
+		return
+	}
+
 	started := time.Now()
 	targets := s.targets()
 	hosts := s.probeAll(ctx, targets)
@@ -352,7 +534,8 @@ func (s *Scanner) ScanOnce(ctx context.Context) {
 
 	s.mu.Lock()
 	s.snap = Snapshot{
-		Network:    s.network.String(),
+		Network:    s.Network(),
+		Networks:   networks,
 		Ready:      true,
 		Scanning:   true, // cleared by the deferred setScanning(false)
 		LastScan:   started,
@@ -361,8 +544,8 @@ func (s *Scanner) ScanOnce(ctx context.Context) {
 	}
 	s.mu.Unlock()
 
-	logger.Infof("netscan: swept %d target(s) in %s, %d responded",
-		len(targets), elapsed.Round(time.Millisecond), len(hosts))
+	logger.Infof("netscan: swept %d target(s) across %d network(s) in %s, %d responded",
+		len(targets), len(networks), elapsed.Round(time.Millisecond), len(hosts))
 }
 
 func (s *Scanner) setScanning(v bool) {
@@ -374,6 +557,9 @@ func (s *Scanner) setScanning(v bool) {
 type target struct {
 	ip   string
 	port int
+	// network the address was enumerated from, carried through to the Host so
+	// a routine can tell which range answered.
+	network string
 }
 
 // targets enumerates every usable address in the network, crossed with the
@@ -384,12 +570,22 @@ func (s *Scanner) targets() []target {
 	// mixture and report it as one snapshot.
 	ports := s.Ports()
 
-	baseIP := s.network.IP.Mask(s.network.Mask).To4()
+	var out []target
+	for _, network := range s.networks() {
+		out = append(out, networkTargets(network, ports)...)
+	}
+	return out
+}
+
+// networkTargets enumerates one network crossed with the ports.
+func networkTargets(network *net.IPNet, ports []int) []target {
+	baseIP := network.IP.Mask(network.Mask).To4()
 	if baseIP == nil {
 		return nil
 	}
+	cidr := network.String()
 
-	ones, bits := s.network.Mask.Size()
+	ones, bits := network.Mask.Size()
 	hostBits := uint(bits - ones)
 	base := binary.BigEndian.Uint32(baseIP)
 	total := uint32(1) << hostBits
@@ -401,7 +597,7 @@ func (s *Scanner) targets() []target {
 		binary.BigEndian.PutUint32(b[:], base+i)
 		ip := net.IP(b[:]).String()
 		for _, p := range ports {
-			out = append(out, target{ip: ip, port: p})
+			out = append(out, target{ip: ip, port: p, network: cidr})
 		}
 	}
 
@@ -409,7 +605,7 @@ func (s *Scanner) targets() []target {
 	// itself rather than nothing.
 	if len(out) == 0 {
 		for _, p := range ports {
-			out = append(out, target{ip: baseIP.String(), port: p})
+			out = append(out, target{ip: baseIP.String(), port: p, network: cidr})
 		}
 	}
 	return out
@@ -546,6 +742,7 @@ func (s *Scanner) probe(ctx context.Context, t target) (Host, bool) {
 
 	h := Host{
 		IP:       t.ip,
+		Network:  t.network,
 		Port:     t.port,
 		URL:      url,
 		FinalURL: url,

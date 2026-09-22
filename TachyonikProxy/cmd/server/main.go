@@ -608,6 +608,8 @@ func startNetScan(cfg *config.Config) toolscan.NetScanProvider {
 		Enabled:                cfg.NetScan.Enabled,
 		IntervalMinutes:        cfg.NetScan.IntervalMinutes,
 		Network:                cfg.NetScan.Network,
+		DefaultNetworkEnabled:  cfg.NetScan.NetworkEnabled,
+		ExtraNetworks:          cfg.NetScan.ExtraNetworks,
 		Ports:                  cfg.NetScan.Ports,
 		Concurrency:            cfg.NetScan.Concurrency,
 		TimeoutSeconds:         cfg.NetScan.TimeoutSeconds,
@@ -651,12 +653,32 @@ func runNetScan() {
 	//
 	// The overrides buy no extra reach: the CIDR still goes through
 	// netscan.New, which refuses anything public or wider than /22.
+	// The daemon sweeps the proxy's own network plus any added by
+	// TachyonikCSM, so the one-shot command does the same unless told
+	// otherwise — an operator checking "what does the sweep see?" should get
+	// the answer for the sweep that actually runs.
 	network, networkSource := cfg.NetScan.Network, "netscan.network"
+	extraNetworks := cfg.NetScan.ExtraNetworks
+	defaultEnabled := cfg.NetScan.NetworkEnabled
 	if v, found, err := flagValue(os.Args[1:], "network"); err != nil {
 		fmt.Fprintf(os.Stderr, "netscan: %v\n", err)
 		os.Exit(1)
 	} else if found {
-		network, networkSource = v, "--network"
+		// An explicit --network replaces the whole selection rather than
+		// adding to it: "sweep this" is the plainest reading, and it keeps a
+		// deliberate one-off sweep from quietly covering ranges the operator
+		// did not name. Several may be given, comma-separated; the first is
+		// treated as the base and the rest as added networks, so each is
+		// validated by exactly the rule its position implies.
+		parts := splitList(v)
+		if len(parts) == 0 {
+			fmt.Fprintln(os.Stderr, "netscan: --network: no network given")
+			os.Exit(1)
+		}
+		network, networkSource = parts[0], "--network"
+		extraNetworks = parts[1:]
+		enabled := true
+		defaultEnabled = &enabled
 	}
 
 	ports := cfg.NetScan.Ports
@@ -676,6 +698,8 @@ func runNetScan() {
 		IntervalMinutes:        cfg.NetScan.IntervalMinutes,
 		Network:                network,
 		NetworkSource:          networkSource,
+		DefaultNetworkEnabled:  defaultEnabled,
+		ExtraNetworks:          extraNetworks,
 		Ports:                  ports,
 		Concurrency:            cfg.NetScan.Concurrency,
 		TimeoutSeconds:         cfg.NetScan.TimeoutSeconds,
@@ -691,7 +715,12 @@ func runNetScan() {
 	// the scanner, not from cfg: an empty configured port list is filled in
 	// with the default, and reporting the configured one would then name ports
 	// that were never probed.
-	fmt.Fprintf(os.Stderr, "Sweeping %s on port(s) %v ...\n", scanner.Network(), scanner.Ports())
+	networks := scanner.Networks()
+	if len(networks) == 0 {
+		fmt.Fprintln(os.Stderr, "netscan: no network selected — the proxy's own network is disabled and none was added")
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Sweeping %s on port(s) %v ...\n", strings.Join(networks, ", "), scanner.Ports())
 
 	scanner.ScanOnce(context.Background())
 	snap := scanner.Snapshot()
@@ -831,7 +860,7 @@ func runHelp() {
 	fmt.Println("  reset-enrollment   Clear all enrollment material and reset TLS config")
 	fmt.Println("  scan               Scan for available tools on this host")
 	fmt.Println("  netscan            Sweep the local network over HTTPS and list what answered")
-	fmt.Println("                       --network <cidr>          sweep this range instead of the configured one")
+	fmt.Println("                       --network <cidr[,...]>    sweep these ranges instead of the configured ones")
 	fmt.Println("                       --ports <list>            comma-separated ports, e.g. 443,8443")
 	fmt.Println("                       --json                    full records including response bodies")
 	fmt.Println("  self-update        Check (and optionally apply) an auto-update")

@@ -84,14 +84,23 @@ func (c *Config) BaseDir() string {
 // IPv4. Either way the range must be private (or loopback) — see
 // internal/netscan.
 type NetScanConfig struct {
-	Enabled                bool   `yaml:"enabled"`
-	IntervalMinutes        int    `yaml:"interval_minutes"`
-	Network                string `yaml:"network"`
-	Ports                  []int  `yaml:"ports"`
-	Concurrency            int    `yaml:"concurrency"`
-	TimeoutSeconds         int    `yaml:"timeout_seconds"`
-	MaxBodyBytes           int    `yaml:"max_body_bytes"`
-	MaxScanDurationMinutes int    `yaml:"max_scan_duration_minutes"`
+	Enabled         bool   `yaml:"enabled"`
+	IntervalMinutes int    `yaml:"interval_minutes"`
+	Network         string `yaml:"network"`
+	// NetworkEnabled: whether to sweep the network above at all. A pointer so
+	// that an absent key means true — a config written before this existed
+	// must not be read as "stop sweeping". Set from TachyonikCSM, where the
+	// proxy's own network can be disabled but never removed.
+	NetworkEnabled *bool `yaml:"network_enabled"`
+	// ExtraNetworks are additional ranges to sweep, each at most a /24 and
+	// each inside the private ranges. Written here when TachyonikCSM pushes a
+	// selection, so it survives a restart.
+	ExtraNetworks          []string `yaml:"extra_networks"`
+	Ports                  []int    `yaml:"ports"`
+	Concurrency            int      `yaml:"concurrency"`
+	TimeoutSeconds         int      `yaml:"timeout_seconds"`
+	MaxBodyBytes           int      `yaml:"max_body_bytes"`
+	MaxScanDurationMinutes int      `yaml:"max_scan_duration_minutes"`
 }
 
 // AutoUpdateConfig controls the proxy's self-update behaviour.
