@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"tachyonik/lib/jsmap"
 	"tachyonik/lib/logger"
 )
 
@@ -280,8 +281,8 @@ func (e *JSRuleExecutor) AnalyzeSource(ctx RuleContext) (*AnalysisResult, error)
 			continue
 		}
 
-		sourceType := getStringField(resultMap, "sourceType")
-		status := getStringField(resultMap, "status")
+		sourceType := jsmap.String(resultMap, "sourceType")
+		status := jsmap.String(resultMap, "status")
 
 		if sourceType == "" {
 			logger.Errorf("JS rule '%s' returned empty sourceType", rule.name)
@@ -370,13 +371,4 @@ func (e *JSRuleExecutor) ValidateWithMockCtx() []error {
 	}
 
 	return errs
-}
-
-func getStringField(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
 }

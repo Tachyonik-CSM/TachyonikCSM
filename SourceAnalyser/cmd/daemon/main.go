@@ -13,15 +13,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"tachyonik/lib/aiclient/claude"
-	"tachyonik/lib/aiclient/ollama"
-	"tachyonik/lib/aiclient/openai"
+	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aimwatcher"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
@@ -95,44 +92,16 @@ func warnIfNoSystemPrompt(cfg *config.Config) {
 // OpenAI-compatible client; google supports the OpenAI shape via its
 // /v1beta/openai endpoint, but the entry URL must point there.
 func buildChatClient(entry *aimanager.AIEntry) codegen.ChatClient {
-	switch entry.Provider {
-	case "ollama":
-		return ollama.NewClient(entry.URL, entry.APIKey)
-	case "anthropic":
-		return claude.NewClient(entry.URL, entry.APIKey)
-	case "openai", "mistral", "google", "manual":
-		return openai.NewClient(entry.URL, entry.APIKey)
-	default:
-		return nil
-	}
+	return aiclient.ForProvider(entry.Provider, entry.URL, entry.APIKey, 0)
 }
 
 func setupLogging(cfg *config.Config) (*os.File, error) {
-	var writers []io.Writer
-	var logFile *os.File
-
-	// Add console output if enabled
-	if cfg.Log.ToConsole {
-		writers = append(writers, os.Stdout)
-	}
-
-	// Add file output if enabled
-	if cfg.Log.ToFile {
-		var err error
-		logFile, err = os.OpenFile(cfg.Log.FilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return nil, err
-		}
-		writers = append(writers, logFile)
-	}
-
-	// Parse log level
-	logLevel := logger.ParseLogLevel(cfg.Log.Level)
-
-	// Setup logger with writers and level
-	logger.Setup(logLevel, writers...)
-
-	return logFile, nil
+	return logger.SetupFromOptions(logger.FileOptions{
+		ToConsole: cfg.Log.ToConsole,
+		ToFile:    cfg.Log.ToFile,
+		FilePath:  cfg.Log.FilePath,
+		Level:     cfg.Log.Level,
+	})
 }
 
 func main() {
