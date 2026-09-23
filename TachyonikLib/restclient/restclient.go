@@ -25,6 +25,9 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"tachyonik/lib/internal/safehttp"
+	"tachyonik/lib/logger"
 )
 
 // StatusError reports a response that did not carry the expected status. It is
@@ -56,6 +59,15 @@ type Client struct {
 // New creates a client for baseURL. serviceKey may be empty, in which case no
 // authentication header is sent.
 func New(baseURL, serviceKey string, timeout time.Duration) *Client {
+	// Say so when the key would travel in the clear. Every other package that
+	// sends this credential warns — heartbeat, wswatcher, the AI clients, the
+	// shared SystemManager client — and this one carries most of the platform's
+	// internal traffic. Loopback URLs are the common case and harmless; a
+	// manager on another host over http:// is the case worth noticing, and
+	// nothing was saying it.
+	if safehttp.CredentialExposed(baseURL, serviceKey != "") {
+		logger.Warnf("REST client configured with an internal service key over a non-TLS URL (%s) — the key will be sent in cleartext", baseURL)
+	}
 	return &Client{
 		baseURL:    baseURL,
 		serviceKey: serviceKey,

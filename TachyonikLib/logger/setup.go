@@ -57,7 +57,12 @@ func SetupFromOptions(o FileOptions) (*os.File, error) {
 
 	if o.ToFile {
 		var err error
-		logFile, err = os.OpenFile(o.FilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		// 0600, not 0644. A service log carries rule text, organisation
+		// names and — at debug level — generated routine source. None of that
+		// needs to be readable by every account on the host. An existing
+		// file's mode is not changed: OpenFile applies this only on create, so
+		// an operator who deliberately widened it keeps their choice.
+		logFile, err = os.OpenFile(o.FilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
 			return nil, err
 		}

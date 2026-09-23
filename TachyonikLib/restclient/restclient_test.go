@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"tachyonik/lib/internal/safehttp"
 	"testing"
 	"time"
 )
@@ -236,5 +237,31 @@ func TestJSON_RejectsOversizedBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("err = %v, want the size-limit error rather than a decode failure", err)
+	}
+}
+
+// Sending the internal service key over a non-TLS URL is warned about, the way
+// every other package that carries this credential does.
+func TestCleartextKeyIsFlagged(t *testing.T) {
+	cases := []struct {
+		url    string
+		hasKey bool
+		want   bool
+	}{
+		{"http://manager.example:8080", true, true},
+		{"http://localhost:8080", true, true},
+		{"https://manager.example", true, false},
+		{"http://manager.example:8080", false, false}, // nothing to expose
+	}
+	for _, c := range cases {
+		if got := safehttp.CredentialExposed(c.url, c.hasKey); got != c.want {
+			t.Errorf("CredentialExposed(%q, %v) = %v, want %v", c.url, c.hasKey, got, c.want)
+		}
+	}
+
+	// The constructor must still return a usable client in every case; the
+	// warning is advice, not enforcement.
+	if c := New("http://manager.example:8080", "key", time.Second); c == nil {
+		t.Error("New returned nil for a cleartext URL")
 	}
 }

@@ -118,3 +118,43 @@ func TestSetupLevel(t *testing.T) {
 		}
 	}
 }
+
+// The log carries rule text, organisation names and, at debug level, generated
+// routine source. It is created readable by its owner only.
+func TestLogFileIsNotWorldReadable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.log")
+
+	f, err := SetupFromOptions(FileOptions{ToFile: true, FilePath: path, Level: "INFO"})
+	if err != nil {
+		t.Fatalf("SetupFromOptions: %v", err)
+	}
+	defer f.Close()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode&0077 != 0 {
+		t.Errorf("log file mode is %04o; it should not be readable by group or others", mode)
+	}
+}
+
+// An operator who widened an existing file's mode keeps their choice:
+// O_CREATE applies the mode only when creating.
+func TestExistingLogFileKeepsItsMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.log")
+	if err := os.WriteFile(path, nil, 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	f, err := SetupFromOptions(FileOptions{ToFile: true, FilePath: path, Level: "INFO"})
+	if err != nil {
+		t.Fatalf("SetupFromOptions: %v", err)
+	}
+	defer f.Close()
+
+	info, _ := os.Stat(path)
+	if mode := info.Mode().Perm(); mode != 0644 {
+		t.Errorf("mode = %04o, want the operator's 0644 preserved", mode)
+	}
+}
