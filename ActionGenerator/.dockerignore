@@ -1,0 +1,6 @@
+actiongenerator
+*.log
+/cmd/**/actiongenerator
+config.yaml
+.env
+.env.*
