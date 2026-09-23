@@ -86,6 +86,27 @@ func setupLogging(cfg *config.Config) (*os.File, error) {
 }
 
 func main() {
+	// Route subcommand before anything else. Asking a binary its version must
+	// work wherever the binary does — from a package script, as another user,
+	// on a host where the configured log path is not writable — and
+	// setupLogging is fatal on a log file it cannot open. Neither `version`
+	// nor `help` needs the configuration, so neither should be able to fail on
+	// it.
+	//
+	// Flags are accepted as well as bare words, matching TachyonikProxy:
+	// `sourceimporter version` and `sourceimporter --version` both
+	// work, so neither habit is wrong.
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "help", "--help", "-h":
+			runHelp()
+			return
+		case "version", "--version", "-v":
+			fmt.Printf("Tachyonik SourceImporter %s\n", version.Version)
+			return
+		}
+	}
+
 	// Load configuration
 	cfg := config.Load()
 
@@ -96,18 +117,6 @@ func main() {
 	}
 	if logFile != nil {
 		defer logFile.Close()
-	}
-
-	// Route subcommand
-	for _, arg := range os.Args[1:] {
-		switch arg {
-		case "help", "--help", "-h":
-			runHelp()
-			return
-		case "version", "--version", "-v":
-			fmt.Printf("Tachyonik SourceImporter %s\n", version.Version)
-			return
-		}
 	}
 
 	runDaemon(cfg)
