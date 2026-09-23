@@ -94,19 +94,16 @@ func setupLogging(cfg *config.Config) (*os.File, error) {
 }
 
 func main() {
-	cfg := config.Load()
-
-	logFile, err := setupLogging(cfg)
-	if err != nil {
-		logger.Fatalf("Failed to setup logging: %v", err)
-	}
-	if logFile != nil {
-		defer logFile.Close()
-	}
-
-	// Route subcommand. Flags are accepted as well as bare words, matching
-	// TachyonikProxy: `actiongenerator version` and `actiongenerator --version`
-	// both work, so neither habit is wrong.
+	// Route subcommand before anything else. Asking a binary its version must
+	// work wherever the binary does — from a package script, as another user,
+	// on a host where the configured log path is not writable — and
+	// setupLogging is fatal on a log file it cannot open. Neither `version`
+	// nor `help` needs the configuration, so neither should be able to fail on
+	// it.
+	//
+	// Flags are accepted as well as bare words, matching TachyonikProxy:
+	// `actiongenerator version` and `actiongenerator --version` both
+	// work, so neither habit is wrong.
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "help", "--help", "-h":
@@ -116,6 +113,16 @@ func main() {
 			fmt.Printf("Tachyonik ActionGenerator %s\n", version.Version)
 			return
 		}
+	}
+
+	cfg := config.Load()
+
+	logFile, err := setupLogging(cfg)
+	if err != nil {
+		logger.Fatalf("Failed to setup logging: %v", err)
+	}
+	if logFile != nil {
+		defer logFile.Close()
 	}
 
 	runDaemon(cfg)
