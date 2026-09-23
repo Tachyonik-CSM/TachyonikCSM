@@ -68,10 +68,13 @@ The daemon reads the instance operating mode from SystemManager (`GET /api/inter
 
 ```bash
 cd TachyonikCSM/ActionGenerator
-go build -o tachyonik-actiongenerator ./cmd/daemon
+make build          # embeds the version — see Versioning below
 ```
 
 This creates the `tachyonik-actiongenerator` binary in the current directory.
+
+A plain `go build -o tachyonik-actiongenerator ./cmd/daemon` also works, but the
+binary then reports `0.0.0-dev` because nothing injected a version.
 
 From the repository root, `make go-build` builds every service binary into
 `/tmp/tachyonikcsm-build/` (this one as `actiongenerator`), and `make lib-check`
@@ -91,15 +94,49 @@ Managed via `go.mod`:
 
 ## Versioning
 
-ActionGenerator carries **no independent version**. Unlike SourceAnalyser and
-SourceImporter — whose versions are written into each source they touch and
-decide whether that source is re-processed — nothing consumes a version of this
-module, so there is no namespaced git tag, no `internal/version` package and no
-`version` subcommand.
+ActionGenerator carries **its own version**, resolved from its own namespaced
+git tag. It is deliberately independent of the TachyonikCSM application version
+(which lives in `WebUI/package.json`) and of every other module's: the module is
+released when its generation behaviour changes, which is not the same rhythm.
 
-The application version that covers this module is the TachyonikCSM version in
-`WebUI/package.json`. A generated *routine* does carry its own version, stored
-alongside it in AIManager with the model that wrote it and its checksum.
+```bash
+git tag actiongenerator/1.0.0     # cut a release
+make version                      # what this tree would build as
+./tachyonik-actiongenerator version
+```
+
+The version is derived with `git describe --tags --match 'actiongenerator/*'`,
+stripped to a numeric `x.y.z`, and injected at build time:
+
+```
+-ldflags "-X tachyonik/actiongenerator/internal/version.Version=<version>"
+```
+
+`--match` is what keeps it independent — every other tag in the monorepo is
+ignored. Off-tag or dirty builds get a descriptive suffix (`1.0.0-3-gabc123`,
+`1.0.0-dirty`); a tree with no matching tag falls back to `0.0.0-dev`.
+
+Three build paths inject it, and all three must, or a build silently ships the
+fallback:
+
+| Path | How |
+|---|---|
+| `make build` in this directory | derives it from git |
+| `make go-build` at the repo root | `ACTIONGENERATOR_VERSION`, derived from git |
+| The container image | `VERSION` build arg, passed by `compose.yaml` — the build stage has no git |
+
+### What this version does not do
+
+Unlike SourceAnalyser's, this value is **identity only**. Nothing compares it,
+and nothing is stamped with it: there is no equivalent of
+`sources.analyser_version`, so a new release does not cause anything to be
+re-generated. It answers "which build is running", and that is all it is wired
+to answer — if it is ever given a behavioural meaning, that should be a
+deliberate decision rather than a side effect.
+
+The routines themselves are versioned separately. AIManager stores each
+generated routine with its own version, the model that wrote it and its
+checksum; those move when a rule moves and are unrelated to the module version.
 
 ## Configuration
 

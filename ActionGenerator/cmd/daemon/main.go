@@ -34,6 +34,7 @@ import (
 	"tachyonik/actiongenerator/internal/generator"
 	"tachyonik/actiongenerator/internal/resourcemanager"
 	"tachyonik/actiongenerator/internal/systemmanager"
+	"tachyonik/actiongenerator/internal/version"
 	"tachyonik/actiongenerator/internal/watcher"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aimwatcher"
@@ -103,11 +104,16 @@ func main() {
 		defer logFile.Close()
 	}
 
-	// Route subcommand
+	// Route subcommand. Flags are accepted as well as bare words, matching
+	// TachyonikProxy: `actiongenerator version` and `actiongenerator --version`
+	// both work, so neither habit is wrong.
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "help":
+		case "help", "--help", "-h":
 			runHelp()
+			return
+		case "version", "--version", "-v":
+			fmt.Printf("Tachyonik ActionGenerator %s\n", version.Version)
 			return
 		}
 	}
@@ -123,6 +129,7 @@ func runHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  (none)      Start the ActionGenerator daemon (default)")
 	fmt.Println("  help        Show this help message")
+	fmt.Println("  version     Print the build version and exit")
 }
 
 // runDaemon starts the daemon with per-rule JS executors, action rule watcher, and asset watcher.
