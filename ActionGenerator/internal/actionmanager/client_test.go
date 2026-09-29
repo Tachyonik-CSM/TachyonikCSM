@@ -94,27 +94,28 @@ func TestCreateActionRejectsPlainOK(t *testing.T) {
 	}
 }
 
-// ActionExists is a filter over the list call, not an endpoint of its own.
-func TestActionExists(t *testing.T) {
+// ExistingActionID is a filter over the list call, not an endpoint of its own.
+func TestExistingActionID(t *testing.T) {
 	c, got := serve(t, http.StatusOK, `{"actions":[{"id":1,"title":"Existing"}]}`)
 
-	exists, err := c.ActionExists(52, "Existing")
+	id, err := c.ExistingActionID(52, "Existing")
 	if err != nil {
-		t.Fatalf("ActionExists: %v", err)
+		t.Fatalf("ExistingActionID: %v", err)
 	}
-	if !exists {
-		t.Error("an action that is present was reported missing")
+	// The id, not just "yes": the caller refreshes that action's option set.
+	if id != 1 {
+		t.Errorf("id = %d, want 1", id)
 	}
 	if got.path != "/api/actions" {
-		t.Errorf("path = %q — ActionExists should reuse the list endpoint", got.path)
+		t.Errorf("path = %q — ExistingActionID should reuse the list endpoint", got.path)
 	}
 
-	missing, err := c.ActionExists(52, "Not there")
+	missing, err := c.ExistingActionID(52, "Not there")
 	if err != nil {
-		t.Fatalf("ActionExists: %v", err)
+		t.Fatalf("ExistingActionID: %v", err)
 	}
-	if missing {
-		t.Error("an absent action was reported present")
+	if missing != 0 {
+		t.Errorf("an absent action reported id %d, want 0", missing)
 	}
 }
 

@@ -139,6 +139,34 @@ func (ag *AIActionGenerator) LoadRules() error {
 }
 
 // Executors returns a snapshot copy of the executor map for the generator to evaluate.
+// OnDemandRules returns the ids of the rules that fire only when something asks
+// for them by name — those with no trigger prompt.
+//
+// An empty trigger is not an omission, it is the statement that the rule has no
+// condition of its own: the system prompt has the model write `check()` as a
+// plain `return false` for it, and the only way such a rule ever produces an
+// action is a forced evaluation, which is what an action option of type "Action"
+// requests.
+//
+// Two things have to know this, and neither can work it out from the routine.
+// The generator must not withdraw the actions of such a rule when an unforced
+// evaluation finds no match — for these rules that is every evaluation, so the
+// action would be swept within seconds of being asked for. And validation must
+// not reject `return false` as a condition that could never fire, which for an
+// ordinary rule is a real fault and here is the specification.
+func (ag *AIActionGenerator) OnDemandRules() map[int64]bool {
+	ag.mu.RLock()
+	defer ag.mu.RUnlock()
+
+	result := make(map[int64]bool, len(ag.rules))
+	for id, rule := range ag.rules {
+		if strings.TrimSpace(rule.TriggerPrompt) == "" {
+			result[id] = true
+		}
+	}
+	return result
+}
+
 func (ag *AIActionGenerator) Executors() map[int64]*jsruntime.JSRuleExecutor {
 	ag.mu.RLock()
 	defer ag.mu.RUnlock()
@@ -148,6 +176,30 @@ func (ag *AIActionGenerator) Executors() map[int64]*jsruntime.JSRuleExecutor {
 		result[k] = v
 	}
 	return result
+}
+
+// optionsForPrompt reduces AIManager's options to what the code generator needs:
+// the id to key the generated function by, the title so the model can tell the
+// options apart, and this rule's condition for it.
+//
+// Only options that carry a condition FOR THIS RULE are included. One without is
+// always shown, and asking the model to write a function returning true for it
+// would be a function that can only be wrong.
+func optionsForPrompt(ruleID int64, options []aimanager.ActionOption) []aimanager.ActionRuleOption {
+	var out []aimanager.ActionRuleOption
+	for _, opt := range options {
+		for _, link := range opt.Links {
+			if link.ActionRuleID != ruleID || strings.TrimSpace(link.VisibilityPrompt) == "" {
+				continue
+			}
+			out = append(out, aimanager.ActionRuleOption{
+				ID:               opt.ID,
+				Title:            opt.Title,
+				VisibilityPrompt: link.VisibilityPrompt,
+			})
+		}
+	}
+	return out
 }
 
 // GenerateForRule runs the AI code generation pipeline for a single action rule:
@@ -171,8 +223,22 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 	// Create code generator with resolved AI config
 	codeGen := codegen.New(ruleClient, ruleModel, ag.cfg.AI.SystemPrompt)
 
+	// The options this rule offers, with the condition each is offered under.
+	// They go into the prompt so the generated routine can decide per option
+	// whether it applies — the conditions are plain language, and this is the
+	// only point at which they are turned into code.
+	//
+	// Best-effort: a rule whose options cannot be read still generates, and
+	// every option then applies, which is the behaviour without conditions.
+	ruleWithOptions := *rule
+	if options, oerr := ag.aiMgrClient.GetActionOptionsByRuleID(rule.ID); oerr != nil {
+		logger.Warnf("Could not read the options of action rule %d, generating without conditions: %v", rule.ID, oerr)
+	} else {
+		ruleWithOptions.Options = optionsForPrompt(rule.ID, options)
+	}
+
 	// Generate JS code
-	code, err := codeGen.Generate(*rule)
+	code, err := codeGen.Generate(ruleWithOptions)
 	if err != nil {
 		return fmt.Errorf("code generation failed for rule %d: %w", rule.ID, err)
 	}
@@ -195,6 +261,11 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", fmt.Sprintf("Rule ID validation failed: %v", err))
 		return fmt.Errorf("rule ID validation failed for rule %d: %w", rule.ID, err)
 	}
+
+	// A rule with no trigger of its own is judged differently: its check() is
+	// meant to return false everywhere, and validation would otherwise refuse
+	// the only routine such a rule can have.
+	tempExecutor.SetOnDemand(strings.TrimSpace(rule.TriggerPrompt) == "")
 
 	// Validate runtime behavior with mock contexts. The report's log goes into
 	// the routine either way: for a failure it says why, and for a pass it

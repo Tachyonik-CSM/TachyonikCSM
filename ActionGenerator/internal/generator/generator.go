@@ -61,7 +61,10 @@ type Generator struct {
 	actionMgr   *actionmanager.Client
 	aiMgr       *aimanager.Client
 	executors   map[int64]*jsruntime.JSRuleExecutor
-	executorMu  sync.RWMutex
+	// Rules that fire only when asked for by name; see SetOnDemandRules.
+	// Guarded by executorMu, which already covers the rule set it belongs to.
+	onDemandRules map[int64]bool
+	executorMu    sync.RWMutex
 }
 
 // New creates a new Generator instance
@@ -87,6 +90,39 @@ func (g *Generator) SetExecutors(executors map[int64]*jsruntime.JSRuleExecutor) 
 	g.executorMu.Lock()
 	defer g.executorMu.Unlock()
 	g.executors = executors
+}
+
+// SetOnDemandRules records which rules fire only when asked for by name — the
+// ones with no trigger prompt of their own.
+//
+// Their actions are never withdrawn by an evaluation that found no match,
+// because for these rules no evaluation ever finds one: check() is a plain
+// `return false`, so the sweep would delete the action a user had just asked
+// for, seconds after asking. An action raised this way stays until it is acted
+// on or deleted.
+func (g *Generator) SetOnDemandRules(ids map[int64]bool) {
+	g.executorMu.Lock()
+	defer g.executorMu.Unlock()
+	g.onDemandRules = ids
+}
+
+// isOnDemand reports whether a rule fires only when forced.
+func (g *Generator) isOnDemand(ruleID int64) bool {
+	g.executorMu.RLock()
+	defer g.executorMu.RUnlock()
+	return g.onDemandRules[ruleID]
+}
+
+// shouldWithdraw decides whether an evaluation that produced no actions means
+// the rule has stopped matching, and its outstanding actions should go.
+//
+// For an ordinary rule it does: the action was raised because the condition
+// held, and it holds no longer. For an on-demand rule it does not — that rule
+// produces nothing unless forced, so "no actions" is its answer every time, and
+// treating it as "no longer matches" would delete the action a user had just
+// asked for, seconds after asking.
+func (g *Generator) shouldWithdraw(ruleID int64, produced int) bool {
+	return produced == 0 && !g.isOnDemand(ruleID)
 }
 
 // ProcessRules iterates over all users and checks action rules
@@ -165,6 +201,22 @@ func (g *Generator) ProcessRules() error {
 	return nil
 }
 
+// refreshHiddenOptions writes the freshly evaluated option set onto an action
+// that already exists.
+//
+// Best-effort: the action is correct either way, and failing an evaluation pass
+// over an option list would be a poor trade. ActionManager skips the write and
+// the broadcast when the set is unchanged, which is the usual case.
+func (g *Generator) refreshHiddenOptions(actionID int64, req actionmanager.CreateActionRequest) {
+	var hidden []int64
+	if req.HiddenOptions != nil {
+		hidden = *req.HiddenOptions
+	}
+	if err := g.actionMgr.SetHiddenOptions(actionID, hidden); err != nil {
+		logger.Warnf("Could not refresh the option set of action %d: %v", actionID, err)
+	}
+}
+
 // ProcessRuleForUser evaluates a single action rule for a single user and
 // creates actions if the rule's JS routine produces any. Returns the number
 // of actions created.
@@ -197,6 +249,10 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 	// implies. Actions already acted on (Acknowledged/InProgress/Done) are
 	// preserved by the server-side filter.
 	if len(actions) == 0 {
+		if !g.shouldWithdraw(ruleID, len(actions)) {
+			logger.Debugf("Rule %d is on-demand; leaving its actions for user %d alone", ruleID, userID)
+			return 0, nil
+		}
 		if n, derr := g.actionMgr.DeleteNewActionsByRule(userID, ruleID); derr != nil {
 			logger.Warnf("Stale-action cleanup failed for user %d rule %d: %v", userID, ruleID, derr)
 		} else if n > 0 {
@@ -207,12 +263,16 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 
 	actionsCreated := 0
 	for _, actionReq := range actions {
-		exists, err := g.actionMgr.ActionExists(userID, actionReq.Title)
+		existingID, err := g.actionMgr.ExistingActionID(userID, actionReq.Title)
 		if err != nil {
 			logger.Errorf("Error checking if action exists for user %d: %v", userID, err)
 			continue
 		}
-		if exists {
+		if existingID != 0 {
+			// The action stays as it is, but which of its options apply may
+			// have changed since it was raised — the user may have installed
+			// the tool the condition asks about. This is the refresh.
+			g.refreshHiddenOptions(existingID, actionReq)
 			logger.Infof("Skipping existing action '%s' for user %d (rule %d)", actionReq.Title, userID, ruleID)
 			continue
 		}
@@ -253,6 +313,10 @@ func (g *Generator) processJSRules(users []systemmanager.User, executors map[int
 			// it's stale. Actions the user already acted on (Acknowledged,
 			// InProgress, Done) are preserved by the server-side filter.
 			if len(actions) == 0 {
+				// Except for an on-demand rule, whose normal answer this is.
+				if !g.shouldWithdraw(ruleID, len(actions)) {
+					continue
+				}
 				if n, derr := g.actionMgr.DeleteNewActionsByRule(user.ID, ruleID); derr != nil {
 					logger.Warnf("Stale-action cleanup failed for user %d rule %d: %v", user.ID, ruleID, derr)
 				} else if n > 0 {
@@ -263,13 +327,14 @@ func (g *Generator) processJSRules(users []systemmanager.User, executors map[int
 
 			for _, actionReq := range actions {
 				// Check if action already exists for this user
-				exists, err := g.actionMgr.ActionExists(user.ID, actionReq.Title)
+				existingID, err := g.actionMgr.ExistingActionID(user.ID, actionReq.Title)
 				if err != nil {
 					logger.Errorf("Error checking if action exists for user %d: %v", user.ID, err)
 					continue
 				}
 
-				if exists {
+				if existingID != 0 {
+					g.refreshHiddenOptions(existingID, actionReq)
 					logger.Debugf("Action '%s' already exists for user %d (%s), skipping",
 						actionReq.Title, user.ID, user.Username)
 					continue
@@ -329,6 +394,12 @@ func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors
 		// Rule no longer matches the shared context — garbage-collect every
 		// New-status action it previously created, for any owner.
 		if len(actions) == 0 {
+			// As in the per-user path: an on-demand rule answering "no actions"
+			// is not the rule ceasing to match, it is the rule doing nothing
+			// until asked.
+			if !g.shouldWithdraw(ruleID, len(actions)) {
+				continue
+			}
 			if n, derr := g.actionMgr.DeleteNewActionsByRuleExceptUser(ruleID, 0); derr != nil {
 				logger.Warnf("Shared stale-action cleanup failed for rule %d: %v", ruleID, derr)
 			} else if n > 0 {
@@ -338,12 +409,13 @@ func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors
 		}
 
 		for _, actionReq := range actions {
-			exists, err := g.actionMgr.ActionExists(primaryID, actionReq.Title)
+			existingID, err := g.actionMgr.ExistingActionID(primaryID, actionReq.Title)
 			if err != nil {
 				logger.Errorf("Error checking if shared action exists (rule %d): %v", ruleID, err)
 				continue
 			}
-			if exists {
+			if existingID != 0 {
+				g.refreshHiddenOptions(existingID, actionReq)
 				logger.Debugf("Shared action '%s' already exists under owner %d (rule %d), skipping", actionReq.Title, primaryID, ruleID)
 				continue
 			}

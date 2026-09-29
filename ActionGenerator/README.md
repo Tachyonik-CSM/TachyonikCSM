@@ -390,6 +390,76 @@ restart.
 If the generated routine is wrong, the lever is the wording of the rule, or the
 module system prompt behind it (Settings → ActionGenerator → System Prompt).
 
+### On-demand rules
+
+A rule with an **empty trigger prompt** has no condition of its own. The system
+prompt has the model write its `check()` as a plain `return false`, and the rule
+produces an action only when something asks for it by name — an action option of
+type `Action` whose `typeContext` is that rule's id, which the WebUI turns into a
+*forced* evaluation.
+
+Two things treat such a rule differently, and neither can infer it from the
+routine:
+
+- **Its actions are never withdrawn.** The usual rule is that an evaluation
+  producing nothing means the condition has stopped holding, so the outstanding
+  `New` actions of that rule are deleted. For an on-demand rule that is the
+  answer every time, so the sweep would delete the action a user had just asked
+  for, within seconds. An action raised this way stays until it is acted on or
+  deleted.
+- **Validation does not reject it.** A `check()` that returns false everywhere
+  while reading nothing is normally an error — a condition that could never fire.
+  Here it is the specification, so it becomes a note instead. Without this, an
+  on-demand rule could not be regenerated at all.
+
+The marker is the empty trigger prompt itself; nothing else needs setting.
+
+### Conditional action options
+
+A rule offers the user a set of **action options** — "Upload host list",
+"Install a tool for host detection". Each option may carry a condition, written
+in AIManager as plain language on the link between that rule and that option,
+and compiled into the rule's routine along with everything else:
+
+```js
+{
+  name: "identify-missing-host-assets",
+  ruleId: 8,
+  check: function(ctx) { ... },
+  createAction: function(ctx) { ... },
+  // optional; an option with no entry here always applies
+  options: {
+    "5": function(ctx) { return ctx.capabilities.automated.indexOf("Host detection") === -1 &&
+                                ctx.capabilities.manual.indexOf("Host detection") === -1; }
+  }
+}
+```
+
+The functions return **true when the option applies**, read the same `ctx` as
+`check()`, and run at the moment an action is raised — which is the only place
+the context exists. The options that do *not* apply are recorded on the action
+as `hiddenOptions`, and the UI offers the rest.
+
+The exclusions are stored rather than the inclusions, so an option added to a
+rule later is offered rather than being invisible for having missed a list drawn
+up before it existed.
+
+Three behaviours worth knowing:
+
+- **A condition that throws leaves its option visible.** Hiding a step the user
+  needs because a generated line was wrong is the worse failure.
+- **The set is refreshed, not frozen.** An action that already exists is not
+  re-created on a re-evaluation, so the evaluation updates its option set in
+  place; and the user dialog asks for a re-evaluation when it opens, so what it
+  offers reflects the situation now rather than when the action was raised.
+- **Validation notes, rather than rejects, a condition that answers the same way
+  in every mock scenario.** Unlike `check()`, an option condition that no mock
+  user happens to satisfy is perfectly ordinary.
+
+This lets one rule replace several that differed only in which options they
+offered — the three "Identify missing host assets" variants being the case it
+was built for.
+
 ## Containment
 
 Routine code is written by a model from a prompt, so it is treated as untrusted

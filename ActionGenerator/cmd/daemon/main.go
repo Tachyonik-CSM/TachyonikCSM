@@ -186,6 +186,7 @@ func runDaemon(cfg *config.Config) {
 		logger.Errorf("Failed to load action rules: %v", err)
 	} else {
 		gen.SetExecutors(aiGen.Executors())
+		gen.SetOnDemandRules(aiGen.OnDemandRules())
 	}
 
 	// Shared module-settings refresh — used by both the
@@ -230,6 +231,7 @@ func runDaemon(cfg *config.Config) {
 
 		// Update executor map on generator and re-process rules
 		gen.SetExecutors(aiGen.Executors())
+		gen.SetOnDemandRules(aiGen.OnDemandRules())
 		logger.Info("Re-processing rules after regeneration...")
 		if err := gen.ProcessRules(); err != nil {
 			logger.Errorf("Error processing rules after regeneration: %v", err)
@@ -256,6 +258,7 @@ func runDaemon(cfg *config.Config) {
 				logger.Errorf("Failed to reload action rules after feed import: %v", err)
 			} else {
 				gen.SetExecutors(aiGen.Executors())
+				gen.SetOnDemandRules(aiGen.OnDemandRules())
 			}
 			refreshModuleSettings()
 			if err := gen.ProcessRules(); err != nil {

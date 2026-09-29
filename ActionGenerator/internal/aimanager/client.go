@@ -61,6 +61,19 @@ type ActionRule struct {
 	GenerateRequestedAt *string `json:"generateRequestedAt"`
 	CreatedAt           string  `json:"createdAt"`
 	ModifiedAt          string  `json:"modifiedAt"`
+	// Options is filled in by the caller before code generation, not by the
+	// action-rules endpoint: the AI has to be told which options this rule
+	// offers and when each applies, so it can write the per-option conditions
+	// into the routine. Empty for a rule whose options carry no conditions.
+	Options []ActionRuleOption `json:"options,omitempty"`
+}
+
+// ActionRuleOption is one option a rule offers, with the condition under which
+// it applies, as the code generator needs to see it.
+type ActionRuleOption struct {
+	ID               int64  `json:"id"`
+	Title            string `json:"title"`
+	VisibilityPrompt string `json:"visibilityPrompt"`
 }
 
 // ListActionRulesResponse represents the response from the action-rules endpoint
@@ -76,6 +89,37 @@ func (c *Client) GetActionRules() ([]ActionRule, error) {
 		return nil, err
 	}
 	return result.ActionRules, nil
+}
+
+// ActionOptionLink mirrors AIManager's link shape: which rule offers an option
+// and under what condition.
+type ActionOptionLink struct {
+	ActionRuleID     int64  `json:"actionRuleId"`
+	VisibilityPrompt string `json:"visibilityPrompt"`
+}
+
+// ActionOption is an option as AIManager returns it.
+type ActionOption struct {
+	ID    int64              `json:"id"`
+	Title string             `json:"title"`
+	Links []ActionOptionLink `json:"links"`
+}
+
+// GetActionOptionsByRuleID fetches the options one rule offers, with the
+// condition each is offered under.
+//
+// Used only when generating code: the conditions are plain language that has to
+// be compiled into the rule's routine, and the routine is the only place they
+// are ever evaluated.
+func (c *Client) GetActionOptionsByRuleID(ruleID int64) ([]ActionOption, error) {
+	var result struct {
+		ActionOptions []ActionOption `json:"actionOptions"`
+	}
+	path := fmt.Sprintf("/api/internal/action-options?actionRuleId=%d", ruleID)
+	if err := c.rc.JSON("GET", path, nil, &result, http.StatusOK); err != nil {
+		return nil, err
+	}
+	return result.ActionOptions, nil
 }
 
 // ModuleAISetting represents the per-module AI configuration from AIManager.

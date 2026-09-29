@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -331,6 +332,12 @@ type jsRule struct {
 	ruleID   int64
 	checkFn  goja.Callable
 	actionFn goja.Callable
+	// optionFns decides, per action option id, whether that option applies to
+	// the user the rule just matched. An option with no entry here always
+	// applies — which is every option of a rule whose links carry no condition,
+	// and every option at all until a routine is regenerated against a prompt
+	// that has one.
+	optionFns map[int64]goja.Callable
 }
 
 // JSRuleExecutor manages and executes JavaScript-based rules
@@ -339,6 +346,10 @@ type JSRuleExecutor struct {
 	vm          *goja.Runtime
 	rules       []jsRule
 	execTimeout time.Duration
+	// onDemand marks a routine whose rule has no trigger of its own, so that
+	// validation does not reject the `return false` the system prompt tells the
+	// model to write for it. See SetOnDemand.
+	onDemand bool
 }
 
 // New creates a new JSRuleExecutor. execTimeout bounds a single JS execution:
@@ -442,6 +453,44 @@ func (e *JSRuleExecutor) LoadFromString(code string) error {
 	return nil
 }
 
+// loadOptionFns extracts the rule's optional `options` member: a map from
+// action option id to a function deciding whether that option applies.
+//
+// Keys are strings because they are JavaScript object keys; a key that is not
+// an option id is a fault in the generated routine rather than something to
+// shrug off, since the effect would be an option silently never shown.
+func loadOptionFns(vm *goja.Runtime, rObj *goja.Object, ruleName string) (map[int64]goja.Callable, error) {
+	optionsVal := rObj.Get("options")
+	if optionsVal == nil || goja.IsUndefined(optionsVal) || goja.IsNull(optionsVal) {
+		return nil, nil
+	}
+	// Export first: ToObject wraps a primitive in a Number/String object rather
+	// than failing, so a routine with `options: 42` would otherwise load with
+	// an empty, silently ignored condition set. An array exports to a slice and
+	// is rejected here for the same reason — the keys have to be option ids.
+	if _, ok := optionsVal.Export().(map[string]interface{}); !ok {
+		return nil, fmt.Errorf("rule '%s' has an 'options' member that is not an object of option conditions", ruleName)
+	}
+	optionsObj := optionsVal.ToObject(vm)
+	if optionsObj == nil {
+		return nil, fmt.Errorf("rule '%s' has an 'options' member that is not an object", ruleName)
+	}
+
+	fns := make(map[int64]goja.Callable)
+	for _, key := range optionsObj.Keys() {
+		optionID, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("rule '%s' options key %q is not an action option id", ruleName, key)
+		}
+		fn, ok := goja.AssertFunction(optionsObj.Get(key))
+		if !ok {
+			return nil, fmt.Errorf("rule '%s' options[%s] is not a function", ruleName, key)
+		}
+		fns[optionID] = fn
+	}
+	return fns, nil
+}
+
 // loadRules evaluates the routine and extracts its rules array. Always called
 // inside runGuarded — every step here can run routine-defined code.
 func loadRules(vm *goja.Runtime, code string) ([]jsRule, error) {
@@ -517,11 +566,20 @@ func loadRules(vm *goja.Runtime, code string) ([]jsRule, error) {
 			return nil, fmt.Errorf("rule[%d] (%s) 'createAction' is not a function", i, name)
 		}
 
+		// Optional per-option conditions, keyed by action option id. Absent is
+		// the normal case: a routine generated before option conditions
+		// existed has no such member, and everything it offers applies.
+		optionFns, err := loadOptionFns(vm, rObj, name)
+		if err != nil {
+			return nil, err
+		}
+
 		loaded = append(loaded, jsRule{
-			name:     name,
-			ruleID:   ruleID,
-			checkFn:  checkFn,
-			actionFn: actionFn,
+			name:      name,
+			ruleID:    ruleID,
+			checkFn:   checkFn,
+			actionFn:  actionFn,
+			optionFns: optionFns,
 		})
 	}
 
@@ -592,6 +650,14 @@ func (e *JSRuleExecutor) EvaluateRules(ctx RuleContext, force bool) ([]actionman
 			AssignedTo:  jsmap.String(actionMap, "assignedTo"),
 			IssuedBy:    jsmap.String(actionMap, "issuedBy"),
 			Trigger:     jsmap.String(actionMap, "trigger"),
+		}
+
+		// Which of the rule's options do not apply to this user. Evaluated
+		// here because this is where the context lives; an option whose
+		// condition throws is left visible, since hiding a step the user needs
+		// is worse than offering one they do not.
+		if hidden := e.hiddenOptions(rule, ctxVal); hidden != nil {
+			action.HiddenOptions = &hidden
 		}
 
 		if action.Status == "" {
@@ -921,6 +987,56 @@ type RuleValidation struct {
 	Missing []string
 }
 
+// hiddenOptions runs the rule's per-option conditions and returns the ids of
+// the options that do not apply.
+//
+// Returns nil when the routine declares no conditions at all, which the caller
+// sends as "nothing hidden" — distinct from an empty slice only in intent, but
+// worth keeping apart in the logs.
+//
+// Each condition gets its own execution budget. A condition that throws or
+// overruns leaves its option visible: the alternative is hiding a step the user
+// may need because a generated line of JavaScript was wrong.
+func (e *JSRuleExecutor) hiddenOptions(rule jsRule, ctxVal goja.Value) []int64 {
+	if len(rule.optionFns) == 0 {
+		return nil
+	}
+	hidden := []int64{}
+	for optionID, fn := range rule.optionFns {
+		result, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+			return fn(goja.Undefined(), ctxVal)
+		})
+		if err != nil {
+			logger.Errorf("JS rule '%s' option %d condition error, leaving the option visible: %v",
+				rule.name, optionID, err)
+			continue
+		}
+		if !result.ToBoolean() {
+			hidden = append(hidden, optionID)
+		}
+	}
+	// Deterministic, so an unchanged answer compares equal and the action is
+	// not rewritten (and re-broadcast) on every evaluation.
+	sort.Slice(hidden, func(i, j int) bool { return hidden[i] < hidden[j] })
+	return hidden
+}
+
+// SetOnDemand marks this executor's rule as one that fires only when asked for
+// by name — a rule with no trigger prompt.
+//
+// It changes one judgement. A check() that returns false in every mock scenario
+// while reading nothing is normally an error: the rule could never fire, which
+// for a rule that is supposed to have a condition is a fault worth refusing. For
+// an on-demand rule that IS the condition — the system prompt has the model
+// write a plain `return false`, and the rule produces an action only when a
+// forced evaluation asks it to. Without this, such a routine cannot be
+// generated at all.
+func (e *JSRuleExecutor) SetOnDemand(onDemand bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.onDemand = onDemand
+}
+
 // ValidationReport is the outcome of ValidateWithMockCtxReport.
 type ValidationReport struct {
 	// Why the routine must not be stored as passed. Empty means it passes.
@@ -997,13 +1113,16 @@ func ctxPaths(paths []string) []string {
 // and what it read to decide it. Both halves matter — see
 // ValidateWithMockCtxReport.
 type ruleTally struct {
-	decisions  []ScenarioDecision
-	results    []bool
-	threw      bool
-	checkReads map[string]bool
-	allReads   map[string]bool
-	present    map[string]bool
-	candidates map[string]bool
+	decisions []ScenarioDecision
+	results   []bool
+	// What each option's condition answered, in the scenarios where the rule
+	// fired. Recorded rather than judged: see runScenarios.
+	optionResults map[int64][]bool
+	threw         bool
+	checkReads    map[string]bool
+	allReads      map[string]bool
+	present       map[string]bool
+	candidates    map[string]bool
 }
 
 func (e *JSRuleExecutor) ValidateWithMockCtxReport() ValidationReport {
@@ -1091,6 +1210,28 @@ func (e *JSRuleExecutor) runScenarios(
 					report.Errors = append(report.Errors, fmt.Errorf("rule '%s' createAction() failed in mock scenario %d (%s): %w",
 						rule.name, si+1, sc.Label, err))
 				}
+
+				// The per-option conditions run where the action would be
+				// raised, against the same context. A condition that throws is
+				// an error like any other generated code that throws; whether
+				// it answers the same in every scenario is NOT — unlike
+				// check(), an option that no mock user happens to need is
+				// perfectly ordinary, so the tally below only records it.
+				for optionID, fn := range rule.optionFns {
+					result, oerr := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+						return fn(goja.Undefined(), ctxVal)
+					})
+					if oerr != nil {
+						report.Errors = append(report.Errors, fmt.Errorf(
+							"rule '%s' condition for option %d failed in mock scenario %d (%s): %w",
+							rule.name, optionID, si+1, sc.Label, oerr))
+						continue
+					}
+					if t.optionResults == nil {
+						t.optionResults = map[int64][]bool{}
+					}
+					t.optionResults[optionID] = append(t.optionResults[optionID], result.ToBoolean())
+				}
 			}
 			absorb(t, tr)
 		}
@@ -1133,6 +1274,15 @@ func (e *JSRuleExecutor) judgeRules(tallies []*ruleTally, plains []map[string]in
 			continue
 		}
 		if len(varying) == 0 {
+			// An on-demand rule is expected to answer false everywhere: it has
+			// no condition of its own and runs only when forced.
+			if e.onDemand {
+				report.Notes = append(report.Notes, fmt.Sprintf(
+					"rule '%s' has no trigger of its own, so check() returns false in every mock scenario. "+
+						"It produces an action only when something asks for it by name — an action option of "+
+						"type \"Action\" pointing at this rule.", rule.name))
+				continue
+			}
 			read := "nothing"
 			if len(t.checkReads) > 0 {
 				read = "only fields that are the same in every scenario (" + strings.Join(ctxPaths(setToSortedBool(t.checkReads)), ", ") + ")"
@@ -1148,6 +1298,48 @@ func (e *JSRuleExecutor) judgeRules(tallies []*ruleTally, plains []map[string]in
 				"Check it against the scenarios in the routine's Context tab.",
 			rule.name, strings.Join(ctxPaths(varying), ", ")))
 	}
+
+	noteConstantOptions(tallies, e.rules, report)
+}
+
+// noteConstantOptions reports option conditions that answered the same way in
+// every scenario the rule fired in.
+//
+// A note, never an error. An option condition is not a trigger: "show this only
+// to a user with no host detection tool" is correct even if every mock user has
+// one, and rejecting the routine for it would make the mock scenarios a
+// specification of what conditions are allowed to exist. It is still worth
+// saying, because an option hidden everywhere is also what a mistyped condition
+// looks like.
+func noteConstantOptions(tallies []*ruleTally, rules []jsRule, report *ValidationReport) {
+	for ri, rule := range rules {
+		t := tallies[ri]
+		for _, optionID := range sortedOptionIDs(t.optionResults) {
+			results := t.optionResults[optionID]
+			if len(results) < 2 || !allSame(results) {
+				continue
+			}
+			state := "shown"
+			if !results[0] {
+				state = "hidden"
+			}
+			report.Notes = append(report.Notes, fmt.Sprintf(
+				"rule '%s': action option %d is %s in every mock scenario where the rule fires. "+
+					"That is legitimate if no mock user is in the situation the option is for; "+
+					"check it against the scenarios in the routine's Context tab.",
+				rule.name, optionID, state))
+		}
+	}
+}
+
+// sortedOptionIDs keeps the notes in a stable order; map iteration is not.
+func sortedOptionIDs(m map[int64][]bool) []int64 {
+	ids := make([]int64, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }
 
 func allSame(results []bool) bool {

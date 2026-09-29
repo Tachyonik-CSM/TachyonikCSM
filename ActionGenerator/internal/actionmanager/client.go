@@ -55,6 +55,26 @@ type CreateActionRequest struct {
 	IssuedBy     string `json:"issuedBy"`               // "User", "Support", "ActionGenerator"
 	Trigger      string `json:"trigger"`                // Trigger string
 	ActionRuleID *int64 `json:"actionRuleId,omitempty"` // FK to the action rule that created this
+	// HiddenOptions is the rule's action options that do NOT apply to this
+	// user's situation; everything else the rule offers is shown. nil
+	// (omitted) means nothing is hidden, which is the answer for a routine
+	// that declares no conditions and preserves the behaviour every action had
+	// before conditions existed.
+	HiddenOptions *[]int64 `json:"hiddenOptions,omitempty"`
+}
+
+// SetHiddenOptions updates which of a rule's options do not apply to an action
+// that already exists.
+//
+// The action is not re-created on a re-evaluation — it is skipped as already
+// present — so without this a set decided when the action was raised would
+// still be on screen after the user installed the tool that changes it.
+func (c *Client) SetHiddenOptions(actionID int64, visible []int64) error {
+	if visible == nil {
+		visible = []int64{}
+	}
+	payload := map[string]interface{}{"actionId": actionID, "hiddenOptions": visible}
+	return c.rc.JSON("POST", "/api/internal/actions/hidden-options", payload, nil, http.StatusOK)
 }
 
 // NewClient creates a new ActionManager API client
@@ -86,18 +106,28 @@ func (c *Client) CreateAction(req CreateActionRequest) (*Action, error) {
 // ActionExists reports whether the user already has an action with this title.
 // A filter over the list call rather than an endpoint of its own.
 func (c *Client) ActionExists(userID int64, title string) (bool, error) {
+	id, err := c.ExistingActionID(userID, title)
+	return id != 0, err
+}
+
+// ExistingActionID returns the id of the user's action with this title, or 0.
+//
+// The id, not just the fact: a re-evaluation that finds the action already
+// present still has to refresh which of its options apply, and that needs
+// something to address.
+func (c *Client) ExistingActionID(userID int64, title string) (int64, error) {
 	actions, err := c.GetActionsForUser(userID)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 
 	for _, action := range actions {
 		if action.Title == title {
-			return true, nil
+			return action.ID, nil
 		}
 	}
 
-	return false, nil
+	return 0, nil
 }
 
 // deleteResponse is what both withdrawal endpoints answer with.
