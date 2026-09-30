@@ -871,6 +871,24 @@ func runHelp() {
 	fmt.Println("  version            Print version and exit")
 	fmt.Println("  help               Show this help message")
 	printPlatformHelp()
+	fmt.Println()
+	printConfigLocation()
+}
+
+// printConfigLocation names the configuration file, which is the thing someone
+// running `help` to change a setting is usually looking for.
+//
+// GetConfigPath answers two different questions with one string: where the
+// config IS, and — when none exists anywhere — where a fresh enrollment would
+// write one. Printing the second as though it were the first would send the
+// reader to edit a file that is not there, so the two cases are told apart.
+func printConfigLocation() {
+	path := config.GetConfigPath()
+	if _, err := os.Stat(path); err != nil {
+		fmt.Printf("Configuration: %s (not present yet)\n", path)
+		return
+	}
+	fmt.Printf("Configuration: %s\n", path)
 }
 
 // runSelfUpdate handles the `self-update` subcommand.
