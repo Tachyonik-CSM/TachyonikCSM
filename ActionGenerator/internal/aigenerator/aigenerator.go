@@ -18,6 +18,7 @@ package aigenerator
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -28,6 +29,8 @@ import (
 	"tachyonik/actiongenerator/internal/codegen"
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/actiongenerator/internal/jsruntime"
+	"tachyonik/lib/aiclient"
+	"tachyonik/lib/aipick"
 	"tachyonik/lib/logger"
 )
 
@@ -207,21 +210,18 @@ func optionsForPrompt(ruleID int64, options []aimanager.ActionOption) []aimanage
 func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 	logger.Infof("Generating JS code for action rule %d (%s)...", rule.ID, rule.Title)
 
-	// Resolve AI: use per-rule AI if configured, otherwise default
-	ruleClient, ruleModel := ag.resolveRuleAI(rule)
-
-	// Generation requires an AI chat client. When no AI is configured the
-	// module default client is nil; without a usable per-rule client there is
-	// nothing to generate with. Skip rather than calling Chat on a nil client
-	// (which would panic). Existing routines keep running regardless — only
-	// generation is disabled until an AI is assigned.
-	if ruleClient == nil {
-		logger.Warnf("Cannot generate routine for action rule %d (%s): no AI configured", rule.ID, rule.Title)
-		return fmt.Errorf("no AI configured for rule %d", rule.ID)
+	// Which AI, asked of AIManager now rather than remembered from startup:
+	// the rule's own, or the module's current default. Named in every error
+	// below, so a refused request says which account refused it.
+	choice, err := ag.pickAI(rule.AI)
+	if err != nil {
+		logger.Warnf("Cannot generate routine for action rule %d: %v", rule.ID, err)
+		return fmt.Errorf("cannot generate the routine for rule %d: %w", rule.ID, err)
 	}
+	ruleModel := choice.Entry.Model
+	logger.Infof("Generating the routine for action rule %d with %s", rule.ID, choice.Describe())
 
-	// Create code generator with resolved AI config
-	codeGen := codegen.New(ruleClient, ruleModel, ag.cfg.AI.SystemPrompt)
+	codeGen := codegen.New(choice.Client, ruleModel, choice.SystemPrompt)
 
 	// The options this rule offers, with the condition each is offered under.
 	// They go into the prompt so the generated routine can decide per option
@@ -240,7 +240,7 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 	// Generate JS code
 	code, err := codeGen.Generate(ruleWithOptions)
 	if err != nil {
-		return fmt.Errorf("code generation failed for rule %d: %w", rule.ID, err)
+		return fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
 	}
 
 	// Compute SHA256
@@ -402,24 +402,66 @@ func (ag *AIActionGenerator) SetChatClientFactory(factory ChatClientFactory) {
 	ag.chatClientFactory = factory
 }
 
-// resolveRuleAI returns the ChatClient and model to use for code generation.
-// If the rule has a per-rule AI configured and a factory is available, it uses that;
-// otherwise it falls back to the default client and model.
-func (ag *AIActionGenerator) resolveRuleAI(rule *aimanager.ActionRule) (codegen.ChatClient, string) {
-	if rule.AI != nil && ag.chatClientFactory != nil {
-		entry, err := ag.aiMgrClient.GetAIByID(*rule.AI)
-		if err != nil {
-			logger.Warnf("Failed to fetch AI %d for rule %d, falling back to default: %v", *rule.AI, rule.ID, err)
-			return ag.chatClient, ag.cfg.AI.Model
-		}
-		client := ag.chatClientFactory(entry)
-		if client != nil {
-			logger.Infof("Using per-rule AI '%s' (model: %s) for rule %d", entry.Name, entry.Model, rule.ID)
-			return client, entry.Model
-		}
-		logger.Warnf("Per-rule AI '%s' for rule %d could not be created, falling back to default", entry.Name, rule.ID)
+// pickAI chooses the AI that generates a rule's routine, asking AIManager at
+// the moment of generation; see tachyonik/lib/aipick. The AI this module
+// loaded last is the fallback for when AIManager cannot be asked.
+func (ag *AIActionGenerator) pickAI(ruleAI *int64) (aipick.Choice, error) {
+	ag.mu.RLock()
+	loaded := aipick.Choice{
+		SystemPrompt: ag.cfg.AI.SystemPrompt,
+		Entry:        aipick.Entry{Name: ag.cfg.AI.AIName, Model: ag.cfg.AI.Model},
 	}
-	return ag.chatClient, ag.cfg.AI.Model
+	if ag.chatClient != nil {
+		loaded.Client = ag.chatClient
+	}
+	factory := ag.chatClientFactory
+	ag.mu.RUnlock()
+
+	lookup := aipick.Lookup{
+		ByID: func(id int64) (*aipick.Entry, error) {
+			if ag.aiMgrClient == nil {
+				return nil, errNoAIManager
+			}
+			e, err := ag.aiMgrClient.GetAIByID(id)
+			if err != nil {
+				return nil, err
+			}
+			return pickEntry(e), nil
+		},
+		ModuleSetting: func() (*aipick.ModuleSetting, error) {
+			if ag.aiMgrClient == nil {
+				return nil, errNoAIManager
+			}
+			s, err := ag.aiMgrClient.GetModuleAISetting("actiongenerator")
+			if err != nil {
+				return nil, err
+			}
+			out := &aipick.ModuleSetting{SystemPrompt: s.SystemPrompt}
+			if s.AI != nil {
+				out.AI = pickEntry(s.AI)
+			}
+			return out, nil
+		},
+		Build: func(e aipick.Entry) aiclient.ChatClient {
+			if factory == nil {
+				return aiclient.ForProvider(e.Provider, e.URL, e.APIKey, 0)
+			}
+			if c := factory(&aimanager.AIEntry{ID: e.ID, Name: e.Name, Provider: e.Provider, Model: e.Model, URL: e.URL, APIKey: e.APIKey}); c != nil {
+				return c
+			}
+			return nil
+		},
+	}
+	return lookup.Pick(ruleAI, loaded)
+}
+
+// errNoAIManager is what a lookup reports when this module has no AIManager
+// client to ask.
+var errNoAIManager = errors.New("no AIManager client configured")
+
+// pickEntry converts AIManager's record into aipick's.
+func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
+	return &aipick.Entry{ID: e.ID, Name: e.Name, Provider: e.Provider, Model: e.Model, URL: e.URL, APIKey: e.APIKey}
 }
 
 // verifyRoutineHash checks stored code against the SHA256 recorded with it.
