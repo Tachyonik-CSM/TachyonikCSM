@@ -27,6 +27,7 @@ TachyonikProxy is a standalone, cross-platform MCP (Model Context Protocol) serv
 - [Operation](#operation)
 - [Subcommands](#subcommands)
 - [Tool Detection](#tool-detection)
+- [Built-in tools](#built-in-tools)
 - [Local Network Scan](#local-network-scan)
 - [Tool Execution](#tool-execution)
 - [Communication and Data Workflows](#communication-and-data-workflows)
@@ -80,6 +81,7 @@ Dependencies are managed via `go.mod`:
 - `github.com/gorilla/websocket` — WebSocket transport for inbound mode
 - `github.com/dop251/goja` — embedded JavaScript engine for tool-detection routines
 - `gopkg.in/yaml.v3` — YAML configuration
+- `golang.org/x/crypto/ssh` — the SSH transport for GMP (see [Built-in tools](#built-in-tools)). Pinned to v0.31.0: later releases require Go 1.26, above this module's 1.24 minimum.
 
 ## Deployment Packages
 
@@ -302,6 +304,7 @@ Tool detection is **driven from ToolManager**, not from a hard-coded list inside
    - **array** of those objects → multiple detections from a single rule (e.g. an HTTP probe that finds the same tool on several endpoints). One `ToolResult` is emitted per array element.
    - thrown exception → reported as an error in the result.
 5. The proxy returns one `ToolResult` per detection — detected, not-detected, or errored — so ToolManager can show negative results and surface SHA-256 / JS-execution failures. Each detected result carries `host` and `toolOverviewId`: the latter is the catalogue identity copied from the originating AIManager `scan_rule.tool_overview_id` and is what ResourceManager stores as `tools.tool_id`. The `scan` CLI subcommand uses the same scanner with no input routines for offline diagnostics.
+6. If netscan has networks to sweep but has not completed its first sweep since the proxy started, the answer is marked `"incomplete": true` with an `incompleteReason`. Routines that rely on the sweep see no hosts until then. A tool they do not report is therefore unseen rather than gone, and TachyonikCSM adds what the scan found but removes nothing. Once the first sweep has completed, and on a proxy with no networks selected, scans are complete.
 
 ### Inspecting the sweep from the command line
 
@@ -356,6 +359,67 @@ tachyonikproxy scan --json   # machine-readable, suitable for piping
 ```
 
 The CLI form is mainly a debugging aid: with no routines supplied, it shows what the proxy would return if ToolManager pushed an empty routine set — i.e. an empty list. The intended source of truth for detection is the routine library managed by ToolManager.
+
+## Built-in tools
+
+A tool rule normally names a command, and the proxy runs that binary. A rule
+whose command is `builtin:<name>` is answered by Go code inside the proxy
+instead — for a capability no binary on the host could provide. It appears in
+`tools/list` and is called with `tools/call` exactly like any other tool, so
+nothing above the proxy needs to know the difference.
+
+| Command | Does |
+|---|---|
+| `builtin:gmp-get-hosts` | Asks an OPENVAS SCAN appliance for every host asset it holds, over GMP. Reads the appliance's inventory; scans nothing. |
+
+Arguments: `host` (required — the appliance), `port` (default `22`), `sshUser`
+(default `gmp`). The result is JSON:
+`{"appliance": "…", "count": N, "hosts": [{"ip", "hostname", "os", "lastSeen"}]}`.
+
+### Talking to an OPENVAS SCAN appliance
+
+`internal/gmp` is a GMP client re-implemented in Go, so the proxy needs no
+gvm-tools or Python on its host. It speaks GMP **over SSH**, which is what
+current appliances offer — Greenbone's own manual calls the older TLS transport
+(port 9390) deprecated, and on a Greenbone OS 25 appliance that port is simply
+closed. The session is opened the way python-gvm does it: connect as the `gmp`
+SSH account, start a session with an *empty* command (that account's shell is
+the gvmd relay), and exchange XML over stdin and stdout.
+
+Two things about authentication, both verified against Greenbone OS 25.0.7:
+
+- **The SSH password does not matter.** The `gmp` account is a gateway into
+  gvmd; an empty, a wrong and the right password all open the channel. The proxy
+  sends an empty one.
+- **The GMP user is what authenticates.** It comes from the credential linked to
+  the tool installation in TachyonikCSM, and is refused cleanly by the appliance
+  when wrong.
+
+### Credentials and host keys
+
+A built-in receives the credential linked to the tool installation. It arrives
+in the `tools/call` params **beside** `arguments`, never inside them: arguments
+are checked against a character allowlist, rendered into command lines and
+echoed in errors, and a password must go through none of that. A binary tool
+never receives it at all. It is not logged, not written to disk, and held only
+for the call; the channel it arrives over is the mutually authenticated TLS
+connection to ToolManager.
+
+**Host keys are verified, not trusted.** The appliance's SSH host key must match
+the fingerprint confirmed for that installation in TachyonikCSM. With none
+confirmed yet the connection is refused and the offered fingerprint is reported,
+so it can be checked and confirmed — and the credential is not sent until it is,
+since handing a password to an unverified host is exactly what pinning prevents.
+A key that changes after being confirmed is refused with a warning that the
+appliance was reinstalled or is being impersonated.
+
+### `credential/test`
+
+An MCP method beside `tools/call`, used by the *Test credential* button in
+TachyonikCSM. It signs in to the appliance with the linked credential and asks
+its version, doing no work there, and answers with a verdict a UI can act on:
+signed in, host key not yet confirmed (with its fingerprint), host key changed,
+or credential refused.
 
 ## Local Network Scan
 
@@ -645,7 +709,7 @@ The MCP server speaks JSON-RPC 2.0 and supports the following methods. Unknown m
 | `tools/call`                  | client → server    | Executes a tool; returns text + optional `resource` content     |
 | `tools/scan`                  | client → server    | Runs supplied JS detection routines; returns detected tools     |
 | `config/get`                  | client → server    | Returns the proxy's current `tools`, `mcpServers`, and `allowRemoteConfig` flag |
-| `config/update`               | client → server    | Replaces `tools` / `mcpServers` if `allow_remote_config: true`; persists `config.yaml` |
+| `config/update`               | client → server    | Replaces `tools` / `mcpServers` if `allow_remote_config: true`; persists `config.yaml`. Tools below the security floor are left out and named in `rejectedTools` |
 | `ping`                        | client → server    | Liveness check; returns `{}`                                    |
 
 Transports:
@@ -1028,6 +1092,10 @@ The argument violates the tool's `allowed_chars` allowlist. Either widen the all
 ### Remote config update rejected
 
 `config/update` returns an error unless `allow_remote_config: true` is set in `config.yaml`. This is intentional — operators must opt in to allowing ToolManager to push tool definitions.
+
+### A pushed tool is refused ("tool not found" when it is called)
+
+Each tool in a `config/update` is checked separately. A tool with an empty name or command, no `allowed_chars`, or an `allowed_chars` that is not a valid character class is left out. The rest of the push is applied, and the answer lists the refused tools as `rejectedTools: [{name, reason}]`. The proxy logs `Remote config: refused tool "<name>": <reason>`, and ResourceManager logs the same against the proxy at every sync. Until the tool rule is fixed in TachyonikCSM, calling the tool fails with `tool "<name>" not found`. Earlier versions refused the whole push, which took every other tool on the proxy down with the faulty one.
 
 ## Architecture
 

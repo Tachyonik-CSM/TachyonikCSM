@@ -93,16 +93,23 @@ func (r *Registry) ListTools() []MCPTool {
 }
 
 // CallTool executes a tool by name with the given arguments.
-func (r *Registry) CallTool(name string, args map[string]interface{}) (*ToolResult, error) {
+//
+// secrets is the credential linked to the tool installation, if any. Only a
+// built-in can use it; a binary tool is run exactly as before and never sees
+// it, so linking a credential to such a tool cannot leak it into a command
+// line.
+func (r *Registry) CallTool(name string, args map[string]interface{}, secrets Secrets) (*ToolResult, error) {
 	r.mu.RLock()
 	tool, ok := r.localTools[name]
 	r.mu.RUnlock()
 
-	if ok {
-		return ExecuteTool(tool, args)
+	if !ok {
+		return nil, fmt.Errorf("tool %q not found", name)
 	}
-
-	return nil, fmt.Errorf("tool %q not found", name)
+	if IsBuiltin(tool) {
+		return callBuiltin(tool, args, secrets)
+	}
+	return ExecuteTool(tool, args)
 }
 
 // UpdateTools replaces the local tool registry.

@@ -482,6 +482,25 @@ func (s *Scanner) Snapshot() Snapshot {
 	return s.snap
 }
 
+// Pending reports whether there are networks to sweep but no completed sweep of
+// them yet — the minutes after a start, when every routine that relies on the
+// sweep sees nothing and would report its tool absent.
+//
+// Not pending when nothing is selected: that sweep will never complete, and the
+// absence it implies is the operator's choice rather than a matter of waiting.
+// A nil receiver is not pending either; there is no sweep to wait for.
+func (s *Scanner) Pending() bool {
+	if s == nil {
+		return false
+	}
+	if len(s.networks()) == 0 {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return !s.snap.Ready
+}
+
 // Run sweeps immediately, then on every interval tick, until ctx is cancelled.
 // It is meant to be started in its own goroutine: nothing here touches the
 // caller's path, and a sweep in progress never blocks Snapshot.

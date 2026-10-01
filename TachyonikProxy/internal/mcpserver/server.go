@@ -13,6 +13,7 @@ package mcpserver
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,6 +89,30 @@ type ToolsListResult struct {
 type ToolCallParams struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
+	// Credential is the credential linked to the tool installation, sent by
+	// ToolManager beside the arguments and never inside them. It reaches only
+	// built-in tools, and is never logged or stored.
+	Credential *CallCredential `json:"credential,omitempty"`
+	// HostKey is the SSH host key fingerprint confirmed for the installation.
+	HostKey string `json:"hostKey,omitempty"`
+}
+
+// CallCredential is a credential as it travels in a call. The channel it
+// travels over is the mutually authenticated TLS WebSocket to ToolManager; it
+// never steps down to anything less.
+type CallCredential struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
+// secrets lifts what the call carries into the form the tools package takes.
+func (p ToolCallParams) secrets() tools.Secrets {
+	s := tools.Secrets{HostKey: p.HostKey}
+	if p.Credential != nil {
+		s.Login = p.Credential.Login
+		s.Password = p.Credential.Password
+	}
+	return s
 }
 
 type ToolCallResult struct {
@@ -154,8 +179,20 @@ type ConfigUpdateParams struct {
 	NetScanDefaultEnabled *bool `json:"netScanDefaultEnabled,omitempty"`
 }
 
+// ConfigUpdateResult answers config/update. RejectedTools names the pushed
+// tools that were refused and left out; everything else was applied.
+type ConfigUpdateResult struct {
+	Status        string         `json:"status"`
+	RejectedTools []RejectedTool `json:"rejectedTools,omitempty"`
+}
+
 type ToolsScanResult struct {
 	Tools []toolscan.ToolResult `json:"tools"`
+	// Incomplete says the scan could not look everywhere it normally would, so
+	// a tool missing from Tools may merely be unseen. The platform then adds
+	// what was found and removes nothing.
+	Incomplete       bool   `json:"incomplete,omitempty"`
+	IncompleteReason string `json:"incompleteReason,omitempty"`
 }
 
 // Server implements the MCP JSON-RPC server logic.
@@ -217,6 +254,8 @@ func (s *Server) HandleRequest(raw []byte) *Response {
 		return s.handleToolsCall(req)
 	case "tools/scan":
 		return s.handleToolsScan(req)
+	case "credential/test":
+		return s.handleCredentialTest(req)
 	case "config/get":
 		return s.handleConfigGet(req)
 	case "config/update":
@@ -253,7 +292,7 @@ func (s *Server) handleToolsCall(req Request) *Response {
 		return errResp(req.ID, codeInvalidParams, "Invalid params")
 	}
 
-	result, err := s.registry.CallTool(params.Name, params.Arguments)
+	result, err := s.registry.CallTool(params.Name, params.Arguments, params.secrets())
 	if err != nil {
 		return okResp(req.ID, ToolCallResult{
 			Content: []interface{}{ContentBlock{Type: "text", Text: err.Error()}},
@@ -281,6 +320,35 @@ func (s *Server) handleToolsCall(req Request) *Response {
 	})
 }
 
+// CredentialTestParams asks whether a credential opens a session on a tool.
+// Protocol names the built-in family; "gmp" is the only one so far.
+type CredentialTestParams struct {
+	Protocol   string                 `json:"protocol"`
+	Arguments  map[string]interface{} `json:"arguments"`
+	Credential *CallCredential        `json:"credential,omitempty"`
+	HostKey    string                 `json:"hostKey,omitempty"`
+}
+
+// handleCredentialTest answers credential/test. Always a result rather than an
+// error response: "the appliance refused it" is a successful test with a
+// negative answer, and the caller needs the structure to say what to do next.
+func (s *Server) handleCredentialTest(req Request) *Response {
+	var params CredentialTestParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResp(req.ID, codeInvalidParams, "Invalid params")
+	}
+	secrets := ToolCallParams{Credential: params.Credential, HostKey: params.HostKey}.secrets()
+
+	switch params.Protocol {
+	case "gmp":
+		return okResp(req.ID, tools.TestGMPCredential(params.Arguments, secrets))
+	default:
+		return okResp(req.ID, tools.CredentialTestResult{
+			Message: fmt.Sprintf("credential testing is not available for protocol %q", params.Protocol),
+		})
+	}
+}
+
 type ToolsScanParams struct {
 	Routines []toolscan.RoutineInput `json:"routines"`
 }
@@ -303,8 +371,19 @@ func (s *Server) handleToolsScan(req Request) *Response {
 		}
 	}
 
-	logger.Infof("Tool scan completed: %d results (%d detected) from %d routines", len(results), detectedCount, len(params.Routines))
-	return okResp(req.ID, ToolsScanResult{Tools: results})
+	result := ToolsScanResult{Tools: results}
+	if p, ok := s.netScan.(netScanPending); ok && p.Pending() {
+		result.Incomplete = true
+		result.IncompleteReason = "the network sweep has not completed its first pass since the proxy started"
+	}
+
+	if result.Incomplete {
+		logger.Infof("Tool scan completed: %d results (%d detected) from %d routines — incomplete: %s",
+			len(results), detectedCount, len(params.Routines), result.IncompleteReason)
+	} else {
+		logger.Infof("Tool scan completed: %d results (%d detected) from %d routines", len(results), detectedCount, len(params.Routines))
+	}
+	return okResp(req.ID, result)
 }
 
 func (s *Server) handleConfigGet(req Request) *Response {
@@ -325,21 +404,53 @@ func (s *Server) handleConfigGet(req Request) *Response {
 	})
 }
 
-// validatePushedTools enforces a minimum security floor on tools delivered
-// via a remote config/update, so a push cannot weaken local execution policy.
-func validatePushedTools(tools []config.ToolConfig) error {
+// RejectedTool is a pushed tool the proxy refused, and why.
+type RejectedTool struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// screenPushedTools enforces a minimum security floor on tools delivered via a
+// remote config/update, so a push cannot weaken local execution policy.
+//
+// Each tool is judged on its own. A push carries every tool of every rule the
+// platform has for this proxy, so refusing it whole for one faulty rule took
+// all the others down with it — and the symptom, "tool not found" on tools
+// that were fine, pointed nowhere near the cause. A refused tool is left out
+// and named in the answer; the rest are applied.
+func screenPushedTools(tools []config.ToolConfig) (accepted []config.ToolConfig, rejected []RejectedTool) {
+	accepted = make([]config.ToolConfig, 0, len(tools))
 	for _, t := range tools {
-		if strings.TrimSpace(t.Name) == "" {
-			return fmt.Errorf("rejected config update: a tool has an empty name")
+		if reason := pushedToolProblem(t); reason != "" {
+			name := t.Name
+			if strings.TrimSpace(name) == "" {
+				name = "(unnamed)"
+			}
+			rejected = append(rejected, RejectedTool{Name: name, Reason: reason})
+			continue
 		}
-		if strings.TrimSpace(t.Command) == "" {
-			return fmt.Errorf("rejected config update: tool %q has an empty command", t.Name)
-		}
-		if strings.TrimSpace(t.AllowedChars) == "" {
-			return fmt.Errorf("rejected config update: tool %q must set allowed_chars (a remote push may not disable argument validation)", t.Name)
-		}
+		accepted = append(accepted, t)
 	}
-	return nil
+	return accepted, rejected
+}
+
+// pushedToolProblem says what disqualifies a pushed tool, or "" when nothing.
+func pushedToolProblem(t config.ToolConfig) string {
+	if strings.TrimSpace(t.Name) == "" {
+		return "the tool has an empty name"
+	}
+	if strings.TrimSpace(t.Command) == "" {
+		return "the tool has an empty command"
+	}
+	if strings.TrimSpace(t.AllowedChars) == "" {
+		return "allowed_chars is not set (a remote push may not disable argument validation)"
+	}
+	// Compiled the way the executor compiles it, so a pattern that would fail
+	// every call is refused here, where it is reported, instead.
+	if _, err := regexp.Compile("^[" + t.AllowedChars + "]*$"); err != nil {
+		return fmt.Sprintf("allowed_chars is not a valid character class: %v", err)
+	}
+	return ""
 }
 
 // validatePushedNetScanPorts checks a remotely pushed port list.
@@ -367,6 +478,12 @@ func validatePushedNetScanPorts(ports []int) error {
 // nil interface — simply has nothing to reconfigure.
 type netScanPortSetter interface {
 	SetPorts([]int)
+}
+
+// netScanPending is the same arrangement for whether the sweep has completed a
+// first pass, which a tools/scan result has to report.
+type netScanPending interface {
+	Pending() bool
 }
 
 // netScanNetworkSetter is the same arrangement for the swept networks. Kept
@@ -452,10 +569,13 @@ func (s *Server) handleConfigUpdate(req Request) *Response {
 	// Validation floor for remotely-pushed tools. A remote push must not be
 	// able to register a tool that disables argument validation (empty
 	// allowed_chars) or runs an empty/blank command — combined with flag
-	// handling that would widen this into arbitrary execution.
+	// handling that would widen this into arbitrary execution. Tools that fall
+	// below it are dropped one by one; see screenPushedTools.
+	var rejected []RejectedTool
 	if params.Tools != nil {
-		if err := validatePushedTools(params.Tools); err != nil {
-			return errResp(req.ID, codeInvalidParams, err.Error())
+		params.Tools, rejected = screenPushedTools(params.Tools)
+		for _, r := range rejected {
+			logger.Warnf("Remote config: refused tool %q: %s", r.Name, r.Reason)
 		}
 	}
 	if len(params.NetScanPorts) > 0 {
@@ -523,5 +643,5 @@ func (s *Server) handleConfigUpdate(req Request) *Response {
 	}
 
 	logger.Infof("Configuration updated remotely")
-	return okResp(req.ID, map[string]string{"status": "updated"})
+	return okResp(req.ID, ConfigUpdateResult{Status: "updated", RejectedTools: rejected})
 }
