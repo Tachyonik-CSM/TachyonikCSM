@@ -7,9 +7,8 @@
 // The fixtures in testdata are verbatim responses from a Greenbone OS 25.0.7
 // appliance speaking GMP 22.8 — not hand-written examples. That matters for
 // get_assets above all: the real document is 34 KB of permissions, sources and
-// repeated identifiers around the four fields this package keeps, and a parser
-// written against a tidy example would have passed while failing on the first
-// real response.
+// repeated identifiers, and it is also the case that showed GMP's default
+// paging — 10 of the appliance's 23 hosts.
 
 package gmp
 
@@ -51,61 +50,51 @@ func clientWith(t *testing.T, response string) (*Client, *fakeTransport) {
 	return New(ft), ft
 }
 
-// The ten hosts the appliance actually returned, with the fields we keep.
-func TestHostsFromARealResponse(t *testing.T) {
-	c, ft := clientWith(t, fixture(t, "get_assets_host.xml"))
+// The document comes back byte for byte: interpreting it is the platform's
+// analysis and import rules' job, and anything changed here would be lost to
+// them.
+func TestHostAssetsAreTheAppliancesOwnDocument(t *testing.T) {
+	// The recorded answer is a first page of 10 from 23 assets. Restated as
+	// complete, it is what a single-page inventory looks like.
+	doc := strings.Replace(fixture(t, "get_assets_host.xml"), "<filtered>23</filtered>", "<filtered>10</filtered>", 1)
+	c, ft := clientWith(t, doc)
 
-	hosts, err := c.Hosts()
+	assets, err := c.HostAssets()
 	if err != nil {
-		t.Fatalf("Hosts: %v", err)
+		t.Fatalf("HostAssets: %v", err)
 	}
-	if len(hosts) != 10 {
-		t.Fatalf("got %d hosts, want the 10 in the recorded response", len(hosts))
+	if string(assets.Document) != strings.TrimLeft(doc, " \t\r\n") {
+		t.Error("the document was altered on the way through")
 	}
-
-	// details="1" is what makes the identifiers part of the answer; without it
-	// every host would come back as a bare address.
-	if !strings.Contains(ft.written.String(), `details="1"`) {
-		t.Errorf("request did not ask for details: %s", ft.written.String())
-	}
-	if !strings.Contains(ft.written.String(), `type="host"`) {
-		t.Errorf("request did not ask for host assets: %s", ft.written.String())
+	if assets.Count != 10 {
+		t.Errorf("count = %d, want 10", assets.Count)
 	}
 
-	byIP := map[string]Host{}
-	for _, h := range hosts {
-		byIP[h.IP] = h
+	sent := ft.written.String()
+	for _, want := range []string{`type="host"`, `details="1"`, `rows=-1`} {
+		if !strings.Contains(sent, want) {
+			t.Errorf("request lacks %s: %s", want, sent)
+		}
 	}
+}
 
-	for _, want := range []struct{ ip, hostname, os string }{
-		{"192.168.178.1", "www.myfritz.box", "cpe:/o:avm:fritz%21_os"},
-		{"192.168.178.124", "p30", "cpe:/o:debian:debian_linux:8"},
-		{"192.168.178.153", "debian.fritz.box", "cpe:/o:debian:debian_linux:13"},
-	} {
-		got, ok := byIP[want.ip]
-		if !ok {
-			t.Errorf("%s missing from the parsed hosts", want.ip)
-			continue
-		}
-		if got.Hostname != want.hostname {
-			t.Errorf("%s hostname = %q, want %q", want.ip, got.Hostname, want.hostname)
-		}
-		if got.OS != want.os {
-			t.Errorf("%s os = %q, want %q", want.ip, got.OS, want.os)
-		}
-		if got.LastSeen.IsZero() {
-			t.Errorf("%s has no last-seen time", want.ip)
-		}
+// The regression: GMP pages by default, and the appliance answered with the
+// first 10 of its 23 hosts. A partial page must not pass as the inventory.
+func TestAPartialPageIsRefused(t *testing.T) {
+	c, _ := clientWith(t, fixture(t, "get_assets_host.xml"))
+	_, err := c.HostAssets()
+	if err == nil || !strings.Contains(err.Error(), "partial page") {
+		t.Fatalf("got %v, want the partial page refused", err)
 	}
+}
 
-	// A host that answered a ping and nothing else has neither identifier, and
-	// must still be returned — it is exactly the host an inventory is missing.
-	bare, ok := byIP["192.168.178.148"]
-	if !ok {
-		t.Fatal("the host with no identifiers was dropped")
-	}
-	if bare.Hostname != "" || bare.OS != "" {
-		t.Errorf("expected no identifiers for %s, got hostname=%q os=%q", bare.IP, bare.Hostname, bare.OS)
+func TestAResponseOverTheLimitIsRefused(t *testing.T) {
+	c, _ := clientWith(t, fixture(t, "get_assets_host.xml"))
+	c.MaxResponseBytes = 4096
+	_, err := c.HostAssets()
+	var tooLarge *ResponseTooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("got %v, want a ResponseTooLargeError", err)
 	}
 }
 
@@ -145,7 +134,7 @@ func TestRefusedCredentialIsAnAuthFailure(t *testing.T) {
 
 	// While a refusal of something else is not.
 	c2, _ := clientWith(t, `<get_assets_response status="400" status_text="Bogus command"/>`)
-	_, err = c2.Hosts()
+	_, err = c2.HostAssets()
 	if err == nil {
 		t.Fatal("a refused get_assets was reported as success")
 	}

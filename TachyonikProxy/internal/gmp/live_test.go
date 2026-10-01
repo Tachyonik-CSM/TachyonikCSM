@@ -4,12 +4,14 @@
 
 // An end-to-end check against a real appliance, skipped unless one is named.
 //
-// The fixtures cover the parsing; this covers the half that cannot be faked —
+// The fixtures cover the protocol; this covers the half that cannot be faked —
 // that the SSH account opens a gvmd channel at all, that an empty command is
 // the right way to ask, and that a session survives three commands in a row.
 //
 //	GMP_LIVE_HOST=192.168.178.162 GMP_LIVE_SSH_USER=gmp GMP_LIVE_SSH_PASSWORD=… \
 //	GMP_LIVE_USER=demo GMP_LIVE_PASSWORD=… go test ./internal/gmp/ -run Live -v
+//
+// GMP_LIVE_SAVE=<path> additionally writes the document received to that file.
 
 package gmp
 
@@ -47,15 +49,17 @@ func TestLiveAppliance(t *testing.T) {
 		t.Fatalf("Authenticate: %v", err)
 	}
 
-	hosts, err := client.Hosts()
+	assets, err := client.HostAssets()
 	if err != nil {
-		t.Fatalf("Hosts: %v", err)
+		t.Fatalf("HostAssets: %v", err)
 	}
-	t.Logf("%d host assets", len(hosts))
-	for _, h := range hosts {
-		t.Logf("  %-16s %-34s %-32s %s", h.IP, h.Hostname, h.OS, h.LastSeen.Format("2006-01-02 15:04"))
-	}
-	if len(hosts) == 0 {
+	t.Logf("%d host assets in a %d-byte document", assets.Count, len(assets.Document))
+	if assets.Count == 0 {
 		t.Error("the appliance returned no host assets")
+	}
+	if out := os.Getenv("GMP_LIVE_SAVE"); out != "" {
+		if err := os.WriteFile(out, assets.Document, 0o600); err != nil {
+			t.Errorf("save: %v", err)
+		}
 	}
 }

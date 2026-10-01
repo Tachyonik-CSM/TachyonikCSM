@@ -13,8 +13,9 @@
 package tools
 
 import (
-	"encoding/json"
+	"encoding/base64"
 	"os"
+	"strings"
 	"testing"
 
 	"tachyonik/tachyonikproxy/internal/config"
@@ -65,17 +66,15 @@ func TestLiveGMPFlow(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("gmp-get-hosts: err=%v result=%+v", err, res)
 	}
-	var out struct {
-		Count int `json:"count"`
-		Hosts []struct {
-			IP, Hostname, OS string
-		} `json:"hosts"`
+	t.Logf("gmp-get-hosts: %s", res.Content)
+	if len(res.OutputFiles) != 1 {
+		t.Fatalf("got %d output files, want the appliance's document", len(res.OutputFiles))
 	}
-	if err := json.Unmarshal([]byte(res.Content), &out); err != nil {
-		t.Fatalf("result is not JSON: %v", err)
+	doc, err := base64.StdEncoding.DecodeString(res.OutputFiles[0].Data)
+	if err != nil {
+		t.Fatalf("output file is not base64: %v", err)
 	}
-	t.Logf("gmp-get-hosts: %d hosts", out.Count)
-	if out.Count == 0 || len(out.Hosts) != out.Count {
-		t.Errorf("count %d does not match %d hosts", out.Count, len(out.Hosts))
+	if !strings.HasPrefix(string(doc), "<get_assets_response") {
+		t.Errorf("output file is not a get_assets_response: %.80s", doc)
 	}
 }

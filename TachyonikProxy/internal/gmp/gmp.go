@@ -5,6 +5,13 @@
 // Package gmp speaks the Greenbone Management Protocol to an OPENVAS SCAN
 // appliance, so the proxy can ask it what hosts it knows about.
 //
+// It transports and does not interpret. The host inventory is handed on as the
+// appliance's own document, unmodified, and turned into assets by the
+// platform's analysis and import rules like any other source — the same way an
+// Nmap or OpenVAS report file is. Format knowledge kept here would sit on
+// customer hosts, change only with a proxy release, and drop whatever this
+// package did not think to keep.
+//
 // Re-implemented rather than shelling out to gvm-tools: the proxy cannot
 // require a Python toolchain on a customer's host, and the protocol is small —
 // XML requests, XML responses, one command at a time.
@@ -22,33 +29,33 @@
 package gmp
 
 import (
+	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
-	"time"
 )
-
-// Host is one host asset as the appliance knows it.
-type Host struct {
-	// IP is the asset's name in GMP terms, which for a host asset is its
-	// address — that is where the appliance puts it.
-	IP string
-	// Hostname and OS come from the asset's identifiers and are often absent:
-	// a host that answered a ping and nothing else has neither.
-	Hostname string
-	// OS is a CPE string ("cpe:/o:debian:debian_linux:13"), URL-escaped by the
-	// appliance, and reported as the appliance recorded it.
-	OS string
-	// LastSeen is the asset's modification time, which is when the appliance
-	// last learned something about it.
-	LastSeen time.Time
-}
 
 // Client is a GMP session. Not safe for concurrent use: the protocol is one
 // request and one response at a time over a single channel.
 type Client struct {
 	t Transport
+	// MaxResponseBytes caps a single response; reading stops with a
+	// ResponseTooLargeError past it. Zero means no cap. Set by a caller that
+	// has a size limit of its own to honour, before the response is read
+	// rather than after it is all in memory.
+	MaxResponseBytes int
+}
+
+// ResponseTooLargeError is a response that exceeded Client.MaxResponseBytes.
+type ResponseTooLargeError struct {
+	Command string
+	Limit   int
+}
+
+func (e *ResponseTooLargeError) Error() string {
+	return fmt.Sprintf("%s: the response exceeds the limit of %d bytes", e.Command, e.Limit)
 }
 
 // Transport carries bytes to and from gvmd. Separated so the protocol can be
@@ -125,124 +132,146 @@ func (c *Client) Version() (string, error) {
 	return resp.Version, nil
 }
 
-// assetsResponse mirrors only the parts of get_assets this needs. GMP returns
-// a great deal more per asset — permissions, sources, every identifier the
-// scanner ever recorded — and decoding what we do not use would be a standing
-// invitation to break on a field the appliance changes.
-type assetsResponse struct {
-	XMLName    xml.Name `xml:"get_assets_response"`
-	Status     string   `xml:"status,attr"`
-	StatusText string   `xml:"status_text,attr"`
-	Assets     []struct {
-		Name             string `xml:"name"`
-		ModificationTime string `xml:"modification_time"`
-		Identifiers      struct {
-			Identifier []struct {
-				Name  string `xml:"name"`
-				Value string `xml:"value"`
-			} `xml:"identifier"`
-		} `xml:"identifiers"`
-	} `xml:"asset"`
+// HostAssets is the appliance's host inventory as it sent it.
+type HostAssets struct {
+	// Document is the complete <get_assets_response>, byte for byte.
+	Document []byte
+	// Count is how many host assets the document holds.
+	Count int
 }
 
-// Hosts returns every host asset the appliance holds.
+// hostAssetsRequest asks for every host asset with its details.
 //
-// details="1" is what makes the identifiers — hostname and OS — part of the
-// answer; without it an asset is only its address.
-func (c *Client) Hosts() ([]Host, error) {
-	var resp assetsResponse
-	if err := c.roundTrip("get_assets", `<get_assets type="host" details="1"/>`, &resp); err != nil {
+// details="1" makes the identifiers — hostname, OS, MAC — part of the answer;
+// without it an asset is only its address. rows=-1 lifts GMP's paging: by
+// default the appliance applies the user's page size, ten rows unless changed,
+// and answers with the first page alone.
+const hostAssetsRequest = `<get_assets type="host" details="1" filter="first=1 rows=-1"/>`
+
+// HostAssets returns every host asset the appliance holds, as the appliance's
+// own document.
+//
+// Only the status and the counts are read from it. A response holding fewer
+// assets than the appliance says exist is an error rather than a smaller
+// inventory: a partial list imported as the whole would look complete.
+func (c *Client) HostAssets() (*HostAssets, error) {
+	raw, err := c.exchange("get_assets", hostAssetsRequest)
+	if err != nil {
 		return nil, err
+	}
+	var resp struct {
+		XMLName    xml.Name `xml:"get_assets_response"`
+		Status     string   `xml:"status,attr"`
+		StatusText string   `xml:"status_text,attr"`
+		Assets     []struct {
+			ID string `xml:"id,attr"`
+		} `xml:"asset"`
+		AssetCount struct {
+			Filtered int `xml:"filtered"`
+		} `xml:"asset_count"`
+	}
+	if err := xml.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("get_assets: response could not be read as get_assets_response: %w", err)
 	}
 	if resp.Status != "200" {
 		return nil, &StatusError{Command: "get_assets", Status: resp.Status, Text: resp.StatusText}
 	}
-
-	hosts := make([]Host, 0, len(resp.Assets))
-	for _, a := range resp.Assets {
-		h := Host{IP: a.Name}
-		// The first identifier of each kind wins. An asset accumulates one per
-		// report that observed it, newest first in practice, and they usually
-		// agree; where they do not, the appliance's own ordering is a better
-		// guess than ours.
-		for _, id := range a.Identifiers.Identifier {
-			switch {
-			case id.Name == "hostname" && h.Hostname == "":
-				h.Hostname = id.Value
-			case id.Name == "OS" && h.OS == "":
-				h.OS = id.Value
-			}
-		}
-		if t, err := time.Parse(time.RFC3339, a.ModificationTime); err == nil {
-			h.LastSeen = t
-		}
-		hosts = append(hosts, h)
+	if resp.AssetCount.Filtered > len(resp.Assets) {
+		return nil, fmt.Errorf("get_assets: the appliance reports %d host assets but returned %d — the response is a partial page",
+			resp.AssetCount.Filtered, len(resp.Assets))
 	}
-	return hosts, nil
+	return &HostAssets{Document: raw, Count: len(resp.Assets)}, nil
+}
+
+// exchange writes one request and returns the raw response document.
+func (c *Client) exchange(command, request string) ([]byte, error) {
+	if _, err := io.WriteString(c.t, request); err != nil {
+		return nil, fmt.Errorf("%s: failed to send: %w", command, err)
+	}
+	raw, err := readDocument(c.t, c.MaxResponseBytes)
+	if err != nil {
+		if errors.Is(err, errTooLarge) {
+			return nil, &ResponseTooLargeError{Command: command, Limit: c.MaxResponseBytes}
+		}
+		return nil, fmt.Errorf("%s: failed to read the response: %w", command, err)
+	}
+	return raw, nil
 }
 
 // roundTrip writes one request and decodes one response.
 func (c *Client) roundTrip(command, request string, out interface{}) error {
-	if _, err := io.WriteString(c.t, request); err != nil {
-		return fmt.Errorf("%s: failed to send: %w", command, err)
-	}
-	raw, err := readDocument(c.t)
+	raw, err := c.exchange(command, request)
 	if err != nil {
-		return fmt.Errorf("%s: failed to read the response: %w", command, err)
+		return err
 	}
-	if err := xml.Unmarshal([]byte(raw), out); err != nil {
+	if err := xml.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%s: response could not be read as %s: %w", command, command+"_response", err)
 	}
 	return nil
 }
 
-// readDocument reads until one complete XML document has arrived.
+// endWatcher records whether its reader has reported the end of the stream.
+type endWatcher struct {
+	r     io.Reader
+	ended bool
+}
+
+func (e *endWatcher) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil {
+		e.ended = true
+	}
+	return n, err
+}
+
+// errTooLarge is readDocument's signal that the limit was passed.
+var errTooLarge = errors.New("response too large")
+
+// readDocument reads until one complete XML document has arrived, and returns
+// it byte for byte.
 //
 // GMP frames nothing: responses carry no length and the connection stays open
 // for the next command, so the only end marker is the document closing itself.
-// Reads are therefore accumulated and re-parsed until the root element
-// balances.
-func readDocument(r io.Reader) (string, error) {
-	var sb strings.Builder
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			sb.Write(buf[:n])
-			if complete(sb.String()) {
-				return sb.String(), nil
-			}
-		}
-		if err != nil {
-			if sb.Len() > 0 {
-				// A closed channel with a partial document is a truncated
-				// answer, not an empty one; say which.
-				return "", fmt.Errorf("connection ended after %d bytes of an incomplete response: %w", sb.Len(), err)
-			}
-			return "", err
-		}
+// One decoder follows the stream token by token until the root element
+// balances, which keeps the cost linear in the size of the response — a host
+// inventory can run to megabytes. The decoder reads ahead in chunks, but only
+// within this response: the appliance sends nothing more until the next
+// request.
+//
+// limit caps the bytes read; zero means none.
+func readDocument(r io.Reader, limit int) ([]byte, error) {
+	var buf bytes.Buffer
+	src := io.Reader(r)
+	if limit > 0 {
+		// One byte over, so reaching it is distinguishable from fitting.
+		src = io.LimitReader(r, int64(limit)+1)
 	}
-}
-
-// complete reports whether the buffer holds one balanced XML element.
-func complete(s string) bool {
-	dec := xml.NewDecoder(strings.NewReader(s))
+	ended := &endWatcher{r: src}
+	dec := xml.NewDecoder(io.TeeReader(ended, &buf))
 	depth := 0
-	started := false
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			// Including io.ErrUnexpectedEOF: more is still coming.
-			return false
+			if limit > 0 && buf.Len() > limit {
+				return nil, errTooLarge
+			}
+			// The decoder reports a stream that stops mid-document as a syntax
+			// error, so whether the channel ended is asked of the reader.
+			if buf.Len() > 0 && ended.ended {
+				// A closed channel with a partial document is a truncated
+				// answer, not an empty one; say which.
+				return nil, fmt.Errorf("connection ended after %d bytes of an incomplete response: %w", buf.Len(), io.ErrUnexpectedEOF)
+			}
+			return nil, err
 		}
 		switch tok.(type) {
 		case xml.StartElement:
 			depth++
-			started = true
 		case xml.EndElement:
 			depth--
-			if started && depth == 0 {
-				return true
+			if depth == 0 {
+				end := int(dec.InputOffset())
+				return bytes.TrimLeft(buf.Bytes()[:end], " \t\r\n"), nil
 			}
 		}
 	}

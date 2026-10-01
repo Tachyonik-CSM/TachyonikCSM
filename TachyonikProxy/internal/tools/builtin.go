@@ -21,7 +21,7 @@
 package tools
 
 import (
-	"encoding/json"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
@@ -63,14 +63,32 @@ func IsBuiltin(tool *config.ToolConfig) bool {
 // builtinGMPGetHosts is the command naming the OPENVAS SCAN host inventory.
 const builtinGMPGetHosts = BuiltinPrefix + "gmp-get-hosts"
 
+// builtinFunc is the implementation of one built-in.
+type builtinFunc func(tool *config.ToolConfig, args map[string]interface{}, secrets Secrets) (*ToolResult, error)
+
 // callBuiltin runs a built-in tool.
+//
+// Its arguments pass the same checks a binary tool's do — the schema's
+// required fields and enums, the allowed_chars allowlist and the flag guard —
+// before the built-in sees them. A built-in renders no command line, but the
+// allowlist is what the rule's author declared every argument must satisfy,
+// and a built-in's own parsing is no reason to skip it.
 func callBuiltin(tool *config.ToolConfig, args map[string]interface{}, secrets Secrets) (*ToolResult, error) {
+	var run builtinFunc
 	switch tool.Command {
 	case builtinGMPGetHosts:
-		return gmpGetHosts(tool, args, secrets)
+		run = gmpGetHosts
 	default:
 		return nil, fmt.Errorf("unknown built-in %q", strings.TrimPrefix(tool.Command, BuiltinPrefix))
 	}
+
+	if err := ValidateSchema(tool, args); err != nil {
+		return &ToolResult{Content: err.Error(), IsError: true, ExitCode: -1}, nil
+	}
+	if err := ValidateArgs(tool, args); err != nil {
+		return &ToolResult{Content: err.Error(), IsError: true, ExitCode: -1}, nil
+	}
+	return run(tool, args, secrets)
 }
 
 // GMPTarget is how to reach an appliance, as the call's arguments describe it.
@@ -151,16 +169,12 @@ func DialGMP(target GMPTarget, secrets Secrets, timeout time.Duration) (*gmp.Cli
 	return client, nil
 }
 
-// gmpHostRecord is one host as the tool returns it. Field names are the ones a
-// routine reading the result will see, so they are spelled for that reader.
-type gmpHostRecord struct {
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname,omitempty"`
-	OS       string `json:"os,omitempty"`
-	LastSeen string `json:"lastSeen,omitempty"`
-}
-
-// gmpGetHosts returns every host asset the appliance holds, as JSON.
+// gmpGetHosts fetches every host asset the appliance holds and returns the
+// appliance's document unmodified, as an output file.
+//
+// The file becomes a source, and the platform's analysis and import rules turn
+// it into assets, exactly as they do an Nmap or OpenVAS report file. The text
+// result only says what was fetched; nothing here interprets the hosts.
 func gmpGetHosts(tool *config.ToolConfig, args map[string]interface{}, secrets Secrets) (*ToolResult, error) {
 	target, err := gmpTargetFromArgs(args)
 	if err != nil {
@@ -178,38 +192,52 @@ func gmpGetHosts(tool *config.ToolConfig, args map[string]interface{}, secrets S
 	}
 	defer client.Close()
 
-	hosts, err := client.Hosts()
+	// The same cap a binary tool's output has, applied while reading.
+	limit := tool.MaxOutputBytes
+	if limit <= 0 {
+		limit = defaultMaxOutputBytes
+	}
+	client.MaxResponseBytes = limit
+
+	assets, err := client.HostAssets()
 	if err != nil {
+		var tooLarge *gmp.ResponseTooLargeError
+		if errors.As(err, &tooLarge) {
+			return &ToolResult{
+				Content: fmt.Sprintf("the host inventory of %s is larger than this tool's max_output_bytes of %d — raise it in the tool rule",
+					target.Host, limit),
+				IsError: true,
+			}, nil
+		}
 		return &ToolResult{Content: describeGMPError(target, err), IsError: true}, nil
 	}
 
-	records := make([]gmpHostRecord, 0, len(hosts))
-	for _, h := range hosts {
-		r := gmpHostRecord{IP: h.IP, Hostname: h.Hostname, OS: h.OS}
-		if !h.LastSeen.IsZero() {
-			r.LastSeen = h.LastSeen.UTC().Format(time.RFC3339)
+	filename := gmpAssetsFilename(target.Host, time.Now())
+	logger.Infof("gmp-get-hosts: %d host asset(s) from %s, %d bytes, as %s", assets.Count, target.Host, len(assets.Document), filename)
+	return &ToolResult{
+		Content: fmt.Sprintf("Retrieved %d host assets from %s (%d bytes) as %s.",
+			assets.Count, target.Host, len(assets.Document), filename),
+		OutputFiles: []OutputFile{{
+			Filename: filename,
+			MimeType: "application/xml",
+			Data:     base64.StdEncoding.EncodeToString(assets.Document),
+		}},
+	}, nil
+}
+
+// gmpAssetsFilename names the document after the appliance and the time it was
+// fetched, so successive inventories of one appliance stay apart. Characters a
+// filename should not carry — an IPv6 address's colons — become dashes.
+func gmpAssetsFilename(host string, at time.Time) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+			return r
+		default:
+			return '-'
 		}
-		records = append(records, r)
-	}
-
-	body, err := json.Marshal(map[string]interface{}{
-		"appliance": target.Host,
-		"count":     len(records),
-		"hosts":     records,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode the host list: %w", err)
-	}
-	if tool.MaxOutputBytes > 0 && len(body) > tool.MaxOutputBytes {
-		return &ToolResult{
-			Content: fmt.Sprintf("the appliance returned %d hosts (%d bytes), more than this tool's max_output_bytes of %d — raise it in the tool rule",
-				len(records), len(body), tool.MaxOutputBytes),
-			IsError: true,
-		}, nil
-	}
-
-	logger.Infof("gmp-get-hosts: %d host(s) from %s", len(records), target.Host)
-	return &ToolResult{Content: string(body)}, nil
+	}, host)
+	return fmt.Sprintf("openvas-host-assets-%s-%s.xml", safe, at.UTC().Format("20060102T150405Z"))
 }
 
 // describeGMPError turns a failure into something an operator can act on. The

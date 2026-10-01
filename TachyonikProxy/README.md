@@ -373,8 +373,31 @@ nothing above the proxy needs to know the difference.
 | `builtin:gmp-get-hosts` | Asks an OPENVAS SCAN appliance for every host asset it holds, over GMP. Reads the appliance's inventory; scans nothing. |
 
 Arguments: `host` (required — the appliance), `port` (default `22`), `sshUser`
-(default `gmp`). The result is JSON:
-`{"appliance": "…", "count": N, "hosts": [{"ip", "hostname", "os", "lastSeen"}]}`.
+(default `gmp`). In the tool rule, mark `host` with
+`"x-tachyonik-from": "installation.host"`. TachyonikCSM then fills it from the
+selected tool installation instead of asking for it.
+
+A built-in's arguments pass the same checks as a binary tool's before the
+built-in runs: the schema's required fields and enums, the `allowed_chars`
+allowlist, and the flag-injection guard. The rule for a built-in therefore
+needs an `allowed_chars` that covers its arguments, e.g. `a-zA-Z0-9.:_\-` for
+`gmp-get-hosts`.
+
+**The result is the appliance's own document, unmodified.** `gmp-get-hosts`
+returns the complete `<get_assets_response>` as an output file named
+`openvas-host-assets-<appliance>-<UTC timestamp>.xml` (`application/xml`).
+ToolManager stores it as a source, and the platform's analysis and import rules
+turn it into assets, the same way they handle an Nmap or OpenVAS report file.
+The proxy reads only the status and the asset counts. It does not interpret the
+hosts, so nothing the appliance reports is lost on the way. The text result is
+a one-line summary: how many hosts were fetched, from where, and as which file.
+
+GMP pages results, by default 10 rows. The request therefore asks for all rows
+(`filter="first=1 rows=-1"`). A response that holds fewer assets than the
+appliance says exist is refused as a partial page rather than passed on as the
+inventory. The document is capped by the rule's `max_output_bytes` (default
+10 MB, roughly 3,000 hosts at about 3 KB each), checked while reading. A larger
+inventory fails with a message to raise the limit.
 
 ### Talking to an OPENVAS SCAN appliance
 

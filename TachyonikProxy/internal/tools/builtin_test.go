@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"tachyonik/tachyonikproxy/internal/config"
 )
@@ -89,5 +90,58 @@ func TestUnknownBuiltinIsRefused(t *testing.T) {
 	reg := NewRegistry([]config.ToolConfig{{Name: "mystery", Command: BuiltinPrefix + "nope"}}, nil)
 	if _, err := reg.CallTool("mystery", nil, Secrets{}); err == nil {
 		t.Error("an unknown built-in was run")
+	}
+}
+
+// A built-in's arguments pass the same checks as a binary tool's, before the
+// built-in sees them. Each refused case below would otherwise reach
+// gmpGetHosts, which — with no credential — answers "no credential"; seeing
+// that message instead of the check's is how a skipped check shows.
+func TestBuiltinArgumentsAreValidated(t *testing.T) {
+	gmpTool := config.ToolConfig{
+		Name:         "openvas get host assets",
+		Command:      builtinGMPGetHosts,
+		AllowedChars: `a-zA-Z0-9.:_\-`,
+		ArgsSchema:   config.JSONSchemaString(`{"properties":{"host":{"type":"string"},"port":{"type":"integer"}},"required":["host"]}`),
+	}
+	reg := NewRegistry([]config.ToolConfig{gmpTool}, nil)
+
+	for _, tc := range []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"a character outside the allowlist", map[string]interface{}{"host": "192.0.2.1;id"}, "disallowed characters"},
+		{"a value that looks like a flag", map[string]interface{}{"host": "-oProxyCommand"}, "command-line flag"},
+		{"a missing required argument", map[string]interface{}{"port": float64(22)}, `required argument "host"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := reg.CallTool(gmpTool.Name, tc.args, Secrets{})
+			if err != nil {
+				t.Fatalf("CallTool: %v", err)
+			}
+			if !res.IsError || !strings.Contains(res.Content, tc.want) {
+				t.Errorf("got %+v, want an error mentioning %q", res, tc.want)
+			}
+		})
+	}
+
+	// Valid arguments get through to the built-in.
+	res, err := reg.CallTool(gmpTool.Name, map[string]interface{}{"host": "192.0.2.1", "port": float64(22)}, Secrets{})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !strings.Contains(res.Content, "no credential") {
+		t.Errorf("valid arguments did not reach the built-in: %+v", res)
+	}
+}
+
+func TestGMPAssetsFilename(t *testing.T) {
+	at := time.Date(2026, 10, 1, 15, 30, 5, 0, time.FixedZone("CEST", 2*3600))
+	if got, want := gmpAssetsFilename("192.168.178.162", at), "openvas-host-assets-192.168.178.162-20261001T133005Z.xml"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := gmpAssetsFilename("fe80::1", at); strings.ContainsAny(got, ":/") {
+		t.Errorf("an IPv6 address left unsafe characters in %q", got)
 	}
 }
