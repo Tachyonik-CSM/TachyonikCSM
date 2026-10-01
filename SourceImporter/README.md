@@ -273,6 +273,18 @@ effects. The WebUI reads the summary and deletes the test source.
 
 ### Routine execution limits
 
+**Which AI generates a routine is decided at generation time.** Before each
+generation, the module asks AIManager for its current setting. It uses the AI
+set on the rule if there is one, otherwise the module's current default, and
+generates with the module's current system prompt. It doesn't rely on the AI it
+loaded at startup and the change notification that should follow a switch. A
+missed notification therefore can't leave the module on an AI that is no longer
+configured. If AIManager can't be asked, the AI loaded last is used. Every
+generation error, and the log line before each generation, names the AI, e.g.
+`AI "claude opus 5" (id 6, anthropic, model claude-opus-5; module default)`.
+The reason is `set on this rule`, `module default`, or that it is the AI loaded
+last and may be out of date. The choice is implemented in `tachyonik/lib/aipick`.
+
 Import routines are AI-generated JavaScript run over files somebody uploaded, so
 the daemon bounds them rather than trusting them. Two limits apply, and both
 surface as an ordinary "Import failed" — no operator action is needed to recover:
