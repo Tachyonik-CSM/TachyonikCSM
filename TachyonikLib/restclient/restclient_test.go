@@ -265,3 +265,32 @@ func TestCleartextKeyIsFlagged(t *testing.T) {
 		t.Error("New returned nil for a cleartext URL")
 	}
 }
+
+// An endpoint with two shapes of success — AssetManager's create, 201 for a new
+// asset and 200 for one that already existed — is accepted on either, and on
+// nothing else.
+func TestJSON_AlsoOKStatusesAreAccepted(t *testing.T) {
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		io.WriteString(w, `{"name":"x"}`)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k", time.Second)
+
+	for _, s := range []int{http.StatusCreated, http.StatusOK} {
+		status = s
+		var out payload
+		if err := c.JSON("POST", "/x", payload{}, &out, http.StatusCreated, http.StatusOK); err != nil {
+			t.Errorf("status %d refused: %v", s, err)
+		}
+	}
+
+	status = http.StatusAccepted
+	var out payload
+	err := c.JSON("POST", "/x", payload{}, &out, http.StatusCreated, http.StatusOK)
+	var se *StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusAccepted {
+		t.Errorf("status 202 not refused as a StatusError: %v", err)
+	}
+}

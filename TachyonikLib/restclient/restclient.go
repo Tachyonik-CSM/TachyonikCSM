@@ -89,7 +89,11 @@ func New(baseURL, serviceKey string, timeout time.Duration) *Client {
 // callers own resp.Body. body, when non-nil, is sent JSON-encoded. A status
 // other than wantStatus closes the body and returns a *StatusError, so a
 // failed call never leaks a connection back to the caller.
-func (c *Client) Request(method, path string, body any, wantStatus int) (*http.Response, error) {
+//
+// alsoOK names further statuses that count as success, for an endpoint whose
+// success has more than one shape — AssetManager answers a create with 201 for
+// a new asset and 200 for one that already existed and was linked instead.
+func (c *Client) Request(method, path string, body any, wantStatus int, alsoOK ...int) (*http.Response, error) {
 	url := c.baseURL + path
 
 	var payload io.Reader
@@ -116,7 +120,7 @@ func (c *Client) Request(method, path string, body any, wantStatus int) (*http.R
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	if resp.StatusCode != wantStatus {
+	if !statusOK(resp.StatusCode, wantStatus, alsoOK) {
 		resp.Body.Close()
 		return nil, &StatusError{Method: method, URL: url, StatusCode: resp.StatusCode}
 	}
@@ -125,9 +129,9 @@ func (c *Client) Request(method, path string, body any, wantStatus int) (*http.R
 
 // JSON issues a request and decodes the response into out. Pass a nil out when
 // the call has no response body worth reading — the body is drained and closed
-// either way.
-func (c *Client) JSON(method, path string, body, out any, wantStatus int) error {
-	resp, err := c.Request(method, path, body, wantStatus)
+// either way. alsoOK is as for Request.
+func (c *Client) JSON(method, path string, body, out any, wantStatus int, alsoOK ...int) error {
+	resp, err := c.Request(method, path, body, wantStatus, alsoOK...)
 	if err != nil {
 		return err
 	}
@@ -151,4 +155,18 @@ func (c *Client) JSON(method, path string, body, out any, wantStatus int) error 
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 	return nil
+}
+
+// statusOK reports whether got is the wanted status or one of the others
+// accepted.
+func statusOK(got, want int, alsoOK []int) bool {
+	if got == want {
+		return true
+	}
+	for _, s := range alsoOK {
+		if got == s {
+			return true
+		}
+	}
+	return false
 }
