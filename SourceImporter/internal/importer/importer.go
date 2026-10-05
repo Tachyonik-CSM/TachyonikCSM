@@ -11,8 +11,9 @@
 // A second pass re-imports: a source already "Imported" is revisited when the
 // routine that produced it has moved on, and records the new run no longer
 // produces are deleted as stale rather than left behind. Sources parked in "No
-// import routine" are revisited whenever the rules reload, via a flag the daemon
-// shares with the rule watcher.
+// import routine" are revisited whenever the rules change, and sources in
+// "Import failed" whenever the rule of their type does — see Revisit, which the
+// daemon shares with the rule watcher.
 //
 // Transient test sources take a dry-run path that counts what a routine would
 // produce and writes that summary into the source's import notes without ever
@@ -22,7 +23,6 @@ package importer
 import (
 	"encoding/json"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"tachyonik/lib/logger"
@@ -44,10 +44,9 @@ type Importer struct {
 	rscManagerAPI   *rscmanager.Client
 	aiImporter      *aiimporter.AIImporter // nil if AI not configured
 	auditEmitter    AuditEmitter
-	// revisit is set (by the daemon's rule-reload paths) to request that the
-	// next ProcessSources also re-attempt resources parked in "No import
-	// routine" — a newly loaded rule may now match them. One-shot per set.
-	revisit *atomic.Bool
+	// revisit is filled by the daemon's rule-change paths with what the next
+	// ProcessSources should try again; see Revisit.
+	revisit *Revisit
 }
 
 // New builds an Importer.
@@ -70,15 +69,12 @@ func (i *Importer) SetAuditEmitter(e AuditEmitter) {
 	i.auditEmitter = e
 }
 
-// SetRevisitFlag wires the shared "rules changed, re-visit stuck resources"
+// SetRevisit wires the shared "rules changed, try these again" requests.
 //
-// The flag is a shared atomic rather than a method on this type because the
-// import-rule watcher's closures are built in main before the Importer exists
-// and set it directly. A RequestRevisit method used to sit here for the same
-// job and had no callers for exactly that reason.
-// signal. The daemon sets it whenever the import rules (re)load.
-func (i *Importer) SetRevisitFlag(f *atomic.Bool) {
-	i.revisit = f
+// Shared rather than a method on this type because the import-rule watcher's
+// closures are built in main before the Importer exists and write it directly.
+func (i *Importer) SetRevisit(r *Revisit) {
+	i.revisit = r
 }
 
 func (i *Importer) emitAudit(userID int64, level, message string) {
@@ -98,28 +94,13 @@ func (i *Importer) ProcessSources() error {
 		return fmt.Errorf("failed to get sources: %w", err)
 	}
 
-	// When the import rules have just (re)loaded, also re-visit resources that
-	// were previously parked in "No import routine" — a rule that now exists
-	// may match them. The flag is one-shot (Swap), so ordinary polls don't
-	// re-scan terminal resources every tick.
-	revisit := i.revisit != nil && i.revisit.Swap(false)
+	// When the import rules have just changed, also re-visit resources parked
+	// in "No import routine" — a rule that now exists may match them — and
+	// failed imports of the types whose rules changed. The requests are
+	// one-shot, so ordinary polls don't re-scan terminal resources every tick.
+	revisit := i.revisit.take()
 
-	// Filter to sources that need an import attempt.
-	var sources []rscmanager.Source
-	for _, source := range allSources {
-		if source.TestRoutineID != nil {
-			// Our own import-routine test sources are dry-run once, while still
-			// in their initial "Analysed" state (they become "Tested" after).
-			// Test sources for other modules are never imported.
-			if source.IsImporterTest() && source.Status == "Analysed" {
-				sources = append(sources, source)
-			}
-			continue
-		}
-		if source.Status == "Analysed" || (revisit && source.Status == "No import routine") {
-			sources = append(sources, source)
-		}
-	}
+	sources := selectSources(allSources, revisit)
 
 	if len(sources) == 0 {
 		return nil
@@ -193,7 +174,10 @@ func (i *Importer) processSourceWithAI(source *rscmanager.Source, rule *aimanage
 		i.emitAudit(source.UserID, "Warning", fmt.Sprintf(
 			"Import failed for resource %q (id %d): %v", source.Filename, source.ID, err,
 		))
-		if _, updateErr := i.rscManagerAPI.UpdateSource(source.ID, source.SourceType, "Import failed", nil, &importerVersion); updateErr != nil {
+		// The reason goes into the import notes, which the resource list shows:
+		// "Import failed" alone leaves the user reading logs.
+		notes := err.Error()
+		if _, updateErr := i.rscManagerAPI.UpdateSource(source.ID, source.SourceType, "Import failed", &notes, &importerVersion); updateErr != nil {
 			return fmt.Errorf("failed to update status to Import failed: %w", updateErr)
 		}
 		return err
@@ -394,4 +378,26 @@ func (i *Importer) reImportSource(source *rscmanager.Source) error {
 	}
 
 	return nil
+}
+
+// selectSources picks the sources that need an import attempt this pass.
+func selectSources(allSources []rscmanager.Source, revisit revisitPlan) []rscmanager.Source {
+	var sources []rscmanager.Source
+	for _, source := range allSources {
+		if source.TestRoutineID != nil {
+			// Our own import-routine test sources are dry-run once, while still
+			// in their initial "Analysed" state (they become "Tested" after).
+			// Test sources for other modules are never imported.
+			if source.IsImporterTest() && source.Status == "Analysed" {
+				sources = append(sources, source)
+			}
+			continue
+		}
+		if source.Status == "Analysed" ||
+			(revisit.parked && source.Status == "No import routine") ||
+			(source.Status == "Import failed" && revisit.retriesFailed(source.SourceType)) {
+			sources = append(sources, source)
+		}
+	}
+	return sources
 }

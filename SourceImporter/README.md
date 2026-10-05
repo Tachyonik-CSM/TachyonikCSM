@@ -435,15 +435,33 @@ This is normal behavior and prevents duplicate assets.
 
 ### Import Failures
 
-When import fails, the source status is set to "Import failed":
+When import fails, the source status is set to "Import failed", and the
+reason is written to the source's **import notes**, which the Resources list
+shows. If no asset could be created, the notes give the first error and how
+many more there were, e.g. `0 of 21 assets imported. First error:
+192.168.178.1: unexpected status code: 403 (and 20 more)`. A partial import is
+recorded as imported, and its notes say what was left out.
 
 ```
 2026/01/07 11:25:00 internal/importer/importer.go:72: [ERROR] Import failed for source 20: failed to parse XML: ...
 ```
 
-To retry:
-1. Manually update the source status back to "Analysed" in ResourceManager
-2. The daemon will automatically reprocess it
+**A failed import is retried when its type's rule changes.** When an import
+rule is created, changed or gets a new routine, the next pass retries every
+"Import failed" source of that rule's type once. It also revisits sources in
+"No import routine". After a full reload (a feed import, or the daemon
+reconnecting to AIManager), every failed import is retried once. Retries happen
+only on such changes, never on every poll, so a file that can't be imported
+isn't attempted in a loop.
+
+**To retry by hand,** select the resource in the Resources list and use the
+**Re-import** button. It calls ResourceManager's
+`POST /api/sources/{id}/reimport`, which puts the source back in "Analysed" and
+clears the failed attempt's notes. The daemon imports it on its next poll.
+
+**An asset that already exists counts as imported.** AssetManager answers a
+create with 201 for a new asset and 200 for one it already had and has now
+linked to this source. Both are success.
 
 ## Database Schema
 

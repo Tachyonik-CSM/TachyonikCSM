@@ -308,11 +308,15 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	}
 
 	// Process results: create assets, vulnerabilities, detections via AssetManager API
+	// The first failure of each kind is kept for the import notes, where the
+	// user sees it; the rest are counted. The log still has every one.
+	var assetFails, vulnFails, detFails failureLog
 	assetSuccess := 0
 	assetFail := 0
 	for _, asset := range result.Assets {
 		if _, err := ai.assetManagerAPI.CreateAsset(asset.Name, asset.Type, source.ID, source.Filename, source.UserID, asset.LastSeen); err != nil {
 			logger.Errorf("Failed to create asset %s: %v", asset.Name, err)
+			assetFails.add(asset.Name, err)
 			assetFail++
 		} else {
 			assetSuccess++
@@ -324,6 +328,7 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	for _, vuln := range result.Vulnerabilities {
 		if _, err := ai.assetManagerAPI.CreateVulnerability(vuln.Name, vuln.Host, vuln.Port, vuln.Severity, sourceRef, source.UserID, vuln.LastSeen); err != nil {
 			logger.Errorf("Failed to create vulnerability %s on %s:%s: %v", vuln.Name, vuln.Host, vuln.Port, err)
+			vulnFails.add(fmt.Sprintf("%s on %s:%s", vuln.Name, vuln.Host, vuln.Port), err)
 			vulnFail++
 		} else {
 			vulnSuccess++
@@ -335,6 +340,7 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	for _, det := range result.Detections {
 		if _, err := ai.assetManagerAPI.CreateDetection(det.Name, det.Host, det.Port, sourceRef, source.UserID, det.LastSeen); err != nil {
 			logger.Errorf("Failed to create detection %s on %s:%s: %v", det.Name, det.Host, det.Port, err)
+			detFails.add(fmt.Sprintf("%s on %s:%s", det.Name, det.Host, det.Port), err)
 			detFail++
 		} else {
 			detSuccess++
@@ -345,13 +351,43 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 		assetSuccess, assetFail, vulnSuccess, vulnFail, detSuccess, detFail)
 
 	if assetSuccess == 0 && len(result.Assets) > 0 {
-		return "", fmt.Errorf("failed to import any assets from AI import")
+		return "", fmt.Errorf("0 of %d assets imported. First error: %s", len(result.Assets), assetFails.summary())
 	}
 
 	importNotes := fmt.Sprintf("Imported %d assets, %d vulnerabilities, %d detections (AI Importer, rule: %s v%s)",
 		assetSuccess, vulnSuccess, detSuccess, rule.Type, rule.Version)
+	// A partial import is still an import, but what was left out is said.
+	for _, f := range []struct {
+		kind string
+		log  failureLog
+	}{{"assets", assetFails}, {"vulnerabilities", vulnFails}, {"detections", detFails}} {
+		if f.log.n > 0 {
+			importNotes += fmt.Sprintf(". %d %s failed, first: %s", f.log.n, f.kind, f.log.summary())
+		}
+	}
 
 	return importNotes, nil
+}
+
+// failureLog keeps the first failure of a kind and counts the rest.
+type failureLog struct {
+	first string
+	n     int
+}
+
+func (f *failureLog) add(what string, err error) {
+	if f.n == 0 {
+		f.first = fmt.Sprintf("%s: %v", what, err)
+	}
+	f.n++
+}
+
+// summary is the first failure, with how many more there were.
+func (f failureLog) summary() string {
+	if f.n <= 1 {
+		return f.first
+	}
+	return fmt.Sprintf("%s (and %d more)", f.first, f.n-1)
 }
 
 // ImportTestSummary is the dry-run result of a single import routine: how many

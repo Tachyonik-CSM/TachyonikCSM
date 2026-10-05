@@ -120,7 +120,9 @@ func (c *Client) CreateAsset(name, assetType string, sourceID int64, sourceLabel
 		LastSeen:    lastSeen,
 	}
 	var asset Asset
-	if err := c.rc.JSON("POST", "/api/assets", payload, &asset, http.StatusCreated); err != nil {
+	// 201 is a new asset, 200 one that already existed and has now been linked
+	// to this source as well — both are the asset being on record.
+	if err := c.rc.JSON("POST", "/api/assets", payload, &asset, http.StatusCreated, http.StatusOK); err != nil {
 		return nil, err
 	}
 	return &asset, nil

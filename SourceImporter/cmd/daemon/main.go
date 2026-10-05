@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -132,17 +131,17 @@ func main() {
 // mean a daemon with AI unset applies no import routines at all and marks every
 // source "No import routine".
 //
-// Returns the revisit flag, which the caller hands to the Importer — the
-// watcher closures set it whenever the rules reload, so the next poll
-// re-examines resources parked in "No import routine". It is a shared atomic
-// rather than a method call because these closures are built before the
-// Importer exists.
+// Returns the revisit requests, which the caller hands to the Importer — the
+// watcher closures fill them whenever a rule changes or the rules reload, so
+// the next poll re-examines resources parked in "No import routine" and failed
+// imports of the changed rule's type. Shared rather than a method call because
+// these closures are built before the Importer exists.
 //
 // Also returns a close function rather than deferring the watcher's own
 // shutdown, which would fire when this function returns instead of when the
 // daemon stops. It is never nil, so the caller can defer it unconditionally.
-func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, aiMgrClient *aimanager.Client, assetManagerClient *assetmanager.Client, chatClient codegen.ChatClient) (*aiimporter.AIImporter, *atomic.Bool, func()) {
-	revisitImport := &atomic.Bool{}
+func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, aiMgrClient *aimanager.Client, assetManagerClient *assetmanager.Client, chatClient codegen.ChatClient) (*aiimporter.AIImporter, *importer.Revisit, func()) {
+	revisitImport := &importer.Revisit{}
 	closeWatcher := func() {}
 
 	aiImp := aiimporter.New(rscManagerClient, aiMgrClient, assetManagerClient, chatClient, cfg)
@@ -209,15 +208,21 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 	irw, err := importrulewatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, func(event importrulewatcher.RuleChangeEvent) {
 		aiImp.HandleRuleChange(event)
 		// A changed/created rule may match resources previously parked in
-		// "No import routine" — request a re-visit on the next poll.
-		revisitImport.Store(true)
+		// "No import routine", and its routine — generated, regenerated or
+		// switched — may now import what failed before. Request both for the
+		// next poll; failed imports only of this rule's type.
+		var ruleType string
+		if rule, ok := aiImp.Rules()[event.RuleID]; ok {
+			ruleType = rule.Type
+		}
+		revisitImport.RuleChanged(ruleType)
 	}, func() {
 		logger.Info("FEED_IMPORTED: reloading import rules + module settings")
 		if err := aiImp.LoadRules(); err != nil {
 			logger.Errorf("Failed to reload import rules after feed import: %v", err)
 		}
 		refreshModuleSettings()
-		revisitImport.Store(true)
+		revisitImport.RulesReloaded()
 	})
 	if err != nil {
 		logger.Errorf("Failed to create import rule watcher: %v", err)
@@ -317,7 +322,7 @@ func runDaemon(cfg *config.Config) {
 
 	// aiImp may be nil if AI is unavailable; the Importer is nil-safe.
 	imp := importer.New(assetManagerClient, rscManagerClient, aiImp)
-	imp.SetRevisitFlag(revisitImport)
+	imp.SetRevisit(revisitImport)
 	// Wire SystemManager audit-event client. Best-effort: nil-safe in Importer.
 	smClient := systemmanager.NewClient(cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey)
 	imp.SetAuditEmitter(smClient)
