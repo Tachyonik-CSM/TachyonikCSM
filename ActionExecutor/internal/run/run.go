@@ -5,12 +5,12 @@
 // Package run carries out one run of an execution routine for one user, the
 // same way whoever asked for it.
 //
-// A run is asked for manually (the HTTP server, when a user presses Execute)
-// or automatically (when a new action qualifies). Both used to do the same
+// A run is asked for manually (a request from AIManager, when a user presses
+// Execute) or automatically (when a new action qualifies). Both used to do the same
 // steps in their own copy — build the api object, run within the time limit,
 // report the result to AIManager, write the audit entry — and a change to what
 // surrounds a run had to be made twice. Now each caller keeps
-// only what is its own: the HTTP answer, or deleting the action.
+// only what is its own: reporting to the request, or deleting the action.
 package run
 
 import (

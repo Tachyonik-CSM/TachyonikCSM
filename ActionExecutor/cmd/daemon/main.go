@@ -36,6 +36,7 @@ import (
 	"tachyonik/actionexecutor/internal/executionrulewatcher"
 	"tachyonik/actionexecutor/internal/manualrun"
 	"tachyonik/actionexecutor/internal/run"
+	"tachyonik/actionexecutor/internal/version"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aimwatcher"
 	"tachyonik/lib/heartbeat"
@@ -105,15 +106,23 @@ func setupLogging(cfg *config.Config) (*os.File, error) {
 }
 
 func main() {
-	// Route subcommand before anything else. `help` must answer wherever the
-	// binary runs — from a package script, as another user, on a host where
-	// the configured log path is not writable — and setupLogging is fatal on a
-	// log file it cannot open. Help needs no configuration, so it should not
-	// be able to fail on it.
+	// Route subcommand before anything else. Asking a binary its version must
+	// work wherever the binary does — from a package script, as another user,
+	// on a host where the configured log path is not writable — and
+	// setupLogging is fatal on a log file it cannot open. Neither `version`
+	// nor `help` needs the configuration, so neither should be able to fail on
+	// it.
+	//
+	// Flags are accepted as well as bare words, matching ActionGenerator:
+	// `actionexecutor version` and `actionexecutor --version` both work, so
+	// neither habit is wrong.
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "help":
+		case "help", "--help", "-h":
 			runHelp()
+			return
+		case "version", "--version", "-v":
+			fmt.Printf("Tachyonik ActionExecutor %s\n", version.Version)
 			return
 		}
 	}
@@ -139,9 +148,10 @@ func runHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  (none)      Start the ActionExecutor daemon (default)")
 	fmt.Println("  help        Show this help message")
+	fmt.Println("  version     Print the build version and exit")
 }
 
-// runDaemon starts the daemon: load rules, start watchers, start HTTP RPC server.
+// runDaemon starts the daemon: load rules, start watchers, pick up waiting run requests.
 func runDaemon(cfg *config.Config) {
 	logger.Info("Starting Tachyonik ActionExecutor daemon...")
 	logger.Info("Configuration loaded:")

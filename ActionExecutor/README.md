@@ -20,6 +20,7 @@ for a user, with that user's data and permissions.
 
 - [Overview](#overview)
 - [Building](#building)
+- [Versioning](#versioning)
 - [Configuration](#configuration)
 - [Operation](#operation)
 - [Manual Runs](#manual-runs)
@@ -68,8 +69,14 @@ activates it there.
 
 ```bash
 cd TachyonikCSM/ActionExecutor
-go build -o tachyonik-actionexecutor ./cmd/daemon
+make build          # embeds the version — see Versioning below
 ```
+
+This creates the `tachyonik-actionexecutor` binary in the current directory;
+`make test`, `make vet` and `make clean` do what they say.
+
+A plain `go build -o tachyonik-actionexecutor ./cmd/daemon` also works, but the
+binary then reports `0.0.0-dev` because nothing injected a version.
 
 From the repository root, `make go-build` builds every service binary into
 `/tmp/tachyonikcsm-build/` (this one as `actionexecutor`), and `make lib-check`
@@ -84,6 +91,44 @@ consumer.
 | `github.com/gorilla/websocket` | Watching AIManager and ActionManager for changes |
 | `gopkg.in/yaml.v3` | `config.yaml` |
 | `tachyonik/lib` | Logger, heartbeat, AI clients, AI choice, WebSocket watchers, REST client, SystemManager client |
+
+## Versioning
+
+ActionExecutor carries **its own version**, resolved from its own namespaced
+git tag. It is deliberately independent of the TachyonikCSM application version
+(which lives in `WebUI/package.json`) and of every other module's.
+
+```bash
+git tag actionexecutor/1.0.0      # cut a release
+make version                      # what this tree would build as
+./tachyonik-actionexecutor version
+```
+
+The version is derived with `git describe --tags --match 'actionexecutor/*'`,
+stripped to a numeric `x.y.z`, and injected at build time:
+
+```
+-ldflags "-X tachyonik/actionexecutor/internal/version.Version=<version>"
+```
+
+`--match` is what keeps it independent — every other tag in the monorepo is
+ignored. Off-tag or dirty builds get a descriptive suffix (`1.0.0-3-gabc123`,
+`1.0.0-dirty`); a tree with no matching tag falls back to `0.0.0-dev`.
+
+Three build paths inject it, and all three must, or a build silently ships the
+fallback:
+
+| Path | How |
+|---|---|
+| `make build` in this directory | derives it from git |
+| `make go-build` at the repo root | `ACTIONEXECUTOR_VERSION`, derived from git |
+| The container image | `VERSION` build arg, passed by `compose.yaml` — the build stage has no git |
+
+The value is **identity only**: it answers "which build is running". Nothing
+compares it and nothing is stamped with it — not the results reported to
+AIManager, not the audit entries. The routines are versioned separately:
+AIManager stores each generated routine with its own version, the model that
+wrote it and its checksum.
 
 ## Configuration
 
@@ -109,6 +154,7 @@ What matters most:
 ```bash
 ./tachyonik-actionexecutor          # start the daemon
 ./tachyonik-actionexecutor help     # usage; needs no configuration
+./tachyonik-actionexecutor version  # build version; needs no configuration
 ```
 
 At startup the daemon loads the module settings and every execution rule with
@@ -269,6 +315,7 @@ reason is quoted, capped at 500 characters (`internal/runaudit`).
 | `internal/actionwatcher` | Watches ActionManager for new actions (on `tachyonik/lib/wswatcher`) |
 | `internal/executionrulewatcher` | Watches AIManager for rule changes and feed imports, debounced per rule, and for run requests (on `tachyonik/lib/wswatcher`) |
 | `internal/runaudit` | Wording of the audit-trail entries |
+| `internal/version` | The build version, injected at build time |
 
 **Events.** A changed rule is reloaded — that rule only; when a generation was requested for it
 (*Generate* in the WebUI), a routine is generated and saved, and the request is
