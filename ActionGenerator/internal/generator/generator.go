@@ -452,6 +452,7 @@ func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors
 func (g *Generator) buildSharedContext(users []systemmanager.User, primary *systemmanager.User) jsruntime.RuleContext {
 	merged := jsruntime.RuleContext{
 		Sources:      []map[string]interface{}{},
+		Proxies:      []map[string]interface{}{},
 		Assets:       []map[string]interface{}{},
 		Actions:      []map[string]interface{}{},
 		Capabilities: jsruntime.CapabilitySet{Automated: []string{}, Manual: []string{}},
@@ -481,6 +482,7 @@ func (g *Generator) buildSharedContext(users []systemmanager.User, primary *syst
 			merged.Questionnaires = ctx.Questionnaires
 		}
 		merged.Sources = append(merged.Sources, ctx.Sources...)
+		merged.Proxies = append(merged.Proxies, ctx.Proxies...)
 		merged.SourceCount += ctx.SourceCount
 		if ctx.SourceMax > merged.SourceMax {
 			merged.SourceMax = ctx.SourceMax
@@ -579,6 +581,7 @@ func (g *Generator) buildJSRuleContext(user *systemmanager.User) jsruntime.RuleC
 	g.addOrganisation(&ctx, user)
 	g.addSettings(&ctx, user)
 	g.addSources(&ctx, user)
+	g.addProxies(&ctx, user)
 	g.addAssets(&ctx, user)
 	g.addAssetStats(&ctx, user)
 	ctx.Capabilities = g.resolveCapabilities(user)
@@ -671,6 +674,22 @@ func (g *Generator) addSources(ctx *jsruntime.RuleContext, user *systemmanager.U
 		}
 	}
 
+}
+
+// addProxies fills the user's TachyonikProxy installations. An empty list,
+// not a missing one, when ResourceManager cannot be reached: a rule about
+// offline proxies then finds none and stays quiet, rather than failing — or
+// firing — on a lookup that did not happen.
+func (g *Generator) addProxies(ctx *jsruntime.RuleContext, user *systemmanager.User) {
+	ctx.Proxies = []map[string]interface{}{}
+	proxies, err := g.resourceMgr.GetProxiesForUser(user.ID)
+	if err != nil {
+		logger.Errorf("Error getting proxies for user %d: %v", user.ID, err)
+		return
+	}
+	for _, p := range proxies {
+		ctx.Proxies = append(ctx.Proxies, jsruntime.ProxyToMap(p.ID, p.Name, p.Status, p.ConnectionMode, p.Version, p.LastSeen))
+	}
 }
 
 // addAssets fills the asset list and derives the highest-scoring one.

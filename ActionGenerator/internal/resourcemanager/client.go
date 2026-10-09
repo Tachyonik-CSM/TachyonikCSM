@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package resourcemanager is the read-only client for the ResourceManager API.
-// It supplies the sources and tools a user has, and their source count against
-// quota, all of which rules reason about.
+// It supplies the sources, tools and proxies a user has, and their source count
+// against quota, all of which rules reason about.
 //
 // The request mechanics live in TachyonikLib's restclient: joining the path,
 // attaching the service key, checking the status and decoding. What stays here
@@ -57,6 +57,18 @@ type Tool struct {
 	UserID int64  `json:"userId"`
 }
 
+// Proxy is one of a user's TachyonikProxy installations, with only the fields
+// a rule reasons about: whether it is reachable, and since when it was last
+// seen. Network ranges, addresses and credentials stay in ResourceManager.
+type Proxy struct {
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	Status         string  `json:"status"`
+	ConnectionMode string  `json:"connectionMode"`
+	Version        string  `json:"version"`
+	LastSeen       *string `json:"lastSeen"` // null until the proxy first connects
+}
+
 // NewClient creates a new ResourceManager API client
 func NewClient(baseURL, internalServiceKey string) *Client {
 	return &Client{rc: restclient.New(baseURL, internalServiceKey, 10*time.Second)}
@@ -102,4 +114,16 @@ func (c *Client) GetToolsForUser(userID int64) ([]Tool, error) {
 		return nil, err
 	}
 	return result.Tools, nil
+}
+
+// GetProxiesForUser retrieves the proxies the specified user owns, from the
+// service-only route.
+func (c *Client) GetProxiesForUser(userID int64) ([]Proxy, error) {
+	var result struct {
+		Proxies []Proxy `json:"proxies"`
+	}
+	if err := c.rc.JSON("GET", fmt.Sprintf("/api/internal/proxies?userId=%d", userID), nil, &result, http.StatusOK); err != nil {
+		return nil, err
+	}
+	return result.Proxies, nil
 }

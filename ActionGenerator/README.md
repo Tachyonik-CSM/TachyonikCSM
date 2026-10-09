@@ -334,6 +334,7 @@ assembled per user by `buildJSRuleContext`. It carries:
 | `ctx.questionnaires` | Progress and verdicts of the three organisation questionnaires, computed by SystemManager from the stored answers: `nis2Impact` (progress, complete, level `red`/`orange`/`yellow`/`green`, size, expired, …), `nis2Readiness` (progress, complete, score, level `red`/`yellow`/`green`, gaps, reportingCritical, …) and `cyberStrategy` (progress, complete, missingRequired, expired). Levels are `""` until complete; the strategy's `complete` means all required parts, not progress 100 |
 | `ctx.settings` | What the user configured for themselves: `ai.{research,chat,dashboard}` as a state (`personal` / `internal` / `disabled` / `none`), `ai.personalProviderCount`, and `language` |
 | `ctx.sources`, `ctx.sourceCount`, `ctx.sourceMax` | Uploaded sources and the user's limit |
+| `ctx.proxies` | The user's TachyonikProxy installations from ResourceManager's `/api/internal/proxies`: an array of `{id, name, status, connectionMode, version, lastSeen}`. `status` is `online`, `offline` or `pending_enrollment`; `lastSeen` is `""` for a proxy that never connected. `[]` when the user has none or ResourceManager cannot be reached |
 | `ctx.assets`, `ctx.assetCount`, `ctx.highestScoreAsset` | Assets, and the highest-scoring one (or `null`) |
 | `ctx.assetStats` | Severity buckets from AssetManager's `/api/assets/stats` |
 | `ctx.capabilities` | `{automated, manual}` capability names covered by the user's configured **tools** |

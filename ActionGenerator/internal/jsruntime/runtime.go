@@ -103,6 +103,7 @@ type RuleContext struct {
 	SourceCount       int                      `json:"sourceCount"`
 	SourceMax         int                      `json:"sourceMax"`
 	Sources           []map[string]interface{} `json:"sources"`
+	Proxies           []map[string]interface{} `json:"proxies"`
 	AssetCount        int                      `json:"assetCount"`
 	Assets            []map[string]interface{} `json:"assets"`
 	HighestScoreAsset map[string]interface{}   `json:"highestScoreAsset"`
@@ -142,8 +143,11 @@ func (c RuleContext) ToMap() map[string]interface{} {
 		"sourceCount":    c.SourceCount,
 		"sourceMax":      c.SourceMax,
 		"sources":        c.Sources,
-		"assetCount":     c.AssetCount,
-		"assets":         c.Assets,
+		// Never null: "no proxies" must read as an empty list, which a rule
+		// about offline proxies then correctly finds nothing in.
+		"proxies":    listOrEmpty(c.Proxies),
+		"assetCount": c.AssetCount,
+		"assets":     c.Assets,
 		// Null when no asset is scored — a real state the rule must check for,
 		// so it is NOT defaulted to an empty object.
 		"highestScoreAsset": c.HighestScoreAsset,
@@ -151,6 +155,30 @@ func (c RuleContext) ToMap() map[string]interface{} {
 		"capabilities":      capabilitiesToMap(c.Capabilities),
 		"actionCount":       c.ActionCount,
 		"actions":           c.Actions,
+	}
+}
+
+func listOrEmpty(l []map[string]interface{}) []map[string]interface{} {
+	if l == nil {
+		return []map[string]interface{}{}
+	}
+	return l
+}
+
+// ProxyToMap renders one proxy for the JS context. lastSeen is "" for a proxy
+// that never connected, so every field is a string a rule can compare.
+func ProxyToMap(id int64, name, status, connectionMode, version string, lastSeen *string) map[string]interface{} {
+	seen := ""
+	if lastSeen != nil {
+		seen = *lastSeen
+	}
+	return map[string]interface{}{
+		"id":             id,
+		"name":           name,
+		"status":         status,
+		"connectionMode": connectionMode,
+		"version":        version,
+		"lastSeen":       seen,
 	}
 }
 
@@ -958,6 +986,33 @@ func MockScenarios() []MockScenario {
 				MissingRequired: []string{"01"}, LastUpdated: "2026-09-06T10:00:00Z"},
 		)),
 	)
+
+	// Proxies, varied so a rule about them fires somewhere and not everywhere:
+	// none at all (1, 2), all online (3), one offline (4 and 6), and one that
+	// was installed but never enrolled (5). Fresh maps per scenario, for the
+	// same reason the registered-user scenarios are built separately.
+	online := func(id int64, name string) map[string]interface{} {
+		seen := "2026-09-10T08:00:00Z"
+		return ProxyToMap(id, name, "online", "inbound", "0.9.2", &seen)
+	}
+	offline := func(id int64, name string) map[string]interface{} {
+		seen := "2026-08-30T17:45:00Z"
+		return ProxyToMap(id, name, "offline", "outbound", "0.9.1", &seen)
+	}
+	mockProxies := [][]map[string]interface{}{
+		{},
+		{},
+		{online(1, "Office proxy")},
+		{online(1, "Office proxy"), offline(2, "Branch proxy")},
+		{ProxyToMap(3, "New proxy", "pending_enrollment", "inbound", "", nil)},
+		{offline(2, "Branch proxy"), online(4, "Datacenter proxy")},
+	}
+	if len(mockProxies) != len(mockContexts) {
+		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d proxy lists", len(mockContexts), len(mockProxies)))
+	}
+	for i := range mockContexts {
+		mockContexts[i].Proxies = mockProxies[i]
+	}
 
 	if len(mockContexts) != len(mockScenarioLabels) {
 		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d labels", len(mockContexts), len(mockScenarioLabels)))
