@@ -56,9 +56,15 @@ type HTMLPage struct {
 // a square PNG made for exactly this purpose — over a social banner that is the
 // wrong shape for a logo tile.
 type ImageCandidate struct {
+	// URL of the image. Empty for an inline SVG, which has no address.
 	URL string
-	// Where it was declared: "apple-touch-icon", "icon", "og:image" or "img".
+	// Where it was declared: "branding" (an image in the site's own home link
+	// or branding block), "inline-svg" (an <svg> there, carried in SVG),
+	// "apple-touch-icon", "icon", "og:image" or "img".
 	Source string
+	// SVG is the markup of an inline <svg> candidate, ready to be wrapped in a
+	// data: URI. Empty for every candidate that has a URL.
+	SVG string
 	// The img element's alt text, where there was one.
 	Alt string
 	// Lower sorts first. A property of where it was found, not of the image.
@@ -266,14 +272,64 @@ func FindImprintLink(page HTMLPage, pageURL string) (string, bool) {
 // so an unbounded list would be an unbounded number of requests.
 const maxImageCandidates = 8
 
+// maxLogoImages bounds the <img> candidates that are not the site's branding.
+// Without it a page with a wall of customer logos filled the whole list and
+// pushed out the favicon and touch icon the site declares for itself.
+const maxLogoImages = 3
+
+// maxBrandingCandidates bounds the images and inline SVGs taken from the
+// site's home link or branding block — usually exactly one.
+const maxBrandingCandidates = 2
+
+// maxInlineSVGBytes bounds one inline SVG. A logo is a few kilobytes; a page
+// that inlines an illustration is not offering a logo.
+const maxInlineSVGBytes = 64 << 10
+
+// Candidate ranks; lower sorts first. Properties of where an image was found,
+// not of the image.
+const (
+	rankBranding    = 0 // in the site's own home link or branding block
+	rankTouchIcon   = 1 // apple-touch-icon: square, made to stand alone
+	rankOwnLogo     = 2 // a "logo" img naming the site itself
+	rankLogo        = 3 // any other "logo" img
+	rankIcon        = 4 // favicon
+	rankSocialImage = 5 // og:image: usually a 1200x630 banner, not a logo
+	rankForeignLogo = 6 // a logo shown in a references/partners block or a logo wall
+)
+
+// brandingWords mark an element as the site's own branding block when they
+// appear in its id or class.
+var brandingWords = []string{"branding", "brand", "site-logo", "sitelogo", "header-logo", "navbar-brand"}
+
+// foreignWords mark a container of other organisations' logos — references,
+// customers, partners — or a slider, which is where such walls live.
+var foreignWords = []string{
+	"reference", "referenz", "customer", "kunde", "client", "partner", "sponsor",
+	"slider", "swiper", "carousel", "marquee", "testimonial",
+}
+
+// ownerStopWords are domain parts too common to identify an organisation.
+var ownerStopWords = map[string]bool{
+	"www": true, "online": true, "web": true, "shop": true, "home": true,
+	"info": true, "net": true, "the": true, "gmbh": true, "group": true, "site": true,
+}
+
 // collectImages walks the document for images that identify the site.
 //
 // A separate pass from the text walk on purpose: that one returns early for
 // <head>, which is exactly where the icons and og:image are declared, and
 // teaching it to descend selectively would tangle two unrelated jobs.
+//
+// The order matters more than the set. What the site marks as its own comes
+// first: an image or inline SVG in its home link or branding block, then the
+// icons it declares. "logo" imgs follow, those naming the site ahead of the
+// rest, and a logo shown among others' — a customer reference wall, a partner
+// slider — comes last. Every one of those walls is full of images called
+// "logo", and before this ordering they were offered ahead of the site's own.
 func collectImages(doc *html.Node, base *url.URL) []ImageCandidate {
 	var found []ImageCandidate
 	seen := map[string]bool{}
+	owner := ownerTokens(base)
 
 	add := func(raw, source, alt string, rank int) {
 		resolved, ok := resolveURL(raw, base)
@@ -284,6 +340,16 @@ func collectImages(doc *html.Node, base *url.URL) []ImageCandidate {
 		found = append(found, ImageCandidate{URL: resolved, Source: source, Alt: alt, Rank: rank})
 	}
 
+	// "logo" imgs outside any branding block, resolved after the walk: whether
+	// one stands in a logo wall depends on its siblings.
+	type logoImg struct {
+		node *html.Node
+		alt  string
+		src  string
+	}
+	var logoImgs []logoImg
+	branding := 0
+
 	var walk func(n *html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
@@ -292,25 +358,38 @@ func collectImages(doc *html.Node, base *url.URL) []ImageCandidate {
 				rel := strings.ToLower(attr(n, "rel"))
 				switch {
 				case strings.Contains(rel, "apple-touch-icon"):
-					// Square, made to be shown on its own, and almost always a
-					// PNG: the best logo a page routinely declares.
-					add(attr(n, "href"), "apple-touch-icon", "", 1)
+					add(attr(n, "href"), "apple-touch-icon", "", rankTouchIcon)
 				case strings.Contains(rel, "icon"):
-					add(attr(n, "href"), "icon", "", 3)
+					add(attr(n, "href"), "icon", "", rankIcon)
 				}
 			case "meta":
 				property := strings.ToLower(attr(n, "property") + " " + attr(n, "name"))
 				if strings.Contains(property, "og:image") {
-					// A social card: usually 1200x630 and not a logo at all, so
-					// it ranks last and is only worth offering as a fallback.
-					add(attr(n, "content"), "og:image", "", 4)
+					add(attr(n, "content"), "og:image", "", rankSocialImage)
 				}
 			case "img":
-				alt := attr(n, "alt")
+				alt := strings.TrimSpace(attr(n, "alt"))
+				if branding < maxBrandingCandidates && inBranding(n, base) && !inForeignBlock(n) {
+					before := len(found)
+					add(attr(n, "src"), "branding", alt, rankBranding)
+					if len(found) > before {
+						branding++
+					}
+					break
+				}
 				haystack := strings.ToLower(alt + " " + attr(n, "class") + " " + attr(n, "id") + " " + attr(n, "src"))
 				if strings.Contains(haystack, "logo") {
-					add(attr(n, "src"), "img", strings.TrimSpace(alt), 2)
+					logoImgs = append(logoImgs, logoImg{node: n, alt: alt, src: attr(n, "src")})
 				}
+			case "svg":
+				if branding < maxBrandingCandidates && inBranding(n, base) && !inForeignBlock(n) {
+					if markup, ok := renderSVG(n); ok && !seen[markup] {
+						seen[markup] = true
+						found = append(found, ImageCandidate{Source: "inline-svg", SVG: markup, Rank: rankBranding})
+						branding++
+					}
+				}
+				return // an svg's children are drawing, not images
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -319,11 +398,184 @@ func collectImages(doc *html.Node, base *url.URL) []ImageCandidate {
 	}
 	walk(doc)
 
+	walls := logoWalls(func() []*html.Node {
+		nodes := make([]*html.Node, len(logoImgs))
+		for i, l := range logoImgs {
+			nodes[i] = l.node
+		}
+		return nodes
+	}())
+	var logos []ImageCandidate
+	for _, l := range logoImgs {
+		rank := rankLogo
+		switch {
+		case inForeignBlock(l.node) || walls[l.node]:
+			rank = rankForeignLogo
+		case namesOwner(strings.ToLower(l.alt+" "+l.src), owner):
+			rank = rankOwnLogo
+		}
+		resolved, ok := resolveURL(l.src, base)
+		if !ok || seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		logos = append(logos, ImageCandidate{URL: resolved, Source: "img", Alt: l.alt, Rank: rank})
+	}
+	sort.SliceStable(logos, func(i, j int) bool { return logos[i].Rank < logos[j].Rank })
+	if len(logos) > maxLogoImages {
+		logos = logos[:maxLogoImages]
+	}
+	found = append(found, logos...)
+
 	sort.SliceStable(found, func(i, j int) bool { return found[i].Rank < found[j].Rank })
 	if len(found) > maxImageCandidates {
 		found = found[:maxImageCandidates]
 	}
 	return found
+}
+
+// inBranding reports whether n stands in the site's own home link or branding
+// block: an <a rel="home">, a link to the site's root, or an element whose id
+// or class names it as branding. A home link anywhere counts — a footer that
+// repeats the logo repeats the site's own.
+func inBranding(n *html.Node, base *url.URL) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Type != html.ElementNode {
+			continue
+		}
+		if p.Data == "a" {
+			if strings.Contains(strings.ToLower(attr(p, "rel")), "home") || isRootLink(attr(p, "href"), base) {
+				return true
+			}
+		}
+		if containsAny(strings.ToLower(attr(p, "id")+" "+attr(p, "class")), brandingWords) {
+			return true
+		}
+	}
+	return false
+}
+
+// inForeignBlock reports whether n stands in a container of other
+// organisations' logos.
+func inForeignBlock(n *html.Node) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Type == html.ElementNode && containsAny(strings.ToLower(attr(p, "id")+" "+attr(p, "class")), foreignWords) {
+			return true
+		}
+	}
+	return false
+}
+
+// logoWalls marks the logo images that share a close ancestor with two or more
+// others — a grid of logos, which on a homepage is someone else's logos far
+// more often than the site's own. Close means within four levels: far enough
+// for the wrappers a grid item gets, near enough that the page body itself is
+// not one ancestor every image shares.
+func logoWalls(imgs []*html.Node) map[*html.Node]bool {
+	const levels = 4
+	// The page-level elements are an ancestor of every image on a shallow
+	// page; counting them would make any three logos anywhere a "wall".
+	container := func(p *html.Node) bool {
+		return p.Type == html.ElementNode && !pageLevelElements[p.Data]
+	}
+	counts := map[*html.Node]int{}
+	for _, n := range imgs {
+		p := n.Parent
+		for i := 0; i < levels && p != nil; i++ {
+			if container(p) {
+				counts[p]++
+			}
+			p = p.Parent
+		}
+	}
+	walls := map[*html.Node]bool{}
+	for _, n := range imgs {
+		p := n.Parent
+		for i := 0; i < levels && p != nil; i++ {
+			if container(p) && counts[p] >= 3 {
+				walls[n] = true
+				break
+			}
+			p = p.Parent
+		}
+	}
+	return walls
+}
+
+// pageLevelElements are never the container of a logo wall.
+var pageLevelElements = map[string]bool{"html": true, "body": true, "main": true, "header": true, "footer": true}
+
+// isRootLink reports whether href points at the site's own root.
+func isRootLink(href string, base *url.URL) bool {
+	resolved, ok := resolveURL(href, base)
+	if !ok || base == nil {
+		return false
+	}
+	u, err := url.Parse(resolved)
+	if err != nil || !strings.EqualFold(strings.TrimPrefix(u.Host, "www."), strings.TrimPrefix(base.Host, "www.")) {
+		return false
+	}
+	return u.Path == "" || u.Path == "/"
+}
+
+// ownerTokens are the distinctive parts of the site's domain name — "pco" for
+// pco-online.de — which an image naming the site itself carries in its alt
+// text or file name.
+func ownerTokens(base *url.URL) []string {
+	if base == nil {
+		return nil
+	}
+	labels := strings.Split(strings.ToLower(base.Hostname()), ".")
+	if len(labels) < 2 {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.FieldsFunc(labels[len(labels)-2], func(r rune) bool { return r == '-' || r == '_' }) {
+		if len(part) >= 3 && !ownerStopWords[part] {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// namesOwner reports whether text contains one of the owner tokens as a word.
+func namesOwner(text string, owner []string) bool {
+	words := strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	for _, w := range words {
+		for _, o := range owner {
+			if w == o {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsAny(s string, words []string) bool {
+	for _, w := range words {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// renderSVG serialises an inline <svg> as a standalone document. The xmlns is
+// added when the page left it out, as HTML allows: without it the markup is
+// not an image a browser will render from a data: URI.
+func renderSVG(n *html.Node) (string, bool) {
+	var buf strings.Builder
+	if err := html.Render(&buf, n); err != nil {
+		return "", false
+	}
+	markup := buf.String()
+	if len(markup) > maxInlineSVGBytes {
+		return "", false
+	}
+	if !strings.Contains(markup[:min(len(markup), 512)], "xmlns=") {
+		markup = strings.Replace(markup, "<svg", `<svg xmlns="http://www.w3.org/2000/svg"`, 1)
+	}
+	return markup, true
 }
 
 func attr(n *html.Node, name string) string {
