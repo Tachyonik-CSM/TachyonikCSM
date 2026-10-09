@@ -350,6 +350,11 @@ Routines are machine-generated and unreviewed, so they run under two constraints
   the daemon.
 - **Bare VM** — goja is embedded with no `require`, no filesystem and no network,
   so a routine's reach ends at the values handed to it.
+- **A VM per file** — the routine is instantiated afresh for every analysis, so
+  nothing a rule keeps in a global while reading one user's file can reach the
+  next file, another user's included.
+- **Bounded recursion** — the call stack is capped, so runaway recursion is an
+  error in that rule instead of a stack overflow that would end the process.
 
 ## Analysis Process
 

@@ -65,11 +65,22 @@ type jsRule struct {
 // execution guard clears the VM's interrupt flag. goja.Runtime is not
 // goroutine-safe, so "concurrent readers" is not a state this type has.
 type JSRuleExecutor struct {
-	mu          sync.Mutex
-	vm          *goja.Runtime
+	mu sync.Mutex
+	// code is the loaded routine. Every analysis instantiates it in a VM of its
+	// own (instantiate), so nothing a rule leaves in a global while reading one
+	// user's file can reach the next file — another user's included. The rules
+	// kept here are the instantiation made at load, for what the routine
+	// defines, not for running.
+	code        string
 	rules       []jsRule
 	execTimeout time.Duration
 }
+
+// maxCallStackSize bounds recursion in routine code, as in ActionGenerator and
+// ActionExecutor: the budget stops a loop, not a recursion, which exhausts the
+// stack faster than the timer fires — and a Go stack overflow cannot be
+// recovered. goja reports it as a JavaScript exception instead.
+const maxCallStackSize = 2048
 
 // New creates a new JSRuleExecutor. execTimeout bounds a single JS execution
 // (top-level load or one analyze() call); when it elapses the VM is interrupted.
@@ -141,7 +152,26 @@ func runGuarded(vm *goja.Runtime, timeout time.Duration, fn func() (goja.Value, 
 // valueOf that the routine itself defines. Guarding only RunString left those
 // hooks unbounded, so a rule could loop forever with no way to interrupt it.
 func (e *JSRuleExecutor) LoadFromString(code string) error {
+	_, loaded, err := e.instantiate(code)
+	if err != nil {
+		return err
+	}
+
+	// Atomically swap rules
+	e.mu.Lock()
+	e.code = code
+	e.rules = loaded
+	e.mu.Unlock()
+
+	logger.Infof("Loaded %d JS rules", len(loaded))
+	return nil
+}
+
+// instantiate runs a routine in a fresh VM, under the budget, and extracts its
+// rules.
+func (e *JSRuleExecutor) instantiate(code string) (*goja.Runtime, []jsRule, error) {
 	vm := goja.New()
+	vm.SetMaxCallStackSize(maxCallStackSize)
 
 	var loaded []jsRule
 	_, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
@@ -153,17 +183,9 @@ func (e *JSRuleExecutor) LoadFromString(code string) error {
 		return nil, err
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-
-	// Atomically swap rules
-	e.mu.Lock()
-	e.vm = vm
-	e.rules = loaded
-	e.mu.Unlock()
-
-	logger.Infof("Loaded %d JS rules", len(loaded))
-	return nil
+	return vm, loaded, nil
 }
 
 // extractRules reads the `rules` array out of an evaluated VM. Callers MUST run
@@ -230,8 +252,14 @@ func (e *JSRuleExecutor) AnalyzeSource(ctx RuleContext) (*AnalysisResult, error)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.vm == nil || len(e.rules) == 0 {
+	if e.code == "" || len(e.rules) == 0 {
 		return nil, nil
+	}
+
+	// A VM of this file's own: see JSRuleExecutor.
+	vm, rules, err := e.instantiate(e.code)
+	if err != nil {
+		return nil, fmt.Errorf("instantiate routine: %w", err)
 	}
 
 	var fileSize interface{}
@@ -239,19 +267,19 @@ func (e *JSRuleExecutor) AnalyzeSource(ctx RuleContext) (*AnalysisResult, error)
 		fileSize = *ctx.FileSize
 	}
 
-	ctxVal := e.vm.ToValue(map[string]interface{}{
+	ctxVal := vm.ToValue(map[string]interface{}{
 		"filename": ctx.Filename,
 		"content":  ctx.Content,
 		"fileSize": fileSize,
 		"mimeType": ctx.MimeType,
 	})
 
-	for _, rule := range e.rules {
+	for _, rule := range rules {
 		// The call and the Export of its result share one budget: Export
 		// dispatches to any getters the returned object defines, so reading the
 		// result is as much routine-controlled execution as producing it.
 		var resultMap map[string]interface{}
-		_, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+		_, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 			result, err := rule.analyzeFn(goja.Undefined(), ctxVal)
 			if err != nil {
 				return nil, err
@@ -307,7 +335,7 @@ func (e *JSRuleExecutor) ValidateWithMockCtx() []error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.vm == nil || len(e.rules) == 0 {
+	if e.code == "" || len(e.rules) == 0 {
 		return nil
 	}
 
@@ -352,15 +380,21 @@ func (e *JSRuleExecutor) ValidateWithMockCtx() []error {
 			mockFileSize = *mockCtx.FileSize
 		}
 
-		ctxVal := e.vm.ToValue(map[string]interface{}{
+		// A fresh VM per scenario, as production gives each file one.
+		vm, rules, err := e.instantiate(e.code)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("routine failed to load for mock ctx (file=%s): %w", mockCtx.Filename, err))
+			continue
+		}
+		ctxVal := vm.ToValue(map[string]interface{}{
 			"filename": mockCtx.Filename,
 			"content":  mockCtx.Content,
 			"fileSize": mockFileSize,
 			"mimeType": mockCtx.MimeType,
 		})
 
-		for _, rule := range e.rules {
-			_, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+		for _, rule := range rules {
+			_, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 				return rule.analyzeFn(goja.Undefined(), ctxVal)
 			})
 			if err != nil {
