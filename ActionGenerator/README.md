@@ -387,8 +387,8 @@ is stale. After changing the scenarios or the context shape, regenerate it:
 UPDATE_MOCK_CONTEXTS=1 go test ./internal/jsruntime/ -run TestMockContextsFileIsCurrent
 ```
 
-One copy of the context shape is still kept by hand: ActionExecutor's dry-run defaults
-(`actionContextDefaults`), which fill in fields a dry-run context omits. A field added to
+One copy of the context shape is still kept by hand: AIManager's dry-run defaults
+(`AIManager/internal/dryrun`, `actionContextDefaults`), which fill in fields a dry-run context omits. A field added to
 `RuleContext` belongs there too. The AI writes rules from a system prompt stored in AIManager
 (Settings → ActionGenerator → System Prompt) that documents this context — a field the prompt does
 not mention is a field no generated rule will use, however well it is populated.
@@ -484,6 +484,10 @@ input on both sides.
   Without it, a rule that never terminates would hang its goroutine for the life
   of the process. The call stack is capped as well, so runaway recursion fails
   fast instead of exhausting memory.
+- **Each user's evaluation is isolated.** A routine is instantiated in a fresh VM
+  for every evaluation (and for every mock scenario during validation), so a
+  global a rule sets while looking at one user's data cannot reach the next
+  user's evaluation — or their action's text.
 - **Output is validated.** An action whose type, status, assignment or priority
   falls outside the vocabulary ActionManager accepts is rejected rather than
   sent, and the free-text fields are truncated to their limits. A routine cannot

@@ -119,7 +119,7 @@ type RuleContext struct {
 // validation below. It used to be written out twice in this file, and the
 // duplication was not free: a field added to RuleContext and to one copy is a
 // field that validates and then fails in production, or the reverse. The same
-// shape is mirrored again in ActionExecutor's dry run and in the WebUI's test
+// shape is mirrored again in AIManager's dry run and in the WebUI's test
 // presets, which cannot share this code — those two are what most recently
 // drifted, so anything added here belongs in all four places.
 //
@@ -370,8 +370,13 @@ type jsRule struct {
 
 // JSRuleExecutor manages and executes JavaScript-based rules
 type JSRuleExecutor struct {
-	mu          sync.RWMutex
-	vm          *goja.Runtime
+	mu sync.RWMutex
+	// code is the loaded routine. Every evaluation instantiates it in a VM of
+	// its own (instance), so nothing one user's evaluation leaves in a global
+	// can reach the next user's — the routine used to live in one VM shared by
+	// every user. rules is the instantiation made when it was loaded, kept for
+	// what the rules are (names, ids, option ids), not for running them.
+	code        string
 	rules       []jsRule
 	execTimeout time.Duration
 	// onDemand marks a routine whose rule has no trigger of its own, so that
@@ -449,6 +454,23 @@ func runGuarded(vm *goja.Runtime, timeout time.Duration, fn func() (goja.Value, 
 
 // LoadFromString parses JavaScript code and extracts the rules array
 func (e *JSRuleExecutor) LoadFromString(code string) error {
+	_, loaded, err := e.instantiate(code)
+	if err != nil {
+		return err
+	}
+
+	// Atomically swap rules
+	e.mu.Lock()
+	e.code = code
+	e.rules = loaded
+	e.mu.Unlock()
+
+	logger.Infof("Loaded %d JS rules", len(loaded))
+	return nil
+}
+
+// instantiate runs a routine in a fresh VM and extracts its rules.
+func (e *JSRuleExecutor) instantiate(code string) (*goja.Runtime, []jsRule, error) {
 	vm := goja.New()
 	// Bound recursion. The execution budget stops a routine that loops; it does
 	// not stop one that recurses, which exhausts memory rather than time and
@@ -468,17 +490,15 @@ func (e *JSRuleExecutor) LoadFromString(code string) error {
 		return nil, lerr
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	return vm, loaded, nil
+}
 
-	// Atomically swap rules
-	e.mu.Lock()
-	e.vm = vm
-	e.rules = loaded
-	e.mu.Unlock()
-
-	logger.Infof("Loaded %d JS rules", len(loaded))
-	return nil
+// instance is a fresh instantiation of the loaded routine, for one evaluation.
+// Caller holds e.mu (read).
+func (e *JSRuleExecutor) instance() (*goja.Runtime, []jsRule, error) {
+	return e.instantiate(e.code)
 }
 
 // loadOptionFns extracts the rule's optional `options` member: a map from
@@ -619,20 +639,26 @@ func (e *JSRuleExecutor) EvaluateRules(ctx RuleContext, force bool) ([]actionman
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	if e.vm == nil || len(e.rules) == 0 {
-		logger.Warnf("EvaluateRules called with no rules loaded (vm=%v, rules=%d)", e.vm != nil, len(e.rules))
+	if e.code == "" || len(e.rules) == 0 {
+		logger.Warnf("EvaluateRules called with no rules loaded (rules=%d)", len(e.rules))
 		return nil, nil
 	}
 
-	ctxVal := e.vm.ToValue(ctx.ToMap())
+	// A VM of this evaluation's own: a global a rule sets while looking at
+	// this user's data must not be there for the next user's.
+	vm, rules, err := e.instance()
+	if err != nil {
+		return nil, fmt.Errorf("instantiate routine: %w", err)
+	}
+	ctxVal := vm.ToValue(ctx.ToMap())
 
 	var actions []actionmanager.CreateActionRequest
 
-	for _, rule := range e.rules {
+	for _, rule := range rules {
 		if !force {
 			// Call check function. Guarded: a rule that will not terminate
 			// must cost one budget and be skipped, not wedge the daemon.
-			result, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+			result, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 				return rule.checkFn(goja.Undefined(), ctxVal)
 			})
 			if err != nil {
@@ -648,7 +674,7 @@ func (e *JSRuleExecutor) EvaluateRules(ctx RuleContext, force bool) ([]actionman
 		// Call createAction function, and read its result, inside one budget:
 		// Export runs whatever getters the returned object defines.
 		var actionObj interface{}
-		_, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+		_, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 			actionResult, aerr := rule.actionFn(goja.Undefined(), ctxVal)
 			if aerr != nil {
 				return nil, aerr
@@ -684,7 +710,7 @@ func (e *JSRuleExecutor) EvaluateRules(ctx RuleContext, force bool) ([]actionman
 		// here because this is where the context lives; an option whose
 		// condition throws is left visible, since hiding a step the user needs
 		// is worse than offering one they do not.
-		if hidden := e.hiddenOptions(rule, ctxVal); hidden != nil {
+		if hidden := e.hiddenOptions(vm, rule, ctxVal); hidden != nil {
 			action.HiddenOptions = &hidden
 		}
 
@@ -1052,13 +1078,13 @@ type RuleValidation struct {
 // Each condition gets its own execution budget. A condition that throws or
 // overruns leaves its option visible: the alternative is hiding a step the user
 // may need because a generated line of JavaScript was wrong.
-func (e *JSRuleExecutor) hiddenOptions(rule jsRule, ctxVal goja.Value) []int64 {
+func (e *JSRuleExecutor) hiddenOptions(vm *goja.Runtime, rule jsRule, ctxVal goja.Value) []int64 {
 	if len(rule.optionFns) == 0 {
 		return nil
 	}
 	hidden := []int64{}
 	for optionID, fn := range rule.optionFns {
-		result, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+		result, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 			return fn(goja.Undefined(), ctxVal)
 		})
 		if err != nil {
@@ -1185,7 +1211,7 @@ func (e *JSRuleExecutor) ValidateWithMockCtxReport() ValidationReport {
 	defer e.mu.RUnlock()
 
 	var report ValidationReport
-	if e.vm == nil || len(e.rules) == 0 {
+	if e.code == "" || len(e.rules) == 0 {
 		return report
 	}
 
@@ -1234,13 +1260,22 @@ func (e *JSRuleExecutor) runScenarios(
 		// One traced context per scenario, shared by every rule and by check()
 		// and createAction() — as production evaluates a routine's rules against
 		// one ctx. Reset attributes the reads to each rule in turn.
+		//
+		// And a fresh VM per scenario, as production gives each user one: a
+		// global set in one scenario would otherwise colour the next, and the
+		// degeneracy judgement below would be judging that instead.
+		vm, rules, err := e.instance()
+		if err != nil {
+			report.Errors = append(report.Errors, fmt.Errorf("routine failed to load for mock scenario %d (%s): %w", si+1, sc.Label, err))
+			continue
+		}
 		tr := jsctxtrace.New()
-		ctxVal := tr.Wrap(e.vm, plains[si])
-		for ri, rule := range e.rules {
+		ctxVal := tr.Wrap(vm, plains[si])
+		for ri, rule := range rules {
 			t := tallies[ri]
 			tr.Reset()
 
-			checkResult, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+			checkResult, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 				return rule.checkFn(goja.Undefined(), ctxVal)
 			})
 			for _, p := range tr.Read() {
@@ -1259,7 +1294,7 @@ func (e *JSRuleExecutor) runScenarios(
 			t.decisions = append(t.decisions, ScenarioDecision{Label: sc.Label, Result: fmt.Sprintf("%v", fired)})
 
 			if fired {
-				if _, err := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+				if _, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 					return rule.actionFn(goja.Undefined(), ctxVal)
 				}); err != nil {
 					report.Errors = append(report.Errors, fmt.Errorf("rule '%s' createAction() failed in mock scenario %d (%s): %w",
@@ -1273,7 +1308,7 @@ func (e *JSRuleExecutor) runScenarios(
 				// check(), an option that no mock user happens to need is
 				// perfectly ordinary, so the tally below only records it.
 				for optionID, fn := range rule.optionFns {
-					result, oerr := runGuarded(e.vm, e.execTimeout, func() (goja.Value, error) {
+					result, oerr := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
 						return fn(goja.Undefined(), ctxVal)
 					})
 					if oerr != nil {
