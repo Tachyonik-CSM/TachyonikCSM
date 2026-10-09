@@ -1,0 +1,93 @@
+# ActionExecutor Configuration File Example
+# Copy this file to config.yaml and adjust the values as needed.
+#
+# Configuration priority (highest wins):
+#   environment variables > config.yaml > built-in defaults
+#
+# The config file location can be overridden with ACTIONEXECUTOR_CONFIG
+# (default: ./config.yaml).
+#
+# The AI that generates execution routines, and its system prompt, are NOT set
+# here: they are the ActionExecutor module settings in AIManager
+# (AI → Modules), fetched at startup and whenever they change.
+
+# A routine's api.assets (list, get, create, update, delete),
+# api.vulnerabilities.list and api.detections.list calls go here.
+assetmanager:
+  url: http://localhost:8081  # AssetManager API URL (default: http://localhost:8081)
+                              # Env: ASSETMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AssetManager's internal_service_key
+                                                            # Env: ASSETMANAGER_INTERNAL_SERVICE_KEY
+
+# SystemManager is used in both directions: the user's organisation and their
+# automation settings (which execution rules run automatically) are read, and a
+# routine's api.user.get and api.organisation.get/update go here; the liveness
+# heartbeat and the audit-trail entry of every run are sent.
+systemmanager:
+  url: http://localhost:8083  # SystemManager API URL (default: http://localhost:8083)
+                              # Env: SYSTEMMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match SystemManager's internal_service_key
+                                                            # Env: SYSTEMMANAGER_INTERNAL_SERVICE_KEY
+
+# A routine's api.sources (list, create, delete) and api.tools (list, get)
+# calls go here.
+resourcemanager:
+  url: http://localhost:8080  # ResourceManager API URL (default: http://localhost:8080)
+                              # Env: RESOURCEMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ResourceManager's internal_service_key
+                                                            # Env: RESOURCEMANAGER_INTERNAL_SERVICE_KEY
+
+# ActionManager is watched for new actions (automatic execution), an action
+# handled automatically is deleted here, and a routine's api.actions (list,
+# create, update, delete) calls go here.
+actionmanager:
+  url: http://localhost:8082  # ActionManager API URL (default: http://localhost:8082)
+                              # Env: ACTIONMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ActionManager's internal_service_key
+                                                            # Env: ACTIONMANAGER_INTERNAL_SERVICE_KEY
+
+# A routine's api.tools.execute runs a security tool through ToolManager, which
+# stores the tool's output files as sources.
+toolmanager:
+  url: http://localhost:8086  # ToolManager API URL (default: http://localhost:8086)
+                              # Env: TOOLMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ToolManager's internal_service_key
+                                                            # Env: TOOLMANAGER_INTERNAL_SERVICE_KEY
+
+# AIManager holds the execution rules, their routines and the module settings;
+# it is watched for changes to all three, and for users' requests to run a rule
+# now, which are claimed and answered here. Each run's result is reported back
+# so the WebUI can show it, and api.tools.list reads the tool capabilities and
+# tool rules from its service-only routes.
+ai_manager:
+  url: http://localhost:8085  # AIManager API URL (default: http://localhost:8085)
+                              # Env: ACTIONEXECUTOR_AI_MANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AIManager's internal_service_key
+                                                            # Env: AIMANAGER_INTERNAL_SERVICE_KEY
+
+ai:
+  timeout_seconds: 300  # Timeout for one routine-generation request to the AI (default: 300)
+                        # Env: ACTIONEXECUTOR_AI_TIMEOUT_SECONDS
+
+execution:
+  # How long one routine run (manual or automatic) may take. When it passes, the
+  # routine is interrupted and the run counts as failed. A call to a backend
+  # that is already under way finishes first: other api.* calls wait at most
+  # 30 s, api.tools.execute up to this limit. The WebUI waits for a manual run's
+  # result at least this long.
+  timeout_seconds: 280  # (default: 280)
+                        # Env: ACTIONEXECUTOR_EXECUTION_TIMEOUT_SECONDS
+
+heartbeat:
+  interval_seconds: 10  # How often liveness is reported to SystemManager (default: 10)
+                        # Env: ACTIONEXECUTOR_HEARTBEAT_INTERVAL_SECONDS
+
+log:
+  file_path: ./actionexecutor.log  # Log file (default: ./actionexecutor.log)
+                                   # Env: ACTIONEXECUTOR_LOG_FILE
+  # Set both of these explicitly: once a config.yaml is read, an omitted one
+  # counts as false (the defaults, both true, apply only without a file).
+  to_console: true                 # Env: ACTIONEXECUTOR_LOG_TO_CONSOLE (true/1)
+  to_file: true                    # Env: ACTIONEXECUTOR_LOG_TO_FILE (true/1)
+  level: INFO                      # DEBUG, INFO, WARN or ERROR (default: INFO)
+                                   # Env: ACTIONEXECUTOR_LOG_LEVEL

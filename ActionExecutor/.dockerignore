@@ -1,0 +1,7 @@
+actionexecutor
+tachyonik-actionexecutor
+*.log
+/cmd/**/actionexecutor
+config.yaml
+.env
+.env.*
