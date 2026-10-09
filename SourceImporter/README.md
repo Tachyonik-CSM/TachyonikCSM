@@ -289,6 +289,10 @@ Import routines are AI-generated JavaScript run over files somebody uploaded, so
 the daemon bounds them rather than trusting them. Two limits apply, and both
 surface as an ordinary "Import failed" — no operator action is needed to recover:
 
+- **A VM per file, recursion bounded.** Each import runs the routine in a VM of
+  its own, so nothing one file's import leaves behind reaches the next (another
+  user's included), and the call stack is capped so runaway recursion fails that
+  import instead of ending the process.
 - **30 seconds per routine.** goja cannot be preempted and this daemon polls on a
   single goroutine, so a routine that never returns would silently stop every
   import until the process was restarted. The budget covers loading the routine,

@@ -193,11 +193,18 @@ func (e *JSImportExecutor) LoadFromString(code string) error {
 	return nil
 }
 
+// maxCallStackSize bounds recursion in routine code, as in the other daemons:
+// the budget stops a loop, not a recursion, which exhausts the stack faster
+// than the timer fires — and a Go stack overflow cannot be recovered, so it
+// would take the daemon down. goja reports it as a JavaScript exception.
+const maxCallStackSize = 2048
+
 // instantiate builds a VM, runs the routine's top-level code and returns its
 // importFunction. Both steps are under the execution budget: a routine whose
 // module body loops never reaches its function at all.
 func instantiate(code string, budget time.Duration) (*goja.Runtime, goja.Callable, error) {
 	vm := goja.New()
+	vm.SetMaxCallStackSize(maxCallStackSize)
 
 	if _, err := runGuarded(vm, budget, func() (goja.Value, error) {
 		return vm.RunString(code)
