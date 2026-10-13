@@ -198,7 +198,15 @@ func TestProbeReadsOneAsset(t *testing.T) {
 }
 
 func TestHostAssetsReadsEveryPageAndTrims(t *testing.T) {
-	f := newFakeConsole(assets(t, 250))
+	list := assets(t, 250)
+	for _, a := range list {
+		a["history"] = []interface{}{
+			map[string]interface{}{"date": "2018-04-09T06:23:49Z", "scanId": 28, "type": "SCAN", "version": 8},
+			map[string]interface{}{"date": "2026-10-01T00:00:00+02:00", "type": "AGENT-IMPORT", "version": 12},
+			map[string]interface{}{"date": "2026-10-05T08:00:00Z", "type": "VULNERABILITY_EXCEPTION_APPLIED", "version": 13},
+		}
+	}
+	f := newFakeConsole(list)
 	c, _ := start(t, f, "right")
 
 	got, err := c.HostAssets()
@@ -217,22 +225,24 @@ func TestHostAssetsReadsEveryPageAndTrims(t *testing.T) {
 		}
 	}
 
+	// The console's own page shape and nothing else: all assets as page 0 of 1,
+	// without the page-level links.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(got.Document, &top); err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 2 || top["resources"] == nil || top["page"] == nil {
+		t.Errorf("top-level fields are not exactly resources and page: %s", keys(top))
+	}
 	var doc struct {
-		Format         string                   `json:"format"`
-		FormatVersion  int                      `json:"formatVersion"`
-		Console        string                   `json:"console"`
-		RetrievedAt    string                   `json:"retrievedAt"`
-		TotalResources int                      `json:"totalResources"`
-		Resources      []map[string]interface{} `json:"resources"`
+		Resources []map[string]interface{} `json:"resources"`
+		Page      map[string]int           `json:"page"`
 	}
 	if err := json.Unmarshal(got.Document, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Format != Format || doc.FormatVersion != FormatVersion || doc.TotalResources != 250 || len(doc.Resources) != 250 {
-		t.Errorf("document header wrong: %+v", doc.Format)
-	}
-	if _, err := time.Parse(time.RFC3339, doc.RetrievedAt); err != nil {
-		t.Errorf("retrievedAt %q: %v", doc.RetrievedAt, err)
+	if want := map[string]int{"number": 0, "size": 250, "totalPages": 1, "totalResources": 250}; fmt.Sprint(doc.Page) != fmt.Sprint(want) || len(doc.Resources) != 250 {
+		t.Errorf("page = %v with %d resources", doc.Page, len(doc.Resources))
 	}
 
 	a := doc.Resources[0]
@@ -241,7 +251,7 @@ func TestHostAssetsReadsEveryPageAndTrims(t *testing.T) {
 			t.Errorf("kept field %q is missing", k)
 		}
 	}
-	for _, k := range []string{"software", "services", "files", "users", "userGroups", "configurations", "databases", "history", "links"} {
+	for _, k := range []string{"software", "services", "files", "users", "userGroups", "configurations", "databases", "links"} {
 		if _, ok := a[k]; ok {
 			t.Errorf("field %q should have been dropped", k)
 		}
@@ -249,8 +259,19 @@ func TestHostAssetsReadsEveryPageAndTrims(t *testing.T) {
 	if fp, _ := a["osFingerprint"].(map[string]interface{}); fp == nil || fp["configurations"] != nil || fp["cpe"] == nil {
 		t.Errorf("osFingerprint not trimmed as intended: %v", a["osFingerprint"])
 	}
-	if a["lastAssessed"] != "2018-04-09T06:23:49Z" {
-		t.Errorf("lastAssessed = %v", a["lastAssessed"])
+	// Nothing of the proxy's own is added.
+	for k := range a {
+		if !isKept(k) && k != "history" {
+			t.Errorf("field %q is not one of the console's kept fields", k)
+		}
+	}
+	// History is the latest assessment alone, as the console sent it.
+	h, _ := a["history"].([]interface{})
+	if len(h) != 1 {
+		t.Fatalf("history = %v, want the latest assessment only", a["history"])
+	}
+	if e, _ := h[0].(map[string]interface{}); e["date"] != "2026-10-01T00:00:00+02:00" || e["type"] != "AGENT-IMPORT" || e["version"] != float64(12) {
+		t.Errorf("history entry = %v", h[0])
 	}
 	if a["id"] != float64(1000) {
 		t.Errorf("first asset is %v, want 1000", a["id"])
@@ -266,7 +287,8 @@ func TestAnEmptyInventoryIsAnEmptyList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Count != 0 || !strings.Contains(string(got.Document), `"resources":[]`) {
+	if got.Count != 0 || !strings.Contains(string(got.Document), `"resources":[]`) ||
+		!strings.Contains(string(got.Document), `"totalPages":0`) {
 		t.Errorf("got %d, %s", got.Count, got.Document)
 	}
 }
@@ -354,16 +376,36 @@ func TestAnInventoryOverTheLimitIsRefused(t *testing.T) {
 	}
 }
 
-func TestLastAssessedIgnoresExceptions(t *testing.T) {
+func TestLatestAssessmentIgnoresExceptions(t *testing.T) {
 	h := json.RawMessage(`[
-		{"date":"2026-01-01T10:00:00Z","type":"SCAN"},
+		{"date":"2026-01-01T10:00:00Z","type":"SCAN","scanId":7},
 		{"date":"2026-03-01T10:00:00+02:00","type":"AGENT-IMPORT"},
 		{"date":"2026-09-01T10:00:00Z","type":"VULNERABILITY_EXCEPTION_APPLIED"}
 	]`)
-	if got := lastAssessed(h); got != "2026-03-01T08:00:00Z" {
-		t.Errorf("got %q", got)
+	if got := string(latestAssessment(h)); got != `{"date":"2026-03-01T10:00:00+02:00","type":"AGENT-IMPORT"}` {
+		t.Errorf("got %s", got)
 	}
-	if got := lastAssessed(nil); got != "" {
-		t.Errorf("no history gave %q", got)
+	if got := latestAssessment(json.RawMessage(`[{"date":"2026-09-01T10:00:00Z","type":"VULNERABILITY_EXCEPTION_APPLIED"}]`)); got != nil {
+		t.Errorf("exceptions only gave %s", got)
 	}
+	if got := latestAssessment(nil); got != nil {
+		t.Errorf("no history gave %s", got)
+	}
+}
+
+func isKept(k string) bool {
+	for _, f := range keptAssetFields {
+		if f == k {
+			return true
+		}
+	}
+	return false
+}
+
+func keys(m map[string]json.RawMessage) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

@@ -4,12 +4,13 @@
 
 // Cutting an InsightVM asset down to what identifies and summarises it.
 //
-// What is kept is what an asset inventory needs: the addresses and names that
-// identify a host, its operating system, its type, its risk and vulnerability
-// counts, and when it was last assessed. What is dropped is what makes an asset
-// large and changes with every scan — installed software, services, files,
-// users, configuration values and the full scan history — and the API's
-// hypermedia links.
+// Trimming only deletes; every field that remains is the console's own, as it
+// sent it. What is kept is what an asset inventory needs: the addresses and
+// names that identify a host, its operating system, its type, its risk and
+// vulnerability counts, and its latest assessment. What is dropped is what
+// makes an asset large and changes with every scan — installed software,
+// services, files, users, configuration values and all but one history entry —
+// and the API's hypermedia links.
 
 package insightvm
 
@@ -19,8 +20,8 @@ import (
 	"time"
 )
 
-// keptAssetFields are the Asset fields passed on unchanged, as the API names
-// them.
+// keptAssetFields are the Asset fields passed on, as the API names them.
+// history is kept too, reduced by latestAssessment.
 var keptAssetFields = []string{
 	"id",
 	"ip",
@@ -50,10 +51,6 @@ var assessmentHistoryTypes = map[string]bool{
 }
 
 // trimAsset returns the cut-down asset and its id ("" when it has none).
-//
-// Beyond keptAssetFields it adds one field of its own, lastAssessed: the latest
-// assessment date in the asset's history, which is the one thing worth keeping
-// from a list that grows with every scan.
 func trimAsset(raw json.RawMessage) (json.RawMessage, string, error) {
 	var full map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &full); err != nil {
@@ -79,9 +76,11 @@ func trimAsset(raw json.RawMessage) (json.RawMessage, string, error) {
 		}
 	}
 
-	if last := lastAssessed(full["history"]); last != "" {
-		b, _ := json.Marshal(last)
-		out["lastAssessed"] = b
+	// The history grows with every scan; its latest assessment is the one
+	// entry worth keeping, as the date the console last learned about the
+	// host. Without one, history is left out rather than sent empty.
+	if latest := latestAssessment(full["history"]); latest != nil {
+		out["history"] = json.RawMessage("[" + string(latest) + "]")
 	}
 
 	b, err := json.Marshal(out)
@@ -91,36 +90,37 @@ func trimAsset(raw json.RawMessage) (json.RawMessage, string, error) {
 	return b, assetID(full["id"]), nil
 }
 
-// lastAssessed is the latest assessment date in a history, as RFC 3339 UTC,
-// or "" when there is none.
-func lastAssessed(history json.RawMessage) string {
+// latestAssessment returns the newest assessment entry of a history exactly as
+// the console sent it, or nil when there is none.
+func latestAssessment(history json.RawMessage) json.RawMessage {
 	if len(history) == 0 {
-		return ""
+		return nil
 	}
-	var entries []struct {
-		Date string `json:"date"`
-		Type string `json:"type"`
-	}
+	var entries []json.RawMessage
 	if json.Unmarshal(history, &entries) != nil {
-		return ""
+		return nil
 	}
-	var latest time.Time
-	for _, e := range entries {
-		if !assessmentHistoryTypes[e.Type] {
+	var (
+		latest     json.RawMessage
+		latestDate time.Time
+	)
+	for _, raw := range entries {
+		var e struct {
+			Date string `json:"date"`
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &e) != nil || !assessmentHistoryTypes[e.Type] {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339, e.Date)
 		if err != nil {
 			continue
 		}
-		if t.After(latest) {
-			latest = t
+		if latest == nil || t.After(latestDate) {
+			latest, latestDate = raw, t
 		}
 	}
-	if latest.IsZero() {
-		return ""
-	}
-	return latest.UTC().Format(time.RFC3339)
+	return latest
 }
 
 // assetID renders the id for duplicate detection. The API declares it a 64-bit

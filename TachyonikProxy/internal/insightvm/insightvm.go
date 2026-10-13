@@ -12,14 +12,14 @@
 // api-v3.json), not against a console: field names, paging and error shapes
 // are the specification's.
 //
-// Unlike package gmp, this one does not hand the console's answer on
-// unmodified. A full InsightVM asset carries its installed software, services,
-// files, users and scan history and can run to tens of kilobytes, so a few
-// hundred hosts would exceed what a source may be. Each asset is cut down to
-// what identifies and summarises it — see keptAssetFields — and the pages are
-// joined into one document of this package's own shape (Format). That is the
-// one piece of format knowledge kept here, and the reason the document says
-// whose format it is.
+// The document handed on is the console's own format, trimmed. The pages are
+// joined into one answer of the shape GET /api/3/assets has — {resources,
+// page} — as if every asset had come on a single page, and nothing is added to
+// it. Trimming only deletes: a full InsightVM asset carries its installed
+// software, services, files, users and scan history and can run to tens of
+// kilobytes, so a few hundred hosts would exceed what a source may be. Each
+// asset keeps what identifies and summarises it — see keptAssetFields — and its
+// history only the latest assessment.
 //
 // The console's certificate is self-signed on most installations, so the
 // usual chain verification cannot apply. Its SHA-256 fingerprint is pinned
@@ -48,13 +48,6 @@ import (
 
 // DefaultPort is where a Security Console serves its web interface and API.
 const DefaultPort = 3780
-
-// Format names the document HostAssets returns, so an analysis rule can tell
-// it from anything the console itself would send.
-const Format = "tachyonik-insightvm-host-assets"
-
-// FormatVersion moves when the document's shape changes.
-const FormatVersion = 1
 
 // pageSize is how many assets one request asks for. The API allows up to 500;
 // a smaller page keeps each untrimmed response within maxPageBytes even for
@@ -236,14 +229,19 @@ type assetPage struct {
 	} `json:"page"`
 }
 
-// document is what HostAssets returns, in this field order.
+// document is what HostAssets returns: the API's own page shape, holding the
+// whole inventory as page 0 of 1. The page-level links are not carried over;
+// they point at the console's pages, which no longer match.
 type document struct {
-	Format         string            `json:"format"`
-	FormatVersion  int               `json:"formatVersion"`
-	Console        string            `json:"console"`
-	RetrievedAt    string            `json:"retrievedAt"`
-	TotalResources int               `json:"totalResources"`
-	Resources      []json.RawMessage `json:"resources"`
+	Resources []json.RawMessage `json:"resources"`
+	Page      documentPage      `json:"page"`
+}
+
+type documentPage struct {
+	Number         int `json:"number"`
+	Size           int `json:"size"`
+	TotalPages     int `json:"totalPages"`
+	TotalResources int `json:"totalResources"`
 }
 
 // HostAssets returns every asset the account may see.
@@ -304,13 +302,18 @@ func (c *Client) HostAssets() (*HostAssets, error) {
 		return nil, fmt.Errorf("the console reports %d assets but returned %d — the inventory is incomplete", total, len(resources))
 	}
 
+	pages := 1
+	if len(resources) == 0 {
+		pages = 0 // as the API reports an empty collection
+	}
 	doc, err := json.Marshal(document{
-		Format:         Format,
-		FormatVersion:  FormatVersion,
-		Console:        net.JoinHostPort(c.cfg.Host, strconv.Itoa(c.cfg.Port)),
-		RetrievedAt:    time.Now().UTC().Format(time.RFC3339),
-		TotalResources: total,
-		Resources:      nonNil(resources),
+		Resources: nonNil(resources),
+		Page: documentPage{
+			Number:         0,
+			Size:           len(resources),
+			TotalPages:     pages,
+			TotalResources: total,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not build the inventory document: %w", err)

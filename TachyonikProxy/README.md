@@ -386,7 +386,7 @@ needs an `allowed_chars` that covers its arguments, e.g. `a-zA-Z0-9.:_\-` for
 both `gmp-get-hosts` and `insightvm-get-assets`.
 
 **For GMP, the result is the appliance's own document, unmodified.** (The
-InsightVM document is cut down; see below.) `gmp-get-hosts` returns the complete `<get_assets_response>` as an output file named
+InsightVM document is the console's own format, trimmed; see below.) `gmp-get-hosts` returns the complete `<get_assets_response>` as an output file named
 `openvas-host-assets-<appliance>-<UTC timestamp>.xml` (`application/xml`).
 ToolManager stores it as a source, and the platform's analysis and import rules
 turn it into assets, the same way they handle an Nmap or OpenVAS report file.
@@ -441,33 +441,37 @@ use API keys, and are not what this talks to.
   inventory that ends short of the `totalResources` the console reported, that
   changes its total while it is read, or that returns an asset twice is refused
   rather than passed on as the inventory.
-- **The document is cut down, unlike GMP's.** A full InsightVM asset carries its
-  software, services, files, users and scan history and can run to tens of
-  kilobytes, so a few hundred hosts would exceed what a source may be. Each asset
-  keeps `id`, `ip`, `addresses`, `hostName`, `hostNames`, `mac`, `ids`, `os`,
-  `osCertainty`, `osFingerprint` (without its `configurations`), `type`,
-  `riskScore`, `rawRiskScore`, `vulnerabilities` (the counts),
-  `assessedForVulnerabilities` and `assessedForPolicies`, plus one field of the
-  proxy's own: `lastAssessed`, the latest scan or agent date from its history.
-  That is about 1 KB per asset.
+- **The console's own format, trimmed.** The pages are joined into one answer
+  of the shape `GET /api/3/assets` has — `resources` and `page` — as if every
+  asset had come on a single page. Nothing is added; trimming only deletes. A
+  full InsightVM asset carries its software, services, files, users and scan
+  history and can run to tens of kilobytes, so a few hundred hosts would exceed
+  what a source may be. Each asset keeps `id`, `ip`, `addresses`, `hostName`,
+  `hostNames`, `mac`, `ids`, `os`, `osCertainty`, `osFingerprint` (without its
+  `configurations`), `type`, `riskScore`, `rawRiskScore`, `vulnerabilities`
+  (the counts), `assessedForVulnerabilities`, `assessedForPolicies`, and
+  `history` reduced to its latest assessment — the newest entry of type `SCAN`,
+  `AGENT-IMPORT` or `SCAN-LOG-IMPORT`, as the console sent it; left out when
+  there is none. The `links` are dropped, at page level and in each asset: they
+  point at the console's pages, which no longer match. That is about 1 KB per
+  asset.
 
 The result is one output file, `insightvm-host-assets-<console>-<UTC
-timestamp>.json` (`application/json`):
+timestamp>.json` (`application/json`); the file name is what records the
+console and the time:
 
 ```json
 {
-  "format": "tachyonik-insightvm-host-assets",
-  "formatVersion": 1,
-  "console": "192.168.178.170:3780",
-  "retrievedAt": "2026-10-13T13:30:05Z",
-  "totalResources": 250,
-  "resources": [ { "id": 282, "ip": "182.34.74.202", "hostName": "…", "…": "…" } ]
+  "resources": [
+    { "id": 282, "ip": "182.34.74.202", "hostName": "…",
+      "history": [ { "date": "2018-04-09T06:23:49Z", "type": "SCAN", "scanId": 28, "version": 8 } ],
+      "…": "…" }
+  ],
+  "page": { "number": 0, "size": 250, "totalPages": 1, "totalResources": 250 }
 }
 ```
 
-`format` names the document as the proxy's, not the console's, so an analysis
-rule can recognise it. The document is capped by the rule's `max_output_bytes`
-while it is built.
+The document is capped by the rule's `max_output_bytes` while it is built.
 
 ### Credentials and host keys
 

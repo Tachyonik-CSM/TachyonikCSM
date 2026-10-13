@@ -113,7 +113,7 @@ func TestInsightVMGetAssetsThroughTheRegistry(t *testing.T) {
 		t.Errorf("output file %s (%s)", f.Filename, f.MimeType)
 	}
 	raw, _ := base64.StdEncoding.DecodeString(f.Data)
-	if !strings.Contains(string(raw), `"format":"tachyonik-insightvm-host-assets"`) || strings.Contains(string(raw), "software") {
+	if !strings.Contains(string(raw), `"page":{"number":0,"size":3,"totalPages":1,"totalResources":3}`) || strings.Contains(string(raw), "software") {
 		t.Errorf("document not as intended: %s", raw)
 	}
 	if !strings.Contains(res.Content, "Retrieved 3 host assets") {
