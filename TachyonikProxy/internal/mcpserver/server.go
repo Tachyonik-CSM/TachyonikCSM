@@ -93,7 +93,8 @@ type ToolCallParams struct {
 	// ToolManager beside the arguments and never inside them. It reaches only
 	// built-in tools, and is never logged or stored.
 	Credential *CallCredential `json:"credential,omitempty"`
-	// HostKey is the SSH host key fingerprint confirmed for the installation.
+	// HostKey is the key confirmed for the installation: an SSH host key or a
+	// TLS certificate fingerprint, depending on the built-in.
 	HostKey string `json:"hostKey,omitempty"`
 }
 
@@ -321,7 +322,8 @@ func (s *Server) handleToolsCall(req Request) *Response {
 }
 
 // CredentialTestParams asks whether a credential opens a session on a tool.
-// Protocol names the built-in family; "gmp" is the only one so far.
+// Protocol names the built-in family: "gmp" (OPENVAS SCAN) or "insightvm"
+// (Rapid7 InsightVM Security Console).
 type CredentialTestParams struct {
 	Protocol   string                 `json:"protocol"`
 	Arguments  map[string]interface{} `json:"arguments"`
@@ -342,6 +344,8 @@ func (s *Server) handleCredentialTest(req Request) *Response {
 	switch params.Protocol {
 	case "gmp":
 		return okResp(req.ID, tools.TestGMPCredential(params.Arguments, secrets))
+	case "insightvm":
+		return okResp(req.ID, tools.TestInsightVMCredential(params.Arguments, secrets))
 	default:
 		return okResp(req.ID, tools.CredentialTestResult{
 			Message: fmt.Sprintf("credential testing is not available for protocol %q", params.Protocol),

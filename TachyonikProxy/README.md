@@ -371,9 +371,11 @@ nothing above the proxy needs to know the difference.
 | Command | Does |
 |---|---|
 | `builtin:gmp-get-hosts` | Asks an OPENVAS SCAN appliance for every host asset it holds, over GMP. Reads the appliance's inventory; scans nothing. |
+| `builtin:insightvm-get-assets` | Asks a Rapid7 InsightVM Security Console for every asset its account may see, over the console's REST API (v3). Reads the console's inventory; scans nothing. See [Talking to an InsightVM Security Console](#talking-to-an-insightvm-security-console). |
 
-Arguments: `host` (required — the appliance), `port` (default `22`), `sshUser`
-(default `gmp`). In the tool rule, mark `host` with
+Arguments of `gmp-get-hosts`: `host` (required — the appliance), `port`
+(default `22`), `sshUser` (default `gmp`). Arguments of `insightvm-get-assets`:
+`host` (required — the console), `port` (default `3780`). In the tool rule, mark `host` with
 `"x-tachyonik-from": "installation.host"`. TachyonikCSM then fills it from the
 selected tool installation instead of asking for it.
 
@@ -381,10 +383,10 @@ A built-in's arguments pass the same checks as a binary tool's before the
 built-in runs: the schema's required fields and enums, the `allowed_chars`
 allowlist, and the flag-injection guard. The rule for a built-in therefore
 needs an `allowed_chars` that covers its arguments, e.g. `a-zA-Z0-9.:_\-` for
-`gmp-get-hosts`.
+both `gmp-get-hosts` and `insightvm-get-assets`.
 
-**The result is the appliance's own document, unmodified.** `gmp-get-hosts`
-returns the complete `<get_assets_response>` as an output file named
+**For GMP, the result is the appliance's own document, unmodified.** (The
+InsightVM document is cut down; see below.) `gmp-get-hosts` returns the complete `<get_assets_response>` as an output file named
 `openvas-host-assets-<appliance>-<UTC timestamp>.xml` (`application/xml`).
 ToolManager stores it as a source, and the platform's analysis and import rules
 turn it into assets, the same way they handle an Nmap or OpenVAS report file.
@@ -418,6 +420,55 @@ Two things about authentication, both verified against Greenbone OS 25.0.7:
   the tool installation in TachyonikCSM, and is refused cleanly by the appliance
   when wrong.
 
+### Talking to an InsightVM Security Console
+
+`internal/insightvm` is a client for the Security Console's REST API v3. It is
+built from Rapid7's published OpenAPI document for that API
+(`help.rapid7.com/insightvm/en-us/api/api-v3.json`), **not yet against a
+console**: field names, paging and error shapes are the specification's.
+Rapid7's cloud APIs (InsightIDR, the Insight Platform) belong to other products,
+use API keys, and are not what this talks to.
+
+- **Transport:** HTTPS to `https://<console>:3780/api/3/…`, HTTP Basic with the
+  credential linked to the tool installation. Redirects are reported, never
+  followed, so the `Authorization` header cannot be carried elsewhere; a proxy
+  configured in the environment is not used, since the console is on the local
+  network.
+- **Two-factor authentication** is not supported: the API then also wants a
+  time-based `Token` header, which cannot be stored with a credential. Use an
+  account without 2FA; one with it is refused like a wrong password.
+- **Paging:** `GET /api/3/assets?page=N&size=100&sort=id,ASC`, every page. An
+  inventory that ends short of the `totalResources` the console reported, that
+  changes its total while it is read, or that returns an asset twice is refused
+  rather than passed on as the inventory.
+- **The document is cut down, unlike GMP's.** A full InsightVM asset carries its
+  software, services, files, users and scan history and can run to tens of
+  kilobytes, so a few hundred hosts would exceed what a source may be. Each asset
+  keeps `id`, `ip`, `addresses`, `hostName`, `hostNames`, `mac`, `ids`, `os`,
+  `osCertainty`, `osFingerprint` (without its `configurations`), `type`,
+  `riskScore`, `rawRiskScore`, `vulnerabilities` (the counts),
+  `assessedForVulnerabilities` and `assessedForPolicies`, plus one field of the
+  proxy's own: `lastAssessed`, the latest scan or agent date from its history.
+  That is about 1 KB per asset.
+
+The result is one output file, `insightvm-host-assets-<console>-<UTC
+timestamp>.json` (`application/json`):
+
+```json
+{
+  "format": "tachyonik-insightvm-host-assets",
+  "formatVersion": 1,
+  "console": "192.168.178.170:3780",
+  "retrievedAt": "2026-10-13T13:30:05Z",
+  "totalResources": 250,
+  "resources": [ { "id": 282, "ip": "182.34.74.202", "hostName": "…", "…": "…" } ]
+}
+```
+
+`format` names the document as the proxy's, not the console's, so an analysis
+rule can recognise it. The document is capped by the rule's `max_output_bytes`
+while it is built.
+
 ### Credentials and host keys
 
 A built-in receives the credential linked to the tool installation. It arrives
@@ -436,13 +487,24 @@ since handing a password to an unverified host is exactly what pinning prevents.
 A key that changes after being confirmed is refused with a warning that the
 appliance was reinstalled or is being impersonated.
 
+**An InsightVM console's TLS certificate is pinned the same way.** It is
+self-signed on most installations, so chain verification could not succeed and
+is replaced by the pin: the SHA-256 fingerprint of the certificate, in the form
+`SHA256:AB:CD:…` (upper-case hex pairs, as browsers show it), kept where an SSH
+host key is. The pin is checked during the TLS handshake, so with none confirmed
+— or a different one presented — the connection ends before any request, and so
+before the credential, is sent.
+
 ### `credential/test`
 
 An MCP method beside `tools/call`, used by the *Test credential* button in
-TachyonikCSM. It signs in to the appliance with the linked credential and asks
-its version, doing no work there, and answers with a verdict a UI can act on:
-signed in, host key not yet confirmed (with its fingerprint), host key changed,
-or credential refused.
+TachyonikCSM. Its `protocol` names the built-in family: `gmp` signs in to the
+appliance and asks its version; `insightvm` reads a single asset from the
+console, which tests exactly the permission the inventory needs and reports how
+many assets the account can see. Neither does any work on the target. The answer
+is a verdict a UI can act on: signed in, key not yet confirmed (with its
+fingerprint), key changed, or credential refused. `keyKind` says whether the
+fingerprint is an SSH host key (`ssh`) or a TLS certificate (`tls`).
 
 ## Local Network Scan
 
