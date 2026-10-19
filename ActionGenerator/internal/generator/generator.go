@@ -457,7 +457,8 @@ func (g *Generator) buildSharedContext(users []systemmanager.User, primary *syst
 		Actions:      []map[string]interface{}{},
 		Capabilities: jsruntime.CapabilitySet{Automated: []string{}, Manual: []string{}},
 	}
-	statKeys := []string{"critical", "high", "medium", "low", "noThreat", "unmanaged", "total"}
+	statKeys := []string{"critical", "high", "medium", "low", "noThreat", "unmanaged", "total",
+		"hostsSeen30d", "hostsSeen180d", "hostsSeenOlder"}
 	statSum := make(map[string]int, len(statKeys))
 	autoSet := map[string]struct{}{}
 	manualSet := map[string]struct{}{}
@@ -735,7 +736,8 @@ func (g *Generator) addAssets(ctx *jsruntime.RuleContext, user *systemmanager.Us
 
 }
 
-// addAssetStats fills the severity buckets. The zeroed shape on failure is
+// addAssetStats fills the severity buckets and the host assets by last seen.
+// The zeroed shape on failure is
 // deliberate: a rule doing arithmetic on an absent count produces NaN silently.
 func (g *Generator) addAssetStats(ctx *jsruntime.RuleContext, user *systemmanager.User) {
 	// Fetch asset stats (severity buckets + unmanaged/noThreat counts)
@@ -745,6 +747,7 @@ func (g *Generator) addAssetStats(ctx *jsruntime.RuleContext, user *systemmanage
 		ctx.AssetStats = map[string]interface{}{
 			"critical": 0, "high": 0, "medium": 0, "low": 0,
 			"noThreat": 0, "unmanaged": 0, "total": 0,
+			"hostsSeen30d": 0, "hostsSeen180d": 0, "hostsSeenOlder": 0,
 		}
 	} else {
 		ctx.AssetStats = map[string]interface{}{
@@ -755,6 +758,10 @@ func (g *Generator) addAssetStats(ctx *jsruntime.RuleContext, user *systemmanage
 			"noThreat":  stats.NoThreat,
 			"unmanaged": stats.Unmanaged,
 			"total":     stats.Total,
+
+			"hostsSeen30d":   stats.HostsSeen30d,
+			"hostsSeen180d":  stats.HostsSeen180d,
+			"hostsSeenOlder": stats.HostsSeenOlder,
 		}
 	}
 

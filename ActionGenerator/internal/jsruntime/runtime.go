@@ -829,6 +829,7 @@ func registeredUserScenario(questionnaires map[string]interface{}) RuleContext {
 		AssetStats: map[string]interface{}{
 			"critical": 1, "high": 1, "medium": 1, "low": 1,
 			"noThreat": 1, "unmanaged": 2, "total": 4,
+			"hostsSeen30d": 1, "hostsSeen180d": 1, "hostsSeenOlder": 1,
 		},
 		Capabilities: CapabilitySet{Automated: []string{"Asset discovery"}, Manual: []string{"Penetration testing"}},
 		ActionCount:  3,
@@ -907,6 +908,7 @@ func MockScenarios() []MockScenario {
 			AssetStats: map[string]interface{}{
 				"critical": 1, "high": 1, "medium": 0, "low": 0,
 				"noThreat": 0, "unmanaged": 0, "total": 2,
+				"hostsSeen30d": 1, "hostsSeen180d": 1, "hostsSeenOlder": 0,
 			},
 			Capabilities: CapabilitySet{Automated: []string{"Vulnerability detection"}, Manual: []string{}},
 			ActionCount:  1,
@@ -951,6 +953,7 @@ func MockScenarios() []MockScenario {
 			AssetStats: map[string]interface{}{
 				"critical": 0, "high": 0, "medium": 0, "low": 0,
 				"noThreat": 0, "unmanaged": 0, "total": 0,
+				"hostsSeen30d": 0, "hostsSeen180d": 0, "hostsSeenOlder": 0,
 			},
 			Capabilities: CapabilitySet{Automated: []string{}, Manual: []string{}},
 			ActionCount:  0,

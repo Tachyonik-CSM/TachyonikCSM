@@ -54,6 +54,12 @@ type AssetStats struct {
 	NoThreat  int `json:"noThreat"`
 	Unmanaged int `json:"unmanaged"`
 	Total     int `json:"total"`
+
+	// Host assets by how long ago they were last seen: at most 30 days,
+	// more than 30 up to 180 days, more than 180 days (or unreadable).
+	HostsSeen30d   int `json:"hostsSeen30d"`
+	HostsSeen180d  int `json:"hostsSeen180d"`
+	HostsSeenOlder int `json:"hostsSeenOlder"`
 }
 
 // NewClient creates a new AssetManager API client
