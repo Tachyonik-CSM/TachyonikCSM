@@ -5,7 +5,7 @@
 // End-to-end checks of the GMP built-ins against a real appliance, skipped
 // unless one is named. The flow under test is the one a user goes through:
 // test with no key confirmed, confirm the key the appliance offered, test
-// again, then fetch the hosts.
+// again, then fetch the hosts and the latest scan results.
 //
 //	GMP_LIVE_HOST=192.168.178.162 GMP_LIVE_USER=demo GMP_LIVE_PASSWORD=… \
 //	go test ./internal/tools/ -run Live -v
@@ -76,5 +76,27 @@ func TestLiveGMPFlow(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(doc), "<get_assets_response") {
 		t.Errorf("output file is not a get_assets_response: %.80s", doc)
+	}
+
+	// 6. The latest results of each scan task: one get_results_response each.
+	reg = NewRegistry([]config.ToolConfig{{
+		Name: "openvas get latest vulnerability results", Command: builtinGMPGetResults, Timeout: 120, MaxOutputBytes: 50 << 20,
+	}}, nil)
+	res, err = reg.CallTool("openvas get latest vulnerability results", args, secrets)
+	if err != nil || res.IsError {
+		t.Fatalf("gmp-get-results: err=%v result=%+v", err, res)
+	}
+	t.Logf("gmp-get-results: %s", res.Content)
+	if len(res.OutputFiles) == 0 {
+		t.Fatal("no output files: the appliance has no finished scan task?")
+	}
+	for _, f := range res.OutputFiles {
+		doc, err := base64.StdEncoding.DecodeString(f.Data)
+		if err != nil {
+			t.Fatalf("%s is not base64: %v", f.Filename, err)
+		}
+		if !strings.HasPrefix(string(doc), "<get_results_response") {
+			t.Errorf("%s is not a get_results_response: %.80s", f.Filename, doc)
+		}
 	}
 }

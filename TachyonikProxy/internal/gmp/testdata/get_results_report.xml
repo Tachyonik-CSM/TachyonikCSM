@@ -1,0 +1,207 @@
+<get_results_response status="200" status_text="OK"><result id="22d73434-5d77-4503-a9cd-888bdcf0bdf4"><name>CPE Inventory</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:12:46Z</modification_time><comment></comment><creation_time>2026-04-17T16:12:46Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>general/CPE-T</port><nvt oid="1.3.6.1.4.1.25623.1.0.810002"><type>nvt</type><name>CPE Inventory</name><family>Service detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2009-11-18T10:43:05Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=This routine uses information collected by other routines about
+  CPE identities of operating systems, services and applications detected during the scan.
+
+  Note: Some CPEs for specific products might show up twice or more in the output. Background:
+
+  After a product got renamed or a specific vendor was acquired by another one it might happen that
+  a product gets a new CPE within the NVD CPE Dictionary but older entries are kept with the older
+  CPE.|insight=|affected=|impact=|solution=|vuldetect=|solution_type=</tags><solution type=''></solution><refs><ref type="url" id="https://nvd.nist.gov/products/cpe"/></refs></nvt><scan_nvt_version>2022-07-27T10:11:28Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>192.168.178.153|cpe:/a:ietf:secure_shell_protocol:2.0
+192.168.178.153|cpe:/a:openbsd:openssh:10.0p2
+192.168.178.153|cpe:/o:debian:debian_linux:13
+
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="5afce023-00ca-4521-a78b-96b31c62fd66"><name>Hostname Determination Reporting</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:12:46Z</modification_time><comment></comment><creation_time>2026-04-17T16:12:46Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>general/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.108449"><type>nvt</type><name>Hostname Determination Reporting</name><family>Service detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2018-07-05T06:03:26Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=The script reports information on how the hostname of the target
+  was determined.|insight=|affected=|impact=|solution=|vuldetect=|solution_type=</tags><solution type=''></solution></nvt><scan_nvt_version>2022-07-27T10:11:28Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>Hostname determination for IP 192.168.178.153:
+
+Hostname|Source
+debian.fritz.box|Reverse-DNS
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="ff1ba821-6e7b-4ffa-a1f5-90ed5a4a18a2"><name>ICMP Timestamp Reply Information Disclosure</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:06:52Z</modification_time><comment></comment><creation_time>2026-04-17T16:06:52Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>general/icmp</port><nvt oid="1.3.6.1.4.1.25623.1.0.103190"><type>nvt</type><name>ICMP Timestamp Reply Information Disclosure</name><family>General</family><cvss_base>2.1</cvss_base><severities score="2.1"><severity type="cvss_base_v2"><origin></origin><date>2011-07-15T11:32:07Z</date><score>2.1</score><value>AV:L/AC:L/Au:N/C:P/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:L/AC:L/Au:N/C:P/I:N/A:N|summary=The remote host responded to an ICMP timestamp request.|insight=The Timestamp Reply is an ICMP message which replies to a
+  Timestamp message. It consists of the originating timestamp sent by the sender of the Timestamp as
+  well as a receive timestamp and a transmit timestamp.|affected=|impact=This information could theoretically be used to exploit weak
+  time-based random number generators in other services.|solution=Various mitigations are possible:
+
+  - Disable the support for ICMP timestamp on the remote host completely
+
+  - Protect the remote host by a firewall, and block ICMP packets passing through the firewall in
+  either direction (either completely or only for untrusted networks)|vuldetect=Sends an ICMP Timestamp (Type 13) request and checks if a
+  Timestamp Reply (Type 14) is received.|solution_type=Mitigation</tags><solution type='Mitigation'>Various mitigations are possible:
+
+  - Disable the support for ICMP timestamp on the remote host completely
+
+  - Protect the remote host by a firewall, and block ICMP packets passing through the firewall in
+  either direction (either completely or only for untrusted networks)</solution><epss><max_severity><score>0.32154</score><percentile>98.30600</percentile><cve id="CVE-1999-0524"><severity>2.1</severity></cve></max_severity><max_epss><score>0.32154</score><percentile>98.30600</percentile><cve id="CVE-1999-0524"><severity>2.1</severity></cve></max_epss></epss><refs><ref type="cve" id="CVE-1999-0524"/><ref type="url" id="https://datatracker.ietf.org/doc/html/rfc792"/><ref type="url" id="https://datatracker.ietf.org/doc/html/rfc2780"/><ref type="cert-bund" id="CB-K15/1514"/><ref type="cert-bund" id="CB-K14/0632"/><ref type="dfn-cert" id="DFN-CERT-2014-0658"/></refs></nvt><scan_nvt_version>2025-01-21T05:37:33Z</scan_nvt_version><threat>Low</threat><severity>2.1</severity><qod><value>80</value><type></type></qod><description>The following response / ICMP packet has been received:
+- ICMP Type: 14
+- ICMP Code: 0
+</description><original_threat>Low</original_threat><original_severity>2.1</original_severity><compliance>undefined</compliance></result><result id="4a639618-5bcf-40c7-a7ea-ac87b7def2ee"><name>OpenSSH Detection Consolidation</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:06:07Z</modification_time><comment></comment><creation_time>2026-04-17T16:06:07Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>general/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.108577"><type>nvt</type><name>OpenSSH Detection Consolidation</name><family>Product detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2019-05-16T12:08:23Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=Consolidation of OpenSSH detections.|insight=|affected=|impact=|solution=|vuldetect=|solution_type=</tags><solution type=''></solution><refs><ref type="url" id="https://www.openssh.com/"/></refs></nvt><scan_nvt_version>2024-12-13T05:05:32Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>Detected OpenSSH Server
+
+Version:       10.0p2
+Location:      22/tcp
+CPE:           cpe:/a:openbsd:openssh:10.0p2
+
+Concluded from version/product identification result:
+SSH-2.0-OpenSSH_10.0p2 Debian-7+deb13u2
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="62b77653-4eef-4e3b-8d75-4b7a57600d8b"><name>OS Detection Consolidation and Reporting</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:06:07Z</modification_time><comment></comment><creation_time>2026-04-17T16:06:07Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>general/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.105937"><type>nvt</type><name>OS Detection Consolidation and Reporting</name><family>Product detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2016-02-19T10:19:54Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=This script consolidates the OS information detected by several
+  VTs and tries to find the best matching OS.
+
+  Furthermore it reports all previously collected information leading to this best matching OS. It
+  also reports possible additional information which might help to improve the OS detection.
+
+  If any of this information is wrong or could be improved please consider to report these to the
+  referenced community forum.|insight=|affected=|impact=|solution=|vuldetect=|solution_type=</tags><solution type=''></solution><refs><ref type="url" id="https://forum.greenbone.net/c/vulnerability-tests/7"/></refs></nvt><scan_nvt_version>2026-04-10T06:15:25Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>Best matching OS:
+
+OS:           Debian GNU/Linux 13
+Version:      13
+CPE:          cpe:/o:debian:debian_linux:13
+Found by VT:  1.3.6.1.4.1.25623.1.0.105586 (Operating System (OS) Detection (SSH Banner))
+Concluded from SSH banner on port 22/tcp: SSH-2.0-OpenSSH_10.0p2 Debian-7+deb13u2
+Setting key &quot;Host/runs_unixoide&quot; based on this information
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="1d5a6539-e4ef-4d07-9095-4266fcd8260c"><name>PQC Key Exchange (KEX) Algorithm(s) Supported (SSH)</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:08:03Z</modification_time><comment></comment><creation_time>2026-04-17T16:08:03Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><detection><result id="37b66d23-cfa9-49f7-a677-435671476d70"><details><detail><name>product</name><value>cpe:/a:ietf:secure_shell_protocol</value></detail><detail><name>location</name><value>22/tcp</value></detail><detail><name>source_oid</name><value>1.3.6.1.4.1.25623.1.0.105565</value></detail><detail><name>source_name</name><value>SSH Protocol Algorithms Supported</value></detail></details></result></detection><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>22/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.119215"><type>nvt</type><name>PQC Key Exchange (KEX) Algorithm(s) Supported (SSH)</name><family>SSL and TLS</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2025-10-29T11:56:43Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=The remote SSH server is configured to allow / support at least
+  ONE Post-Quantum Cryptography (PQC) key exchange (KEX) algorithm(s).|insight=|affected=|impact=|solution=|vuldetect=Checks the (previously collected) supported KEX algorithms of
+  the remote SSH server.
+
+  Currently the following PQC KEX algorithms are defined / getting used for this check:
+
+  - sntrup761x25519-sha512@openssh.com
+
+  - sntrup761x25519-sha512
+
+  - mlkem768x25519-sha256
+
+  - sntrup4591761x25519-sha512@tinyssh.org
+
+  - ecdh-nistp256-kyber-512r3-sha256-d00@openquantumsafe.org
+
+  - ecdh-nistp384-kyber-768r3-sha384-d00@openquantumsafe.org
+
+  - ecdh-nistp521-kyber-1024r3-sha512-d00@openquantumsafe.org
+
+  - x25519-kyber-512r3-sha256-d00@amazon.com
+
+  - mlkem1024nistp384-sha384
+
+  - mlkem768nistp256-sha256
+
+  - curve25519-frodokem1344-sha512@ssh.com
+
+  - ecdh-nistp521-kyber1024-sha512@ssh.com|solution_type=</tags><solution type=''></solution><refs><ref type="url" id="https://openssh.com/pq.html"/><ref type="url" id="https://quantumcomputingreport.com/openssh-10-0-introduces-default-post-quantum-key-exchange-algorithm/"/><ref type="url" id="https://www.nist.gov/news-events/news/2024/08/nist-releases-first-3-finalized-post-quantum-encryption-standards"/><ref type="url" id="https://csrc.nist.gov/News/2024/postquantum-cryptography-fips-approved"/><ref type="url" id="https://www.forescout.com/blog/post-quantum-cryptography-the-real-risks-of-not-adopting-it/"/><ref type="url" id="https://datatracker.ietf.org/doc/draft-ietf-sshm-mlkem-hybrid-kex/"/><ref type="url" id="https://datatracker.ietf.org/doc/rfc9941/"/></refs></nvt><scan_nvt_version>2025-10-31T05:40:56Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>The remote SSH server supports the following PQC KEX algorithm(s):
+ - mlkem768x25519-sha256
+ - sntrup761x25519-sha512
+ - sntrup761x25519-sha512@openssh.com
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="17ca22b1-19c4-46a3-8c99-bb5ed09161f5"><name>Services</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:06:02Z</modification_time><comment></comment><creation_time>2026-04-17T16:06:02Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>22/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.10330"><type>nvt</type><name>Services</name><family>Service detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2011-01-14T09:12:23Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=This plugin performs service detection.|insight=This plugin attempts to guess which service is running on the
+  remote port(s). For instance, it searches for a web server which could listen on another port than
+  80 or 443 and makes this information available for other check routines.|affected=|impact=|solution=|vuldetect=|solution_type=</tags><solution type=''></solution></nvt><scan_nvt_version>2025-03-05T05:38:53Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>An ssh server is running on this port
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="37b66d23-cfa9-49f7-a677-435671476d70"><name>SSH Protocol Algorithms Supported</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:06:12Z</modification_time><comment></comment><creation_time>2026-04-17T16:06:12Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>22/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.105565"><type>nvt</type><name>SSH Protocol Algorithms Supported</name><family>Service detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2016-03-09T07:39:30Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=This script detects which algorithms are supported by the remote
+  SSH service.|insight=|affected=|impact=|solution=|vuldetect=|solution_type=</tags><solution type=''></solution></nvt><scan_nvt_version>2026-01-21T05:50:46Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>The following options are supported by the remote SSH service:
+
+kex_algorithms:
+mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,ext-info-s,kex-strict-s-v00@openssh.com
+
+server_host_key_algorithms:
+rsa-sha2-512,rsa-sha2-256,ecdsa-sha2-nistp256,ssh-ed25519
+
+encryption_algorithms_client_to_server:
+chacha20-poly1305@openssh.com,aes128-gcm@openssh.com,aes256-gcm@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr
+
+encryption_algorithms_server_to_client:
+chacha20-poly1305@openssh.com,aes128-gcm@openssh.com,aes256-gcm@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr
+
+mac_algorithms_client_to_server:
+umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-64@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512,hmac-sha1
+
+mac_algorithms_server_to_client:
+umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-64@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512,hmac-sha1
+
+compression_algorithms_client_to_server:
+none,zlib@openssh.com
+
+compression_algorithms_server_to_client:
+none,zlib@openssh.com
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="75434f62-8580-4d90-8457-5d2980f7a03f"><name>SSH Protocol Versions Supported</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:06:12Z</modification_time><comment></comment><creation_time>2026-04-17T16:06:12Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>22/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.100259"><type>nvt</type><name>SSH Protocol Versions Supported</name><family>Service detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2009-08-25T19:06:41Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=Identification of SSH protocol versions supported by the remote
+  SSH Server. Also reads the corresponding fingerprints from the service.|insight=|affected=|impact=|solution=|vuldetect=The following versions are tried: 1.33, 1.5, 1.99 and 2.0.|solution_type=</tags><solution type=''></solution></nvt><scan_nvt_version>2024-06-17T08:31:37Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>95</value><type></type></qod><description>The remote SSH Server supports the following SSH Protocol Versions:
+1.99
+2.0
+
+SSHv2 Fingerprint(s):
+ecdsa-sha2-nistp256: 97:ac:1e:67:74:b7:83:e3:67:c3:31:0f:cf:0b:01:a7
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="0b27f4cb-007b-4d9a-aa70-c0cbdd96199d"><name>SSH Server type and version</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:06:07Z</modification_time><comment></comment><creation_time>2026-04-17T16:06:07Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>22/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.10267"><type>nvt</type><name>SSH Server type and version</name><family>Product detection</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2006-03-26T15:55:15Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=This detects the SSH Server&apos;s type and version by connecting to
+  the server and processing the buffer received.|insight=This information gives potential attackers additional
+  information about the system they are attacking. Versions and Types should be omitted where
+  possible.|affected=|impact=|solution=|vuldetect=|solution_type=</tags><solution type=''></solution></nvt><scan_nvt_version>2026-02-13T15:49:08Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>Remote SSH server banner: SSH-2.0-OpenSSH_10.0p2 Debian-7+deb13u2
+Remote SSH supported authentication: password,publickey
+Remote SSH text/login banner: (not available)
+
+This is probably (a):
+
+- OpenSSH
+
+Concluded from remote connection attempt with credentials:
+
+Login:    GBVT
+Password: GBVT
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="8a3a164e-540c-4f5d-b9f4-4f720421c793"><name>TCP Timestamps Information Disclosure</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:07:13Z</modification_time><comment></comment><creation_time>2026-04-17T16:07:13Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>general/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.80091"><type>nvt</type><name>TCP Timestamps Information Disclosure</name><family>General</family><cvss_base>2.6</cvss_base><severities score="2.6"><severity type="cvss_base_v2"><origin></origin><date>2008-10-24T21:33:44Z</date><score>2.6</score><value>AV:N/AC:H/Au:N/C:P/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:H/Au:N/C:P/I:N/A:N|summary=The remote host implements TCP timestamps and therefore allows
+  to compute the uptime.|insight=The remote host implements TCP timestamps, as defined by
+  RFC1323/RFC7323.|affected=TCP implementations that implement RFC1323/RFC7323.|impact=A side effect of this feature is that the uptime of the remote
+  host can sometimes be computed.|solution=To disable TCP timestamps on linux add the line
+  &apos;net.ipv4.tcp_timestamps = 0&apos; to /etc/sysctl.conf. Execute &apos;sysctl -p&apos; to apply the settings at
+  runtime.
+
+  To disable TCP timestamps on Windows execute &apos;netsh int tcp set global timestamps=disabled&apos;
+
+  Starting with Windows Server 2008 and Vista, the timestamp can not be completely disabled.
+
+  The default behavior of the TCP/IP stack on this Systems is to not use the Timestamp options when
+  initiating TCP connections, but use them if the TCP peer that is initiating communication includes
+  them in their synchronize (SYN) segment.
+
+  See the references for more information.|vuldetect=Special IP packets are forged and sent with a little delay in
+  between to the target IP. The responses are searched for a timestamps. If found, the timestamps
+  are reported.|solution_type=Mitigation</tags><solution type='Mitigation'>To disable TCP timestamps on linux add the line
+  &apos;net.ipv4.tcp_timestamps = 0&apos; to /etc/sysctl.conf. Execute &apos;sysctl -p&apos; to apply the settings at
+  runtime.
+
+  To disable TCP timestamps on Windows execute &apos;netsh int tcp set global timestamps=disabled&apos;
+
+  Starting with Windows Server 2008 and Vista, the timestamp can not be completely disabled.
+
+  The default behavior of the TCP/IP stack on this Systems is to not use the Timestamp options when
+  initiating TCP connections, but use them if the TCP peer that is initiating communication includes
+  them in their synchronize (SYN) segment.
+
+  See the references for more information.</solution><refs><ref type="url" id="https://datatracker.ietf.org/doc/html/rfc1323"/><ref type="url" id="https://datatracker.ietf.org/doc/html/rfc7323"/><ref type="url" id="https://web.archive.org/web/20151213072445/http://www.microsoft.com/en-us/download/details.aspx?id=9152"/><ref type="url" id="https://www.fortiguard.com/psirt/FG-IR-16-090"/></refs></nvt><scan_nvt_version>2023-12-15T16:10:08Z</scan_nvt_version><threat>Low</threat><severity>2.6</severity><qod><value>80</value><type></type></qod><description>It was detected that the host implements RFC1323/RFC7323.
+
+The following timestamps were retrieved with a delay of 1 seconds in-between:
+Packet 1: 3407769262
+Packet 2: 3407770324
+</description><original_threat>Low</original_threat><original_severity>2.6</original_severity><compliance>undefined</compliance></result><result id="fe108790-90a7-416d-8be8-a68022418597"><name>Traceroute</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:07:13Z</modification_time><comment></comment><creation_time>2026-04-17T16:07:13Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>general/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.51662"><type>nvt</type><name>Traceroute</name><family>General</family><cvss_base>0.0</cvss_base><severities score="0.0"><severity type="cvss_base_v2"><origin></origin><date>2010-07-08T17:27:45Z</date><score>0.0</score><value>AV:N/AC:L/Au:N/C:N/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:L/Au:N/C:N/I:N/A:N|summary=Collect information about the network route and
+  network distance between the scanner host and the target host.|insight=For internal networks, the distances are usually
+  small, often less than 4 hosts between scanner and target. For public targets the
+  distance is greater and might be 10 hosts or more.|affected=|impact=|solution=|vuldetect=A combination of the protocols ICMP and TCP is used
+  to determine the route. This method is applicable for IPv4 only and it is also known as
+  &apos;traceroute&apos;.|solution_type=</tags><solution type=''></solution></nvt><scan_nvt_version>2022-10-17T11:13:19Z</scan_nvt_version><threat>Log</threat><severity>0.0</severity><qod><value>80</value><type></type></qod><description>Network route from scanner (192.168.178.162) to target (192.168.178.153):
+
+192.168.178.162
+192.168.178.153
+
+Network distance between scanner and target: 2
+</description><original_threat>Log</original_threat><original_severity>0</original_severity><compliance>undefined</compliance></result><result id="bc089a74-5cb0-4a8a-9fc0-3452192c5a16"><name>Weak MAC Algorithm(s) Supported (SSH)</name><owner><name>demo</name></owner><modification_time>2026-04-17T16:08:03Z</modification_time><comment></comment><creation_time>2026-04-17T16:08:03Z</creation_time><report id="0ad580e4-fbe1-441d-ac66-5a715b6cb0fe"/><task id="e031fa18-3cc5-4dd1-984e-ad5dc13534bd"><name>Debian Authenticated</name></task><detection><result id="37b66d23-cfa9-49f7-a677-435671476d70"><details><detail><name>product</name><value>cpe:/a:ietf:secure_shell_protocol</value></detail><detail><name>location</name><value>22/tcp</value></detail><detail><name>source_oid</name><value>1.3.6.1.4.1.25623.1.0.105565</value></detail><detail><name>source_name</name><value>SSH Protocol Algorithms Supported</value></detail></details></result></detection><host>192.168.178.153<asset asset_id="8b723daf-89f5-4433-8d6e-638bb221cd95"/><hostname>debian.fritz.box</hostname></host><port>22/tcp</port><nvt oid="1.3.6.1.4.1.25623.1.0.105610"><type>nvt</type><name>Weak MAC Algorithm(s) Supported (SSH)</name><family>SSL and TLS</family><cvss_base>2.6</cvss_base><severities score="2.6"><severity type="cvss_base_v2"><origin></origin><date>2016-04-19T09:49:32Z</date><score>2.6</score><value>AV:N/AC:H/Au:N/C:P/I:N/A:N</value></severity></severities><tags>cvss_base_vector=AV:N/AC:H/Au:N/C:P/I:N/A:N|summary=The remote SSH server is configured to allow / support weak MAC
+  algorithm(s).|insight=|affected=|impact=|solution=Disable the reported weak MAC algorithm(s).|vuldetect=Checks the supported MAC algorithms (client-to-server and
+  server-to-client) of the remote SSH server.
+
+  Currently weak MAC algorithms are defined as the following:
+
+  - MD5 based algorithms
+
+  - 96-bit based algorithms
+
+  - 64-bit based algorithms
+
+  - &apos;none&apos; algorithm|solution_type=Mitigation</tags><solution type='Mitigation'>Disable the reported weak MAC algorithm(s).</solution><refs><ref type="url" id="https://www.rfc-editor.org/rfc/rfc6668"/><ref type="url" id="https://www.rfc-editor.org/rfc/rfc4253#section-6.4"/></refs></nvt><scan_nvt_version>2024-06-14T05:05:48Z</scan_nvt_version><threat>Low</threat><severity>2.6</severity><qod><value>80</value><type></type></qod><description>The remote SSH server supports the following weak client-to-server MAC algorithm(s):
+
+umac-64-etm@openssh.com
+umac-64@openssh.com
+
+
+The remote SSH server supports the following weak server-to-client MAC algorithm(s):
+
+umac-64-etm@openssh.com
+umac-64@openssh.com
+</description><original_threat>Low</original_threat><original_severity>2.6</original_severity><compliance>undefined</compliance></result><filters id=""><term>report_id=0ad580e4-fbe1-441d-ac66-5a715b6cb0fe apply_overrides=1 min_qod=70 first=1 rows=-1 sort=name</term><keywords><keyword><column>report_id</column><relation>=</relation><value>0ad580e4-fbe1-441d-ac66-5a715b6cb0fe</value></keyword><keyword><column>apply_overrides</column><relation>=</relation><value>1</value></keyword><keyword><column>min_qod</column><relation>=</relation><value>70</value></keyword><keyword><column>first</column><relation>=</relation><value>1</value></keyword><keyword><column>rows</column><relation>=</relation><value>-1</value></keyword><keyword><column>sort</column><relation>=</relation><value>name</value></keyword></keywords></filters><sort><field>name<order>ascending</order></field></sort><results start="1" max="-1"/><result_count>1160<filtered>13</filtered><page>13</page></result_count></get_results_response>

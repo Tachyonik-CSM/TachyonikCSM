@@ -371,10 +371,11 @@ nothing above the proxy needs to know the difference.
 | Command | Does |
 |---|---|
 | `builtin:gmp-get-hosts` | Asks an OPENVAS SCAN appliance for every host asset it holds, over GMP. Reads the appliance's inventory; scans nothing. |
+| `builtin:gmp-get-results` | Asks an OPENVAS SCAN appliance for the results of each scan task's latest report, over GMP. Reads existing reports; starts no scan. |
 | `builtin:insightvm-get-assets` | Asks a Rapid7 InsightVM Security Console for every asset its account may see, over the console's REST API (v3). Reads the console's inventory; scans nothing. See [Talking to an InsightVM Security Console](#talking-to-an-insightvm-security-console). |
 
-Arguments of `gmp-get-hosts`: `host` (required — the appliance), `port`
-(default `22`), `sshUser` (default `gmp`). Arguments of `insightvm-get-assets`:
+Arguments of `gmp-get-hosts` and `gmp-get-results`: `host` (required — the
+appliance), `port` (default `22`), `sshUser` (default `gmp`). Arguments of `insightvm-get-assets`:
 `host` (required — the console), `port` (default `3780`). In the tool rule, mark `host` with
 `"x-tachyonik-from": "installation.host"`. TachyonikCSM then fills it from the
 selected tool installation instead of asking for it.
@@ -383,7 +384,7 @@ A built-in's arguments pass the same checks as a binary tool's before the
 built-in runs: the schema's required fields and enums, the `allowed_chars`
 allowlist, and the flag-injection guard. The rule for a built-in therefore
 needs an `allowed_chars` that covers its arguments, e.g. `a-zA-Z0-9.:_\-` for
-both `gmp-get-hosts` and `insightvm-get-assets`.
+`gmp-get-hosts`, `gmp-get-results` and `insightvm-get-assets`.
 
 **For GMP, the result is the appliance's own document, unmodified.** (The
 InsightVM document is the console's own format, trimmed; see below.) `gmp-get-hosts` returns the complete `<get_assets_response>` as an output file named
@@ -400,6 +401,19 @@ appliance says exist is refused as a partial page rather than passed on as the
 inventory. The document is capped by the rule's `max_output_bytes` (default
 10 MB, roughly 3,000 hosts at about 3 KB each), checked while reading. A larger
 inventory fails with a message to raise the limit.
+
+`gmp-get-results` first asks for every scan task (`<get_tasks usage_type="scan">`,
+so compliance audits are left out) and takes each task's `last_report`; a task
+that has never finished a run is skipped. For each of those reports it sends
+`<get_results details="1" filter="report_id=<id> apply_overrides=1 min_qod=70
+first=1 rows=-1"/>` — overrides applied and a quality of detection of at least
+70 %, the appliance's own default view — and returns the complete
+`<get_results_response>`, unmodified, as one output file per task:
+`openvas-results-<appliance>-<task id>-<UTC timestamp>.xml`. One file per task
+rather than one combined file, because combining them would be a format of the
+proxy's own. A partial page is refused as above. Here `max_output_bytes` caps
+all files of a call together. As a guide, the appliance this was built against
+answered with about 2.7 KB per result (813 results from 3 tasks, 2.2 MB).
 
 ### Talking to an OPENVAS SCAN appliance
 

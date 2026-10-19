@@ -145,3 +145,22 @@ func TestGMPAssetsFilename(t *testing.T) {
 		t.Errorf("an IPv6 address left unsafe characters in %q", got)
 	}
 }
+
+func TestGMPResultsWithoutACredentialSaysSo(t *testing.T) {
+	reg := NewRegistry([]config.ToolConfig{{Name: "openvas get latest vulnerability results", Command: builtinGMPGetResults}}, nil)
+	res, err := reg.CallTool("openvas get latest vulnerability results", map[string]interface{}{"host": "192.0.2.1"}, Secrets{})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, "no credential") {
+		t.Errorf("missing credential not reported plainly: %+v", res)
+	}
+}
+
+func TestGMPResultsFilename(t *testing.T) {
+	at := time.Date(2026, 10, 1, 15, 30, 5, 0, time.FixedZone("CEST", 2*3600))
+	got := gmpResultsFilename("192.168.178.162", "e031fa18-3cc5-4dd1-984e-ad5dc13534bd", at)
+	if want := "openvas-results-192.168.178.162-e031fa18-3cc5-4dd1-984e-ad5dc13534bd-20261001T133005Z.xml"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

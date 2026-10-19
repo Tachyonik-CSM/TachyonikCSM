@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package gmp speaks the Greenbone Management Protocol to an OPENVAS SCAN
-// appliance, so the proxy can ask it what hosts it knows about.
+// appliance, so the proxy can ask it what hosts it knows about and what its
+// latest scans found.
 //
 // It transports and does not interpret. The host inventory is handed on as the
 // appliance's own document, unmodified, and turned into assets by the
@@ -181,6 +182,134 @@ func (c *Client) HostAssets() (*HostAssets, error) {
 			resp.AssetCount.Filtered, len(resp.Assets))
 	}
 	return &HostAssets{Document: raw, Count: len(resp.Assets)}, nil
+}
+
+// TaskReport is a scan task and the report of its latest run.
+type TaskReport struct {
+	TaskID   string
+	TaskName string
+	ReportID string
+}
+
+// lastReportsRequest asks for every scan task. usage_type="scan" leaves out
+// compliance audits, whose results are policy checks rather than
+// vulnerabilities; rows=-1 lifts the paging as for the host assets.
+const lastReportsRequest = `<get_tasks usage_type="scan" filter="first=1 rows=-1"/>`
+
+// LastReports returns each scan task's latest report. A task that has never
+// finished a run has none and is left out. Only identifiers are read here;
+// the results themselves come from Results.
+func (c *Client) LastReports() ([]TaskReport, error) {
+	raw, err := c.exchange("get_tasks", lastReportsRequest)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		XMLName    xml.Name `xml:"get_tasks_response"`
+		Status     string   `xml:"status,attr"`
+		StatusText string   `xml:"status_text,attr"`
+		Tasks      []struct {
+			ID         string `xml:"id,attr"`
+			Name       string `xml:"name"`
+			LastReport struct {
+				Report struct {
+					ID string `xml:"id,attr"`
+				} `xml:"report"`
+			} `xml:"last_report"`
+		} `xml:"task"`
+		TaskCount struct {
+			Filtered int `xml:"filtered"`
+		} `xml:"task_count"`
+	}
+	if err := xml.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("get_tasks: response could not be read as get_tasks_response: %w", err)
+	}
+	if resp.Status != "200" {
+		return nil, &StatusError{Command: "get_tasks", Status: resp.Status, Text: resp.StatusText}
+	}
+	if resp.TaskCount.Filtered > len(resp.Tasks) {
+		return nil, fmt.Errorf("get_tasks: the appliance reports %d tasks but returned %d — the response is a partial page",
+			resp.TaskCount.Filtered, len(resp.Tasks))
+	}
+	var reports []TaskReport
+	for _, t := range resp.Tasks {
+		if t.LastReport.Report.ID == "" {
+			continue
+		}
+		reports = append(reports, TaskReport{TaskID: t.ID, TaskName: t.Name, ReportID: t.LastReport.Report.ID})
+	}
+	return reports, nil
+}
+
+// Results is one report's results as the appliance sent them.
+type Results struct {
+	// Document is the complete <get_results_response>, byte for byte.
+	Document []byte
+	// Count is how many results the document holds.
+	Count int
+}
+
+// resultsFilter selects one report's results the way the appliance's own
+// web interface shows them by default: overrides applied, and only results
+// of a quality of detection of at least 70 %. rows=-1 lifts the paging.
+const resultsFilter = "apply_overrides=1 min_qod=70 first=1 rows=-1"
+
+// Results returns the results of one report, as the appliance's own
+// document. details="1" includes each result's NVT details.
+//
+// As with the host assets, a response holding fewer results than the
+// appliance says match is an error rather than a shorter list.
+func (c *Client) Results(reportID string) (*Results, error) {
+	if !isGMPID(reportID) {
+		return nil, fmt.Errorf("get_results: %q is not a report id", reportID)
+	}
+	raw, err := c.exchange("get_results",
+		`<get_results details="1" filter="report_id=`+reportID+` `+resultsFilter+`"/>`)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		XMLName    xml.Name `xml:"get_results_response"`
+		Status     string   `xml:"status,attr"`
+		StatusText string   `xml:"status_text,attr"`
+		Results    []struct {
+			ID string `xml:"id,attr"`
+		} `xml:"result"`
+		ResultCount struct {
+			Filtered int `xml:"filtered"`
+		} `xml:"result_count"`
+	}
+	if err := xml.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("get_results: response could not be read as get_results_response: %w", err)
+	}
+	if resp.Status != "200" {
+		return nil, &StatusError{Command: "get_results", Status: resp.Status, Text: resp.StatusText}
+	}
+	if resp.ResultCount.Filtered > len(resp.Results) {
+		return nil, fmt.Errorf("get_results: the appliance reports %d results but returned %d — the response is a partial page",
+			resp.ResultCount.Filtered, len(resp.Results))
+	}
+	return &Results{Document: raw, Count: len(resp.Results)}, nil
+}
+
+// isGMPID reports whether s looks like a GMP resource id — a UUID. The id
+// goes into a filter string, so anything else is refused rather than quoted.
+func isGMPID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if r != '-' {
+				return false
+			}
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // exchange writes one request and returns the raw response document.

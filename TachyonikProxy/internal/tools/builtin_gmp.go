@@ -2,13 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// The GMP built-in: an OPENVAS SCAN appliance's host inventory, and the test of
-// the credential that reads it.
+// The GMP built-ins: an OPENVAS SCAN appliance's host inventory, the results
+// of its scan tasks' latest reports, and the test of the credential that reads
+// them.
 //
-// It adapts package gmp to a tool: the appliance's address comes from the call's
-// arguments, the GMP account from the credential linked to the tool
-// installation, and the inventory leaves as an output file that analysis and
-// import rules turn into assets. What is pinned is the appliance's SSH host key.
+// They adapt package gmp to a tool: the appliance's address comes from the
+// call's arguments, the GMP account from the credential linked to the tool
+// installation, and the appliance's documents leave as output files that
+// analysis and import rules turn into assets, vulnerabilities and detections.
+// What is pinned is the appliance's SSH host key.
 
 package tools
 
@@ -26,6 +28,10 @@ import (
 
 // builtinGMPGetHosts is the command naming the OPENVAS SCAN host inventory.
 const builtinGMPGetHosts = BuiltinPrefix + "gmp-get-hosts"
+
+// builtinGMPGetResults is the command naming the results of each scan task's
+// latest report.
+const builtinGMPGetResults = BuiltinPrefix + "gmp-get-results"
 
 // GMPTarget is how to reach an appliance, as the call's arguments describe it.
 type GMPTarget struct {
@@ -141,6 +147,99 @@ func gmpGetHosts(tool *config.ToolConfig, args map[string]interface{}, secrets S
 	}, nil
 }
 
+// gmpGetResults fetches the results of every scan task's latest report and
+// returns each report's document unmodified, one output file per task.
+//
+// One file per task rather than one combined: a combination would be a
+// format of the proxy's own, where the appliance's get_results_response is
+// one the platform's rules can rely on. Tasks that have never finished a run
+// have no report and produce no file.
+//
+// max_output_bytes caps the files together, not each: the limit is on what
+// one call sends back. Each response is read against what is left of it.
+func gmpGetResults(tool *config.ToolConfig, args map[string]interface{}, secrets Secrets) (*ToolResult, error) {
+	target, err := gmpTargetFromArgs(args)
+	if err != nil {
+		return &ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+
+	timeout := time.Duration(tool.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+
+	client, err := DialGMP(target, secrets, timeout)
+	if err != nil {
+		return &ToolResult{Content: describeGMPError(target, err), IsError: true}, nil
+	}
+	defer client.Close()
+
+	limit := tool.MaxOutputBytes
+	if limit <= 0 {
+		limit = defaultMaxOutputBytes
+	}
+	tooLarge := func() *ToolResult {
+		return &ToolResult{
+			Content: fmt.Sprintf("the latest scan results of %s are larger than this tool's max_output_bytes of %d — raise it in the tool rule",
+				target.Host, limit),
+			IsError: true,
+		}
+	}
+
+	client.MaxResponseBytes = limit
+	reports, err := client.LastReports()
+	if err != nil {
+		var big *gmp.ResponseTooLargeError
+		if errors.As(err, &big) {
+			return tooLarge(), nil
+		}
+		return &ToolResult{Content: describeGMPError(target, err), IsError: true}, nil
+	}
+	if len(reports) == 0 {
+		return &ToolResult{Content: fmt.Sprintf("%s has no scan task with a finished report.", target.Host)}, nil
+	}
+
+	now := time.Now()
+	var files []OutputFile
+	used, total := 0, 0
+	for _, r := range reports {
+		client.MaxResponseBytes = limit - used
+		if client.MaxResponseBytes <= 0 {
+			return tooLarge(), nil
+		}
+		res, err := client.Results(r.ReportID)
+		if err != nil {
+			var big *gmp.ResponseTooLargeError
+			if errors.As(err, &big) {
+				return tooLarge(), nil
+			}
+			return &ToolResult{Content: fmt.Sprintf("task %q: %s", r.TaskName, describeGMPError(target, err)), IsError: true}, nil
+		}
+		used += len(res.Document)
+		total += res.Count
+		filename := gmpResultsFilename(target.Host, r.TaskID, now)
+		logger.Infof("gmp-get-results: task %q report %s: %d result(s) from %s, %d bytes, as %s",
+			r.TaskName, r.ReportID, res.Count, target.Host, len(res.Document), filename)
+		files = append(files, OutputFile{
+			Filename: filename,
+			MimeType: "application/xml",
+			Data:     base64.StdEncoding.EncodeToString(res.Document),
+		})
+	}
+
+	return &ToolResult{
+		Content: fmt.Sprintf("Retrieved %d results from the latest reports of %d scan tasks on %s (%d bytes) as %d files.",
+			total, len(reports), target.Host, used, len(files)),
+		OutputFiles: files,
+	}, nil
+}
+
+// gmpResultsFilename names one task's results after the appliance, the task
+// and the time they were fetched.
+func gmpResultsFilename(host, taskID string, at time.Time) string {
+	return fmt.Sprintf("openvas-results-%s-%s-%s.xml", filenameSafe(host), filenameSafe(taskID), at.UTC().Format("20060102T150405Z"))
+}
+
 // gmpAssetsFilename names the document after the appliance and the time it was
 // fetched, so successive inventories of one appliance stay apart. Characters a
 // filename should not carry — an IPv6 address's colons — become dashes.
@@ -167,7 +266,7 @@ func describeGMPError(target GMPTarget, err error) string {
 	if gmp.IsAuthFailure(err) {
 		return fmt.Sprintf("the appliance at %s refused the credential's username or password", target.Host)
 	}
-	return fmt.Sprintf("could not get hosts from %s: %v", target.Host, err)
+	return fmt.Sprintf("could not read from %s: %v", target.Host, err)
 }
 
 // TestGMPCredential checks that the linked credential opens a GMP session on
