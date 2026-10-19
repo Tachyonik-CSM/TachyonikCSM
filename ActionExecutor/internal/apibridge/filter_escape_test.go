@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Tests that a routine's filter reaches the backend exactly as written. It used
-// to be escaped by hand, missing characters such as "%", so a filter holding
-// one arrived garbled.
+// Tests that a routine's filter reaches the backend exactly as written, for the
+// asset list and the source list. It used to be escaped by hand, missing
+// characters such as "%", so a filter holding one arrived garbled; the source
+// list dropped it altogether.
 
 package apibridge
 
@@ -45,5 +46,34 @@ func TestAFilterArrivesIntact(t *testing.T) {
 	}
 	if v := filter.Rules[0].Value; v != "100% & a+b = c?#ä" {
 		t.Errorf("value arrived as %q", v)
+	}
+}
+
+// The source list passes its filter on too; it used to drop it.
+func TestASourceFilterReachesResourceManager(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("filter")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sources":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{}
+	cfg.ResourceManager.URL = srv.URL
+	vm := goja.New()
+	_ = vm.Set("api", New(cfg).Build(vm, AuthContext{UserID: 52}))
+	if _, err := vm.RunString(`api.sources.list({ rules: [{ column: "lastSeenDays", operator: ">",
+		value: "180" }], matchAll: true })`); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var filter struct {
+		Rules []struct{ Column, Operator, Value string } `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(got), &filter); err != nil || len(filter.Rules) != 1 {
+		t.Fatalf("ResourceManager got %q (%v)", got, err)
+	}
+	if r := filter.Rules[0]; r.Column != "lastSeenDays" || r.Operator != ">" || r.Value != "180" {
+		t.Errorf("rule arrived as %+v", r)
 	}
 }

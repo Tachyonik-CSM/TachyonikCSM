@@ -287,10 +287,19 @@ func (b *Bridge) buildSources(vm *goja.Runtime, auth AuthContext) *goja.Object {
 	key := b.cfg.ResourceManager.InternalServiceKey
 
 	obj.Set("list", func(call goja.FunctionCall) goja.Value {
+		// The filter is passed on like the asset list's; it used to be
+		// dropped, so every routine got all sources whatever it asked for.
+		filter := exportArg(call, 0)
+		path := "/api/sources"
+		if filter != nil {
+			if buf, err := json.Marshal(filter); err == nil {
+				path += "?filter=" + url.QueryEscape(string(buf))
+			}
+		}
 		var result struct {
 			Sources []map[string]interface{} `json:"sources"`
 		}
-		if err := b.do("GET", base, "/api/sources", key, auth, nil, &result); err != nil {
+		if err := b.do("GET", base, path, key, auth, nil, &result); err != nil {
 			throwJS(vm, err)
 		}
 		return vm.ToValue(result.Sources)
