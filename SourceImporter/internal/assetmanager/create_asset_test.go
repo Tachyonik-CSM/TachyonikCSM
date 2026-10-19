@@ -25,7 +25,7 @@ func TestCreateAssetAcceptsNewAndExisting(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":7,"name":"192.168.178.1","type":"Host"}`))
 		}))
 		c := NewClient(srv.URL, "")
-		if _, err := c.CreateAsset("192.168.178.1", "Host", 86, "f.xml", 52, ""); err != nil {
+		if _, err := c.CreateAsset("192.168.178.1", "Host", 86, "f.xml", 52, "", ScanCoverage{}); err != nil {
 			t.Errorf("status %d refused: %v", status, err)
 		}
 		srv.Close()
@@ -37,7 +37,7 @@ func TestCreateAssetRefusesAnError(t *testing.T) {
 		http.Error(w, `{"error":"Host asset limit reached (10/10)"}`, http.StatusForbidden)
 	}))
 	defer srv.Close()
-	if _, err := NewClient(srv.URL, "").CreateAsset("192.168.178.1", "Host", 86, "f.xml", 52, ""); err == nil {
+	if _, err := NewClient(srv.URL, "").CreateAsset("192.168.178.1", "Host", 86, "f.xml", 52, "", ScanCoverage{}); err == nil {
 		t.Error("a refused create was taken as success")
 	}
 }

@@ -42,6 +42,17 @@ type CreateAssetRequest struct {
 	SourceLabel string `json:"sourceLabel"` // denormalised filename
 	UserID      int64  `json:"userId,omitempty"`
 	LastSeen    string `json:"lastSeen,omitempty"`
+	// The scan coverage the import read for this asset, left out when the
+	// routine gave none. AssetManager keeps the source's earlier values then.
+	ScanCoverageVerifiedAt   string `json:"scanCoverageVerifiedAt,omitempty"`
+	ScanCoverageIntervalDays int    `json:"scanCoverageIntervalDays,omitempty"`
+}
+
+// ScanCoverage is the optional scan coverage of an asset as an import read
+// it: "" and 0 mean not given.
+type ScanCoverage struct {
+	VerifiedAt   string
+	IntervalDays int
 }
 
 // Asset represents an asset response
@@ -110,14 +121,16 @@ type DeleteStaleResponse struct {
 }
 
 // CreateAsset creates a new asset via the AssetManager API.
-func (c *Client) CreateAsset(name, assetType string, sourceID int64, sourceLabel string, userID int64, lastSeen string) (*Asset, error) {
+func (c *Client) CreateAsset(name, assetType string, sourceID int64, sourceLabel string, userID int64, lastSeen string, coverage ScanCoverage) (*Asset, error) {
 	payload := CreateAssetRequest{
-		Name:        name,
-		Type:        assetType,
-		SourceID:    sourceID,
-		SourceLabel: sourceLabel,
-		UserID:      userID,
-		LastSeen:    lastSeen,
+		Name:                     name,
+		Type:                     assetType,
+		SourceID:                 sourceID,
+		SourceLabel:              sourceLabel,
+		UserID:                   userID,
+		LastSeen:                 lastSeen,
+		ScanCoverageVerifiedAt:   coverage.VerifiedAt,
+		ScanCoverageIntervalDays: coverage.IntervalDays,
 	}
 	var asset Asset
 	// 201 is a new asset, 200 one that already existed and has now been linked

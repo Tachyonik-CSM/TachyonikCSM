@@ -314,7 +314,8 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	assetSuccess := 0
 	assetFail := 0
 	for _, asset := range result.Assets {
-		if _, err := ai.assetManagerAPI.CreateAsset(asset.Name, asset.Type, source.ID, source.Filename, source.UserID, asset.LastSeen); err != nil {
+		if _, err := ai.assetManagerAPI.CreateAsset(asset.Name, asset.Type, source.ID, source.Filename, source.UserID, asset.LastSeen,
+			assetmanager.ScanCoverage{VerifiedAt: asset.ScanCoverageVerifiedAt, IntervalDays: asset.ScanCoverageIntervalDays}); err != nil {
 			logger.Errorf("Failed to create asset %s: %v", asset.Name, err)
 			assetFails.add(asset.Name, err)
 			assetFail++

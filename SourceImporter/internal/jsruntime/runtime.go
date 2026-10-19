@@ -46,6 +46,12 @@ type AssetResult struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	LastSeen string `json:"lastSeen"`
+	// Optional scan coverage the file states: when it was verified that the
+	// asset is in a scheduled vulnerability scan, and that scan's shortest
+	// interval in whole days ("" and 0 when the routine leaves them out).
+	// Passed on as read; nothing here derives them.
+	ScanCoverageVerifiedAt   string `json:"scanCoverageVerifiedAt"`
+	ScanCoverageIntervalDays int    `json:"scanCoverageIntervalDays"`
 }
 
 // VulnerabilityResult represents a vulnerability extracted by the JS import function
@@ -325,9 +331,11 @@ func extractResult(vm *goja.Runtime, val goja.Value) (*ImportResult, error) {
 			for _, item := range assetsSlice {
 				if m, ok := item.(map[string]interface{}); ok {
 					result.Assets = append(result.Assets, AssetResult{
-						Name:     jsmap.String(m, "name"),
-						Type:     jsmap.String(m, "type"),
-						LastSeen: jsmap.String(m, "lastSeen"),
+						Name:                     jsmap.String(m, "name"),
+						Type:                     jsmap.String(m, "type"),
+						LastSeen:                 jsmap.String(m, "lastSeen"),
+						ScanCoverageVerifiedAt:   jsmap.String(m, "scanCoverageVerifiedAt"),
+						ScanCoverageIntervalDays: jsmap.Int(m, "scanCoverageIntervalDays"),
 					})
 				}
 			}
