@@ -60,8 +60,11 @@ type ExecutionRule struct {
 	AI                  *int64  `json:"ai"`
 	ActiveRoutine       *int64  `json:"activeRoutine"`
 	GenerateRequestedAt *string `json:"generateRequestedAt"`
-	CreatedAt           string  `json:"createdAt"`
-	ModifiedAt          string  `json:"modifiedAt"`
+	// Whether the routine the pending request generates is to become the
+	// active one once it passes its checks.
+	GenerateActivate bool   `json:"generateActivate"`
+	CreatedAt        string `json:"createdAt"`
+	ModifiedAt       string `json:"modifiedAt"`
 }
 
 // ListExecutionRulesResponse represents the response from the execution-rules endpoint.
@@ -216,10 +219,16 @@ func (c *Client) GetActionOptionsByRuleID(actionRuleID int64) ([]ActionOption, e
 // The reason used to go only to this daemon's log, where the person who
 // pressed the button never saw it: a failed generation and a successful
 // one looked identical in the UI.
-func (c *Client) ClearGenerateRequest(ruleID int64, reason string) error {
+//
+// activateRoutineID, when not 0, also makes that routine the rule's active
+// one: the request asked for it, and the routine passed its checks.
+func (c *Client) ClearGenerateRequest(ruleID int64, reason string, activateRoutineID int64) error {
 	payload := map[string]interface{}{
 		"clearGenerateRequest": true,
 		"generateError":        reason,
+	}
+	if activateRoutineID != 0 {
+		payload["activeRoutine"] = activateRoutineID
 	}
 	return c.rc.JSON("PATCH", fmt.Sprintf("/api/internal/execution-rules/%d", ruleID), payload, nil, http.StatusOK)
 }

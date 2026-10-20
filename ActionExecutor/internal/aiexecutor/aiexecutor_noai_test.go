@@ -68,7 +68,7 @@ func TestRuntime_NoAIClient_AvailableAndRuns(t *testing.T) {
 func TestGenerateForRule_NoAIClient_ReturnsError(t *testing.T) {
 	ag := New(nil, nil, &config.Config{AI: config.AIConfig{SystemPrompt: "test prompt"}})
 
-	err := ag.GenerateForRule(&aimanager.ExecutionRule{ID: 1, Title: "test"})
+	_, err := ag.GenerateForRule(&aimanager.ExecutionRule{ID: 1, Title: "test"})
 	if err == nil {
 		t.Fatal("expected an error when generating with no AI configured, got nil")
 	}

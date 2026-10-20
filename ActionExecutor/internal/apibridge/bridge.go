@@ -463,7 +463,8 @@ func (b *Bridge) fetchEnrichedTools(auth AuthContext, path string) ([]map[string
 }
 
 // enrichTools attaches automatedCapabilities, manualCapabilities (string
-// arrays), and rules ([{id, name, description}]) to each tool, resolving
+// arrays), and rules ([{id, name, description, automatedCapabilities}]) to
+// each tool, resolving
 // via the tool's toolId → ToolOverview → capability IDs / rule list.
 // Tools without an associated overview (toolId == null, "unmanaged") get
 // empty arrays. The rules array is what ToolManager's /api/tools/execute
@@ -502,6 +503,17 @@ func (b *Bridge) enrichTools(tools []map[string]interface{}, auth AuthContext) (
 		b.cfg.AIManager.InternalServiceKey, auth, nil, &ruleResp); err != nil {
 		return nil, fmt.Errorf("enrich tools (rules): %w", err)
 	}
+	capName := make(map[int64]string, len(capResp.ToolCapabilities))
+	for _, c := range capResp.ToolCapabilities {
+		id, ok := numberAsInt64(c["id"])
+		if !ok {
+			continue
+		}
+		if name, ok := c["name"].(string); ok {
+			capName[id] = name
+		}
+	}
+
 	rulesByOverview := make(map[int64][]map[string]interface{}, len(ruleResp.Tools))
 	for _, r := range ruleResp.Tools {
 		oidRaw, ok := r["toolOverviewId"]
@@ -512,22 +524,25 @@ func (b *Bridge) enrichTools(tools []map[string]interface{}, auth AuthContext) (
 		if !ok {
 			continue
 		}
+		// The rule's own capabilities, so a routine choosing among a tool's
+		// rules picks the one that does what it needs instead of guessing from
+		// the wording. Named like the tool's, through the same lookup.
+		ruleCaps := []string{}
+		if arr, ok := r["automatedCapabilityIds"].([]interface{}); ok {
+			for _, x := range arr {
+				if id, ok := numberAsInt64(x); ok {
+					if name := capName[id]; name != "" {
+						ruleCaps = append(ruleCaps, name)
+					}
+				}
+			}
+		}
 		rulesByOverview[oid] = append(rulesByOverview[oid], map[string]interface{}{
-			"id":          r["id"],
-			"name":        r["name"],
-			"description": r["description"],
+			"id":                    r["id"],
+			"name":                  r["name"],
+			"description":           r["description"],
+			"automatedCapabilities": ruleCaps,
 		})
-	}
-
-	capName := make(map[int64]string, len(capResp.ToolCapabilities))
-	for _, c := range capResp.ToolCapabilities {
-		id, ok := numberAsInt64(c["id"])
-		if !ok {
-			continue
-		}
-		if name, ok := c["name"].(string); ok {
-			capName[id] = name
-		}
 	}
 
 	type ovCaps struct{ auto, manual []string }

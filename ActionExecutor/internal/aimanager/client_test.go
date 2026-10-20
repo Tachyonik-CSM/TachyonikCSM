@@ -52,7 +52,7 @@ func TestTheEndpoints(t *testing.T) {
 		{"options", "GET", "/api/internal/action-options?actionRuleId=8", 200, `{"actionOptions":[]}`,
 			func(c *Client) error { _, err := c.GetActionOptionsByRuleID(8); return err }},
 		{"clear", "PATCH", "/api/internal/execution-rules/4", 200, `{}`,
-			func(c *Client) error { return c.ClearGenerateRequest(4, "no AI") }},
+			func(c *Client) error { return c.ClearGenerateRequest(4, "no AI", 0) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,7 +70,7 @@ func TestTheEndpoints(t *testing.T) {
 
 func TestTheGenerateErrorIsSent(t *testing.T) {
 	c, calls := serve(t, 200, `{}`)
-	_ = c.ClearGenerateRequest(4, "no AI configured")
+	_ = c.ClearGenerateRequest(4, "no AI configured", 0)
 	if b := (*calls)[0].body; !strings.Contains(b, `"clearGenerateRequest":true`) || !strings.Contains(b, `"generateError":"no AI configured"`) {
 		t.Errorf("body %s", b)
 	}

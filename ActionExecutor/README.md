@@ -53,8 +53,11 @@ routine is plain JavaScript, so executions keep working with no AI configured;
 only generation is refused. Which AI generates is decided at generation time —
 the AI set on the rule, otherwise the module's current default — by asking
 AIManager then rather than relying on what was loaded at startup
-(`tachyonik/lib/aipick`). A generated routine is saved to AIManager; an operator
-activates it there.
+(`tachyonik/lib/aipick`). A generated routine is saved to AIManager. It becomes
+the rule's active routine right away when the request asked for it (the
+Execution Rule dialog's "Make new routine the active routine", checked by
+default) and the routine passed its checks; otherwise an operator activates it
+there. A routine that failed its checks never replaces the active one.
 
 ## Building
 
@@ -318,7 +321,8 @@ reason is quoted, capped at 500 characters (`internal/runaudit`).
 | `internal/version` | The build version, injected at build time |
 
 **Events.** A changed rule is reloaded — that rule only; when a generation was requested for it
-(*Generate* in the WebUI), a routine is generated and saved, and the request is
-cleared with the reason if it failed. A feed import reloads every rule and the
+(*Generate* in the Execution Rule dialog), a routine is generated and saved, and the request is
+cleared with the reason if it failed — and, when the request asked for it, with the new routine
+as the rule's active one. A feed import reloads every rule and the
 module settings. A change to the module's AI settings re-resolves the AI. A run
 request is carried out at once, and on every (re)connect the waiting ones are.
