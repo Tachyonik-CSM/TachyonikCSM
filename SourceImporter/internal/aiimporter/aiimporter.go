@@ -169,8 +169,15 @@ func (ai *AIImporter) Rules() map[int64]*aimanager.ImportRule {
 }
 
 // GenerateForRule runs the AI code generation pipeline for a single import rule:
-// generate JS, validate syntax and runtime, save to AIManager.
-func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule) error {
+// generate JS, validate syntax and runtime, save to AIManager. Returns the
+// stored routine when it passed.
+//
+// useNow puts the new routine to work right away. Only for a rule without a
+// routine (start-up). Otherwise which routine runs is the rule's active one:
+// a generation asked to activate it does so through AIManager, whose update
+// loads it here, and one that was not leaves the active routine in use — the
+// new one used to run at once while the rule still named the old one.
+func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule, useNow bool) (*aimanager.Routine, error) {
 	logger.Infof("Generating JS code for import rule %d (%s v%s)...", rule.ID, rule.Type, rule.Version)
 
 	// Which AI, asked of AIManager now rather than remembered from startup:
@@ -179,7 +186,7 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule) error {
 	choice, err := ai.pickAI(rule.AI)
 	if err != nil {
 		logger.Warnf("Cannot generate routine for import rule %d: %v", rule.ID, err)
-		return fmt.Errorf("cannot generate the routine for rule %d: %w", rule.ID, err)
+		return nil, fmt.Errorf("cannot generate the routine for rule %d: %w", rule.ID, err)
 	}
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for import rule %d with %s", rule.ID, choice.Describe())
@@ -198,7 +205,7 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule) error {
 	// Generate JS code
 	code, err := codeGen.Generate(codegenRule)
 	if err != nil {
-		return fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
+		return nil, fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
 	}
 
 	// Compute SHA256
@@ -212,7 +219,7 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule) error {
 	if err := tempExecutor.LoadFromString(code); err != nil {
 		// Store as failed routine in AIManager
 		ai.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", fmt.Sprintf("Syntax validation failed: %v", err))
-		return fmt.Errorf("syntax validation failed for rule %d: %w", rule.ID, err)
+		return nil, fmt.Errorf("syntax validation failed for rule %d: %w", rule.ID, err)
 	}
 
 	// Validate runtime behavior with mock contexts
@@ -225,22 +232,23 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule) error {
 			logMsg += fmt.Sprintf("Validation error %d: %v\n", i+1, e)
 		}
 		ai.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", logMsg)
-		return combinedErr
+		return nil, combinedErr
 	}
 
 	// Store as passed routine in AIManager
 	routine, err := ai.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "passed", "")
 	if err != nil {
-		return fmt.Errorf("failed to store routine for rule %d: %w", rule.ID, err)
+		return nil, fmt.Errorf("failed to store routine for rule %d: %w", rule.ID, err)
 	}
 
-	// Swap executor in map
-	ai.mu.Lock()
-	ai.executors[rule.ID] = tempExecutor
-	ai.mu.Unlock()
+	if useNow {
+		ai.mu.Lock()
+		ai.executors[rule.ID] = tempExecutor
+		ai.mu.Unlock()
+	}
 
 	logger.Infof("Successfully generated and saved JS for import rule %d (%s v%s), routine ID %d", rule.ID, rule.Type, rule.Version, routine.ID)
-	return nil
+	return routine, nil
 }
 
 // storeRoutine creates a routine in AIManager with the given parameters.
@@ -517,14 +525,22 @@ func (ai *AIImporter) HandleRuleChange(event importrulewatcher.RuleChangeEvent) 
 			}
 			// What to report back. Empty means it worked.
 			var failure string
-			if err := ai.GenerateForRule(targetRule); err != nil {
+			// The new routine becomes the active one only when the request
+			// asked for it and the routine passed; a failed one never
+			// replaces what is active.
+			var activate int64
+			routine, err := ai.GenerateForRule(targetRule, false)
+			if err != nil {
 				logger.Errorf("Failed to generate routine for import rule %d: %v", event.RuleID, err)
 				failure = err.Error()
+			} else if targetRule.GenerateActivate && routine != nil {
+				activate = routine.ID
+				logger.Infof("Making routine %d the active routine of import rule %d, as requested", routine.ID, event.RuleID)
 			}
 			// Clear the flag regardless of success/failure to avoid retry
 			// loops, and record the reason so the UI can show it rather than
 			// leaving it in this log.
-			if err := ai.aiMgrClient.ClearGenerateRequest(event.RuleID, failure); err != nil {
+			if err := ai.aiMgrClient.ClearGenerateRequest(event.RuleID, failure, activate); err != nil {
 				logger.Errorf("Failed to clear generate request flag for import rule %d: %v", event.RuleID, err)
 			}
 		} else {

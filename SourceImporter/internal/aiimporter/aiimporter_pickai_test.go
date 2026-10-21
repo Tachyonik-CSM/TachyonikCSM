@@ -55,7 +55,7 @@ func TestGenerationUsesTheCurrentDefaultAndNamesIt(t *testing.T) {
 		return &refusingClient{asked: &askedWith}
 	})
 
-	err := ai.GenerateForRule(&aimanager.ImportRule{ID: 12, Type: "OPENVAS GMP Host Assets XML"})
+	_, err := ai.GenerateForRule(&aimanager.ImportRule{ID: 12, Type: "OPENVAS GMP Host Assets XML"}, false)
 	if err == nil {
 		t.Fatal("generation succeeded against a refusing AI")
 	}

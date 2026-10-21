@@ -291,6 +291,20 @@ writes that summary as JSON into the source's import notes with status "Tested"
 AssetManager** and emits no audit events, so testing a routine has no side
 effects. The WebUI reads the summary and deletes the test source.
 
+### Which routine runs
+
+Each import rule runs its *active* routine. A routine becomes active when an
+administrator picks it, or — when the generation request asked for it ("Make
+new routine the active routine" in the Edit Import Rule dialog) — when it
+passed: SourceImporter then names it the rule's active routine as it clears the
+request, and loads it from AIManager's update like any other change. A routine
+that was not asked to become active is stored and waits to be picked; the
+active one stays in use. Only at start-up, for a rule with no routine at all,
+is a newly generated routine used at once.
+
+A new active routine applies to the next imports. Sources already imported are
+imported again only when the rule's **version** changes (see [Two different "importer versions"](#two-different-importer-versions)).
+
 ### Routine execution limits
 
 **Which AI generates a routine is decided at generation time.** Before each

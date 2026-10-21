@@ -195,7 +195,8 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 		for ruleID, rule := range aiImp.Rules() {
 			if !aiImp.HasExecutor(ruleID) {
 				logger.Infof("Generating missing JS for rule %d (%s) on startup...", ruleID, rule.Type)
-				if err := aiImp.GenerateForRule(rule); err != nil {
+				// No routine at all yet: the new one is used at once.
+				if _, err := aiImp.GenerateForRule(rule, true); err != nil {
 					logger.Errorf("Failed to generate JS for rule %d on startup: %v", ruleID, err)
 				}
 			}
