@@ -410,7 +410,7 @@ func (b *Bridge) buildTools(vm *goja.Runtime, auth AuthContext) *goja.Object {
 	// Signature: api.tools.execute(toolId, arguments, ruleId?). The optional
 	// ruleId is required by ToolManager when the tool's overview has more
 	// than one rule attached; without it the call returns HTTP 400. Returns
-	// the raw {content, isError, storedFiles, errors, warnings} response so routines
+	// the raw {content, isError, storedFiles, storedSources, errors, warnings} response so routines
 	// can branch on isError. Output files are stored as Sources by ToolManager.
 	obj.Set("execute", func(call goja.FunctionCall) goja.Value {
 		idArg := call.Argument(0).Export()

@@ -254,10 +254,13 @@ Every call uses the service key with the run's user id and role
 (`X-User-ID`/`X-User-Role`), so the backend applies that user's permissions — for
 a manual run the user and role AIManager checked when they asked.
 
-`api.tools.execute` returns `{content, isError, storedFiles, errors, warnings}`.
-Output files are stored as sources by ToolManager. A file identical to a source
-already on record is not stored again; it is reported in `warnings`, not
-`errors`, and that source's last-seen date is updated.
+`api.tools.execute` returns `{content, isError, storedFiles, storedSources,
+errors, warnings}`. Output files are stored as sources by ToolManager, and
+`storedSources` gives their ids. A file identical to a source already on record
+is not stored again; it is reported in `warnings`, not `errors`, and that
+source's last-seen date is updated. A newer successful run of the same tool with
+the same arguments replaces the earlier run's sources (ResourceManager), so a
+routine neither stores the output again nor deletes old copies.
 
 Every call blocks and throws a JavaScript error on a non-2xx answer, so a
 routine wraps calls in `try/catch` where it can recover.
