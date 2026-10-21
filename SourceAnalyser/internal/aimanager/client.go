@@ -46,8 +46,7 @@ func NewClient(baseURL, serviceKey string) *Client {
 // AnalysisRule represents an analysis rule from AIManager
 type AnalysisRule struct {
 	ID                  int64   `json:"id"`
-	Description         string  `json:"description"`
-	Type                string  `json:"type"`
+	Type                string  `json:"type"` // names the rule; there is no description any more
 	RulePrompt          string  `json:"rulePrompt"`
 	ActiveRoutine       *int64  `json:"activeRoutine"`
 	AI                  *int64  `json:"ai"` // nullable FK to ais.id; nil = use default AI

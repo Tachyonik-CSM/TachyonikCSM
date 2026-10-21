@@ -25,11 +25,11 @@ type ChatClient interface {
 
 // AnalysisRule contains the fields needed by the code generator.
 // Defined here to avoid a circular import with the api package.
+// The type names the rule (analysis rules no longer have a description).
 type AnalysisRule struct {
-	ID          int64  `json:"id"`
-	Description string `json:"description"`
-	Type        string `json:"type"`
-	RulePrompt  string `json:"rulePrompt"`
+	ID         int64  `json:"id"`
+	Type       string `json:"type"`
+	RulePrompt string `json:"rulePrompt"`
 }
 
 // CodeGenerator generates JavaScript rule code from analysis rules using AI
@@ -64,7 +64,7 @@ func (g *CodeGenerator) Generate(rule AnalysisRule) (string, error) {
 
 	userPrompt := fmt.Sprintf("Generate JavaScript analysis rule code for the following analysis rule:\n\n%s", string(ruleJSON))
 
-	logger.Infof("Sending rule %d (%s) to model %s for code generation...", rule.ID, rule.Description, g.model)
+	logger.Infof("Sending rule %d (%s) to model %s for code generation...", rule.ID, rule.Type, g.model)
 
 	code, err := g.chatClient.Chat(g.model, g.systemPrompt, userPrompt)
 	if err != nil {
@@ -76,7 +76,7 @@ func (g *CodeGenerator) Generate(rule AnalysisRule) (string, error) {
 	code = aicode.Clean(code)
 
 	// Prepend metadata header comment
-	header := fmt.Sprintf("// Analysis Rule ID: %d\n// Description: %s\n// Type: %s\n", rule.ID, rule.Description, rule.Type)
+	header := fmt.Sprintf("// Analysis Rule ID: %d\n// Type: %s\n", rule.ID, rule.Type)
 	code = header + code
 
 	logger.Infof("AI generated %d characters of JavaScript code for rule %d", len(code), rule.ID)

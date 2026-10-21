@@ -91,12 +91,12 @@ func (a *AIAnalyser) LoadRules() error {
 	if logger.GetLevel() <= logger.DEBUG {
 		for _, rule := range a.rules {
 			if _, ok := a.executors[rule.ID]; ok {
-				logger.Debugf("  rule %d (%s): executor loaded", rule.ID, rule.Description)
+				logger.Debugf("  rule %d (%s): executor loaded", rule.ID, rule.Type)
 			} else if rule.ActiveRoutine == nil {
-				logger.Debugf("  rule %d (%s): no executor (no active routine)", rule.ID, rule.Description)
+				logger.Debugf("  rule %d (%s): no executor (no active routine)", rule.ID, rule.Type)
 			} else {
 				logger.Debugf("  rule %d (%s): no executor (active routine %d not 'passed' or failed to load)",
-					rule.ID, rule.Description, *rule.ActiveRoutine)
+					rule.ID, rule.Type, *rule.ActiveRoutine)
 			}
 		}
 	}
@@ -116,9 +116,9 @@ func (a *AIAnalyser) loadExecutorForRuleLocked(rule *aimanager.AnalysisRule) {
 	if rule.ActiveRoutine == nil {
 		if _, existed := a.executors[rule.ID]; existed {
 			delete(a.executors, rule.ID)
-			logger.Infof("Analysis rule %d (%s) has no active routine, executor removed", rule.ID, rule.Description)
+			logger.Infof("Analysis rule %d (%s) has no active routine, executor removed", rule.ID, rule.Type)
 		} else {
-			logger.Debugf("Analysis rule %d (%s) has no active routine", rule.ID, rule.Description)
+			logger.Debugf("Analysis rule %d (%s) has no active routine", rule.ID, rule.Type)
 		}
 		return
 	}
@@ -126,7 +126,7 @@ func (a *AIAnalyser) loadExecutorForRuleLocked(rule *aimanager.AnalysisRule) {
 	routine, err := a.aiMgrClient.GetRoutine(*rule.ActiveRoutine)
 	if err != nil {
 		logger.Errorf("Failed to fetch active routine %d for rule %d (%s): %v",
-			*rule.ActiveRoutine, rule.ID, rule.Description, err)
+			*rule.ActiveRoutine, rule.ID, rule.Type, err)
 		return
 	}
 
@@ -140,12 +140,12 @@ func (a *AIAnalyser) loadExecutorForRuleLocked(rule *aimanager.AnalysisRule) {
 	executor := jsruntime.New(time.Duration(a.cfg.Analyzer.JSExecTimeoutSeconds) * time.Second)
 	if err := executor.LoadFromString(routine.Code); err != nil {
 		logger.Errorf("Failed to load routine %d code for rule %d (%s): %v",
-			routine.ID, rule.ID, rule.Description, err)
+			routine.ID, rule.ID, rule.Type, err)
 		return
 	}
 
 	a.executors[rule.ID] = executor
-	logger.Infof("Loaded routine %d for analysis rule %d (%s)", routine.ID, rule.ID, rule.Description)
+	logger.Infof("Loaded routine %d for analysis rule %d (%s)", routine.ID, rule.ID, rule.Type)
 }
 
 // pickAI chooses the AI that generates a rule's routine, asking AIManager at
@@ -213,7 +213,7 @@ func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
 // GenerateForRule runs the AI code generation pipeline for a single analysis rule:
 // generate JS, validate syntax and runtime, store in AIManager.
 func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule) error {
-	logger.Infof("Generating JS code for analysis rule %d (%s)...", rule.ID, rule.Description)
+	logger.Infof("Generating JS code for analysis rule %d (%s)...", rule.ID, rule.Type)
 
 	// Which AI, asked of AIManager now rather than remembered from startup:
 	// the rule's own, or the module's current default. Named in every error
@@ -230,10 +230,9 @@ func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule) error {
 
 	// Convert to codegen.AnalysisRule
 	codegenRule := codegen.AnalysisRule{
-		ID:          rule.ID,
-		Description: rule.Description,
-		Type:        rule.Type,
-		RulePrompt:  rule.RulePrompt,
+		ID:         rule.ID,
+		Type:       rule.Type,
+		RulePrompt: rule.RulePrompt,
 	}
 
 	// Generate JS code
@@ -281,7 +280,7 @@ func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule) error {
 	a.executors[rule.ID] = tempExecutor
 	a.mu.Unlock()
 
-	logger.Infof("Successfully generated and saved routine for analysis rule %d (%s)", rule.ID, rule.Description)
+	logger.Infof("Successfully generated and saved routine for analysis rule %d (%s)", rule.ID, rule.Type)
 	return nil
 }
 
