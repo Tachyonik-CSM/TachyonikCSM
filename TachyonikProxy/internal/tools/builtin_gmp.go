@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // The GMP built-ins: an OPENVAS SCAN appliance's host inventory, the results
-// of its scan tasks' latest reports, and the test of the credential that reads
-// them.
+// of its scan tasks' latest reports, which hosts it scans on a schedule and
+// how often, and the test of the credential that reads them.
 //
 // They adapt package gmp to a tool: the appliance's address comes from the
 // call's arguments, the GMP account from the credential linked to the tool
@@ -24,6 +24,7 @@ import (
 	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
 	"tachyonik/tachyonikproxy/internal/gmp"
+	"tachyonik/tachyonikproxy/internal/gmp/scancoverage"
 )
 
 // builtinGMPGetHosts is the command naming the OPENVAS SCAN host inventory.
@@ -32,6 +33,10 @@ const builtinGMPGetHosts = BuiltinPrefix + "gmp-get-hosts"
 // builtinGMPGetResults is the command naming the results of each scan task's
 // latest report.
 const builtinGMPGetResults = BuiltinPrefix + "gmp-get-results"
+
+// builtinGMPGetScanCoverage is the command naming the table of which targets
+// the appliance scans on a schedule, and how often.
+const builtinGMPGetScanCoverage = BuiltinPrefix + "gmp-get-scan-coverage"
 
 // GMPTarget is how to reach an appliance, as the call's arguments describe it.
 type GMPTarget struct {
@@ -232,6 +237,86 @@ func gmpGetResults(tool *config.ToolConfig, args map[string]interface{}, secrets
 			total, len(reports), target.Host, used, len(files)),
 		OutputFiles: files,
 	}, nil
+}
+
+// gmpGetScanCoverage works out which targets the appliance scans on a
+// schedule, and the longest wait between two scans of each in days, and
+// returns them as a "target|scan-interval" table (package scancoverage).
+//
+// The one GMP built-in whose file is not the appliance's own document: the
+// answer is spread over the tasks, their targets and their schedules, and the
+// table is what an import rule can apply to assets. A table without rows is
+// still returned — that nothing is scanned on a schedule is an answer too.
+func gmpGetScanCoverage(tool *config.ToolConfig, args map[string]interface{}, secrets Secrets) (*ToolResult, error) {
+	target, err := gmpTargetFromArgs(args)
+	if err != nil {
+		return &ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+
+	timeout := time.Duration(tool.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+
+	client, err := DialGMP(target, secrets, timeout)
+	if err != nil {
+		return &ToolResult{Content: describeGMPError(target, err), IsError: true}, nil
+	}
+	defer client.Close()
+
+	limit := tool.MaxOutputBytes
+	if limit <= 0 {
+		limit = defaultMaxOutputBytes
+	}
+	// The limit is on the documents read here; the table is far smaller.
+	client.MaxResponseBytes = limit
+	fail := func(err error) *ToolResult {
+		var big *gmp.ResponseTooLargeError
+		if errors.As(err, &big) {
+			return &ToolResult{
+				Content: fmt.Sprintf("the %s answer of %s is larger than this tool's max_output_bytes of %d — raise it in the tool rule",
+					big.Command, target.Host, limit),
+				IsError: true,
+			}
+		}
+		return &ToolResult{Content: describeGMPError(target, err), IsError: true}
+	}
+	tasks, err := client.ScanTasks()
+	if err != nil {
+		return fail(err), nil
+	}
+	targets, err := client.Targets()
+	if err != nil {
+		return fail(err), nil
+	}
+
+	now := time.Now()
+	table, err := scancoverage.Build(tasks, targets, now)
+	if err != nil {
+		return &ToolResult{Content: fmt.Sprintf("could not work out the scan coverage of %s: %v", target.Host, err), IsError: true}, nil
+	}
+	for _, s := range table.Skipped {
+		logger.Infof("gmp-get-scan-coverage: task %q left out: %s", s.Task, s.Reason)
+	}
+	doc := table.Render()
+	filename := gmpScanCoverageFilename(target.Host, now)
+	logger.Infof("gmp-get-scan-coverage: %d target(s) from %d scheduled task(s) on %s, %d bytes, as %s",
+		len(table.Rows), table.Scheduled, target.Host, len(doc), filename)
+	return &ToolResult{
+		Content: fmt.Sprintf("Retrieved the scan coverage of %s: %d targets from %d scheduled scan tasks (%d tasks left out) as %s.",
+			target.Host, len(table.Rows), table.Scheduled, len(table.Skipped), filename),
+		OutputFiles: []OutputFile{{
+			Filename: filename,
+			MimeType: "text/plain",
+			Data:     base64.StdEncoding.EncodeToString(doc),
+		}},
+	}, nil
+}
+
+// gmpScanCoverageFilename names the table after the appliance and the time it
+// was worked out.
+func gmpScanCoverageFilename(host string, at time.Time) string {
+	return fmt.Sprintf("openvas-scan-coverage-%s-%s.txt", filenameSafe(host), at.UTC().Format("20060102T150405Z"))
 }
 
 // gmpResultsFilename names one task's results after the appliance, the task

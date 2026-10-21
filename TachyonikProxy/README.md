@@ -372,9 +372,10 @@ nothing above the proxy needs to know the difference.
 |---|---|
 | `builtin:gmp-get-hosts` | Asks an OPENVAS SCAN appliance for every host asset it holds, over GMP. Reads the appliance's inventory; scans nothing. |
 | `builtin:gmp-get-results` | Asks an OPENVAS SCAN appliance for the results of each scan task's latest report, over GMP. Reads existing reports; starts no scan. |
+| `builtin:gmp-get-scan-coverage` | Works out which hosts an OPENVAS SCAN appliance scans on a schedule, and how often, from its scan tasks, targets and schedules, over GMP. Returns a `target\|scan-interval` table. Reads the configuration; starts no scan. |
 | `builtin:insightvm-get-assets` | Asks a Rapid7 InsightVM Security Console for every asset its account may see, over the console's REST API (v3). Reads the console's inventory; scans nothing. See [Talking to an InsightVM Security Console](#talking-to-an-insightvm-security-console). |
 
-Arguments of `gmp-get-hosts` and `gmp-get-results`: `host` (required — the
+Arguments of `gmp-get-hosts`, `gmp-get-results` and `gmp-get-scan-coverage`: `host` (required — the
 appliance), `port` (default `22`), `sshUser` (default `gmp`). Arguments of `insightvm-get-assets`:
 `host` (required — the console), `port` (default `3780`). In the tool rule, mark `host` with
 `"x-tachyonik-from": "installation.host"`. TachyonikCSM then fills it from the
@@ -384,9 +385,11 @@ A built-in's arguments pass the same checks as a binary tool's before the
 built-in runs: the schema's required fields and enums, the `allowed_chars`
 allowlist, and the flag-injection guard. The rule for a built-in therefore
 needs an `allowed_chars` that covers its arguments, e.g. `a-zA-Z0-9.:_\-` for
-`gmp-get-hosts`, `gmp-get-results` and `insightvm-get-assets`.
+`gmp-get-hosts`, `gmp-get-results`, `gmp-get-scan-coverage` and `insightvm-get-assets`.
 
-**For GMP, the result is the appliance's own document, unmodified.** (The
+**For GMP, the result is the appliance's own document, unmodified** — except
+for `gmp-get-scan-coverage`, whose answer no single document of the appliance
+holds (see below). (The
 InsightVM document is the console's own format, trimmed; see below.) `gmp-get-hosts` returns the complete `<get_assets_response>` as an output file named
 `openvas-host-assets-<appliance>-<UTC timestamp>.xml` (`application/xml`).
 ToolManager stores it as a source, and the platform's analysis and import rules
@@ -414,6 +417,32 @@ rather than one combined file, because combining them would be a format of the
 proxy's own. A partial page is refused as above. Here `max_output_bytes` caps
 all files of a call together. As a guide, the appliance this was built against
 answered with about 2.7 KB per result (813 results from 3 tasks, 2.2 MB).
+
+`gmp-get-scan-coverage` asks for every scan task (`<get_tasks usage_type="scan">`,
+which carries each task's target and its schedule's iCalendar text) and every
+target (`<get_targets>`, the hosts and excluded hosts), both as complete lists
+as above, and works out the table in `internal/gmp/scancoverage`:
+
+- **Tasks left out:** without a schedule; whose schedule does not repeat (no
+  `RRULE`) or has no run left (`UNTIL` passed, `COUNT` used up); whose schedule
+  or target is in the trash. Each is logged with the reason.
+- **Interval:** the longest wait between two runs, in whole days rounded up,
+  at least 1 — hourly every *n* hours ⌈*n*/24⌉, daily *n*, weekly 7*n* or the
+  longest gap between the chosen weekdays (Monday to Friday: 3), monthly 31*n*
+  (35 with "the first Monday"), yearly 366*n*. A rule using parts the
+  appliance's scheduler does not write is refused, and the task left out.
+- **Targets:** a comma list becomes one row per entry, in one of four forms: an
+  address, a CIDR network, a full range `first-last` (the short form
+  `10.0.0.1-9` is written out), or a hostname. Excluded addresses are cut out
+  of the spans, so a `/24` with one exclusion becomes two ranges; excluded
+  hostnames cannot be cut out of an address span and are ignored. A target
+  scanned by several tasks keeps the shortest interval.
+
+The output file `openvas-scan-coverage-<appliance>-<UTC timestamp>.txt`
+(`text/plain`) is the header line `target|scan-interval` and one
+`<target>|<days>` line per target, addresses in address order, then hostnames.
+A table without rows is returned too: nothing scanned on a schedule is an
+answer. `max_output_bytes` caps each of the two GMP answers.
 
 ### Talking to an OPENVAS SCAN appliance
 

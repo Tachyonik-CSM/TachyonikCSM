@@ -5,7 +5,7 @@
 // End-to-end checks of the GMP built-ins against a real appliance, skipped
 // unless one is named. The flow under test is the one a user goes through:
 // test with no key confirmed, confirm the key the appliance offered, test
-// again, then fetch the hosts and the latest scan results.
+// again, then fetch the hosts, the latest scan results and the scan coverage.
 //
 //	GMP_LIVE_HOST=192.168.178.162 GMP_LIVE_USER=demo GMP_LIVE_PASSWORD=… \
 //	go test ./internal/tools/ -run Live -v
@@ -98,5 +98,26 @@ func TestLiveGMPFlow(t *testing.T) {
 		if !strings.HasPrefix(string(doc), "<get_results_response") {
 			t.Errorf("%s is not a get_results_response: %.80s", f.Filename, doc)
 		}
+	}
+
+	// 7. The scan coverage: one "target|scan-interval" table.
+	reg = NewRegistry([]config.ToolConfig{{
+		Name: "openvas get scan coverage", Command: builtinGMPGetScanCoverage, Timeout: 60, MaxOutputBytes: 2 << 20,
+	}}, nil)
+	res, err = reg.CallTool("openvas get scan coverage", args, secrets)
+	if err != nil || res.IsError {
+		t.Fatalf("gmp-get-scan-coverage: err=%v result=%+v", err, res)
+	}
+	t.Logf("gmp-get-scan-coverage: %s", res.Content)
+	if len(res.OutputFiles) != 1 {
+		t.Fatalf("got %d output files, want the table", len(res.OutputFiles))
+	}
+	table, err := base64.StdEncoding.DecodeString(res.OutputFiles[0].Data)
+	if err != nil {
+		t.Fatalf("output file is not base64: %v", err)
+	}
+	t.Logf("%s:\n%s", res.OutputFiles[0].Filename, table)
+	if !strings.HasPrefix(string(table), "target|scan-interval\n") {
+		t.Errorf("the table does not start with its header: %.80s", table)
 	}
 }

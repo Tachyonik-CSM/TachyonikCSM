@@ -80,6 +80,8 @@ func callBuiltin(tool *config.ToolConfig, args map[string]interface{}, secrets S
 		run = gmpGetHosts
 	case builtinGMPGetResults:
 		run = gmpGetResults
+	case builtinGMPGetScanCoverage:
+		run = gmpGetScanCoverage
 	case builtinInsightVMGetAssets:
 		run = insightvmGetAssets
 	default:

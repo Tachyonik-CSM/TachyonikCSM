@@ -11,7 +11,9 @@
 // platform's analysis and import rules like any other source — the same way an
 // Nmap or OpenVAS report file is. Format knowledge kept here would sit on
 // customer hosts, change only with a proxy release, and drop whatever this
-// package did not think to keep.
+// package did not think to keep. The one exception, the scan coverage — an
+// answer no single document of the appliance holds — is worked out in the
+// subpackage scancoverage, so this package stays transport alone.
 //
 // Re-implemented rather than shelling out to gvm-tools: the proxy cannot
 // require a Python toolchain on a customer's host, and the protocol is small —
@@ -290,6 +292,82 @@ func (c *Client) Results(reportID string) (*Results, error) {
 			resp.ResultCount.Filtered, len(resp.Results))
 	}
 	return &Results{Document: raw, Count: len(resp.Results)}, nil
+}
+
+// scanTasksRequest asks for every scan task, with its target's id and its
+// schedule — the schedule's iCalendar text included. Compliance audits are
+// left out as for the results.
+const scanTasksRequest = `<get_tasks usage_type="scan" filter="first=1 rows=-1"/>`
+
+// targetsRequest asks for every target, with its hosts and excluded hosts.
+const targetsRequest = `<get_targets filter="first=1 rows=-1"/>`
+
+// ScanTasks returns every scan task as the appliance's own
+// <get_tasks_response>. Unlike the results, this is a document the caller
+// interprets: the scan coverage is worked out from it and the targets.
+func (c *Client) ScanTasks() ([]byte, error) {
+	return c.completeList("get_tasks", scanTasksRequest, "task")
+}
+
+// Targets returns every target as the appliance's own <get_targets_response>.
+func (c *Client) Targets() ([]byte, error) {
+	return c.completeList("get_targets", targetsRequest, "target")
+}
+
+// completeList sends a get_<things> command and returns its response, refused
+// unless the status is 200 and the response holds every item the appliance
+// counts — a partial list read as the whole would look complete.
+func (c *Client) completeList(command, request, item string) ([]byte, error) {
+	raw, err := c.exchange(command, request)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		XMLName    xml.Name
+		Status     string `xml:"status,attr"`
+		StatusText string `xml:"status_text,attr"`
+	}
+	if err := xml.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("%s: response could not be read as %s_response: %w", command, command, err)
+	}
+	if resp.XMLName.Local != command+"_response" {
+		return nil, fmt.Errorf("%s: the appliance answered with <%s>", command, resp.XMLName.Local)
+	}
+	if resp.Status != "200" {
+		return nil, &StatusError{Command: command, Status: resp.Status, Text: resp.StatusText}
+	}
+	var count struct {
+		Filtered *int `xml:"filtered"`
+	}
+	got := 0
+	dec := xml.NewDecoder(bytes.NewReader(raw))
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch el := tok.(type) {
+		case xml.StartElement:
+			depth++
+			if depth == 2 && el.Name.Local == item {
+				got++
+			}
+			if depth == 2 && el.Name.Local == item+"_count" {
+				if err := dec.DecodeElement(&count, &el); err != nil {
+					return nil, fmt.Errorf("%s: unreadable %s_count: %w", command, item, err)
+				}
+				depth--
+			}
+		case xml.EndElement:
+			depth--
+		}
+	}
+	if count.Filtered != nil && *count.Filtered > got {
+		return nil, fmt.Errorf("%s: the appliance reports %d %ss but returned %d — the response is a partial page",
+			command, *count.Filtered, item, got)
+	}
+	return raw, nil
 }
 
 // isGMPID reports whether s looks like a GMP resource id — a UUID. The id
