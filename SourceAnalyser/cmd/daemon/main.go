@@ -261,7 +261,8 @@ func runDaemon(cfg *config.Config) {
 				go func() {
 					for id, rule := range rules {
 						if !ai.HasExecutor(id) {
-							if err := ai.GenerateForRule(rule); err != nil {
+							// No routine at all yet: the new one is used at once.
+							if _, err := ai.GenerateForRule(rule, true); err != nil {
 								logger.Errorf("Failed to generate JS for rule %d: %v", id, err)
 							}
 						}

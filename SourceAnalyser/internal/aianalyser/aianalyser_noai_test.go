@@ -78,7 +78,7 @@ func TestGenerateForRule_NoAIClient_ReturnsError(t *testing.T) {
 	// the nil ChatClient.
 	a := New(nil, nil, &config.Config{AI: config.AIConfig{SystemPrompt: "test prompt"}})
 
-	err := a.GenerateForRule(&aimanager.AnalysisRule{ID: 1, Type: "test"})
+	_, err := a.GenerateForRule(&aimanager.AnalysisRule{ID: 1, Type: "test"}, false)
 	if err == nil {
 		t.Fatal("expected an error when generating with no AI configured, got nil")
 	}

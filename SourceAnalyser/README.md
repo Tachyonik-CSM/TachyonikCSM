@@ -283,8 +283,14 @@ routine implementing it, then validates and stores the routine back in AIManager
 4. **Store** — the routine is saved in AIManager as `passed` or `failed`, with the
    model, a SHA-256 of the code, and any validation log
 
-Only a routine stored as `passed` and marked *active* by an administrator is ever
-loaded for real analysis.
+Only a routine stored as `passed` and marked *active* is ever loaded for real
+analysis. A routine becomes active when an administrator picks it, or — when the
+generation request asked for it ("Make new routine the active routine" in the
+Edit Analysis Rule dialog) — when it passed: SourceAnalyser then names it the
+rule's active routine as it clears the request, and loads it from AIManager's
+update like any other change. A routine that was not asked to become active is
+stored and waits to be picked; the active one stays in use. Only at start-up,
+for a rule with no routine at all, is a newly generated routine used at once.
 
 ### A routine
 

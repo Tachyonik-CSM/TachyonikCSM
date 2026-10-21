@@ -51,6 +51,9 @@ type AnalysisRule struct {
 	ActiveRoutine       *int64  `json:"activeRoutine"`
 	AI                  *int64  `json:"ai"` // nullable FK to ais.id; nil = use default AI
 	GenerateRequestedAt *string `json:"generateRequestedAt"`
+	// Whether the routine the pending request generates is to become the
+	// active one once it passes its checks.
+	GenerateActivate bool `json:"generateActivate"`
 }
 
 // AnalysisRulesResponse represents the list analysis rules API response
@@ -174,8 +177,15 @@ func (c *Client) GetAIByName(name string) (*AIEntry, error) {
 // The reason used to go only to this daemon's log, where the person who
 // pressed the button never saw it: a failed generation and a successful
 // one looked identical in the UI.
-func (c *Client) ClearGenerateRequest(ruleID int64, reason string) error {
+//
+// activateRoutineID, when not 0, is made the rule's active routine in the
+// same request: the generated routine, when the request asked for that and
+// it passed.
+func (c *Client) ClearGenerateRequest(ruleID int64, reason string, activateRoutineID int64) error {
 	payload := map[string]any{"clearGenerateRequest": true, "generateError": reason}
+	if activateRoutineID != 0 {
+		payload["activeRoutine"] = activateRoutineID
+	}
 	path := fmt.Sprintf("/api/internal/analysis-rules/%d", ruleID)
 	return c.rc.JSON("PATCH", path, payload, nil, http.StatusOK)
 }
