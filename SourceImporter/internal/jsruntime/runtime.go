@@ -39,6 +39,10 @@ type ImportContext struct {
 	// For PDFs FileContent holds the extracted text; MimeType lets a routine
 	// branch on the original type independently of the text.
 	MimeType string `json:"mimeType"`
+	// FileDate is when the source file was received (the source's creation
+	// time), RFC 3339 in UTC. A routine uses it where the file states no date
+	// of its own — a scan coverage table's verification, for one.
+	FileDate string `json:"fileDate"`
 }
 
 // AssetResult represents an asset extracted by the JS import function
@@ -71,11 +75,25 @@ type DetectionResult struct {
 	LastSeen string `json:"lastSeen"`
 }
 
+// ScanCoverageResult is one row of a scan coverage table: a target — an
+// address, a CIDR network, an address range or a hostname — scanned on a
+// schedule every IntervalDays. Unlike an asset it names no host that was seen,
+// and a network covers whichever host assets fall inside it, so the rows go to
+// AssetManager as a whole and are matched there.
+type ScanCoverageResult struct {
+	Target                   string `json:"target"`
+	ScanCoverageIntervalDays int    `json:"scanCoverageIntervalDays"`
+	ScanCoverageVerifiedAt   string `json:"scanCoverageVerifiedAt"`
+}
+
 // ImportResult contains all data extracted by the JS import function
 type ImportResult struct {
 	Assets          []AssetResult
 	Vulnerabilities []VulnerabilityResult
 	Detections      []DetectionResult
+	// ScanCoverage is optional: only a routine for a scan coverage table
+	// returns it.
+	ScanCoverage []ScanCoverageResult
 }
 
 // JSImportExecutor manages and executes a JavaScript import function.
@@ -288,6 +306,7 @@ func buildCtxValue(vm *goja.Runtime, ctx ImportContext) goja.Value {
 		"sourceType":  ctx.SourceType,
 		"sourceRef":   ctx.SourceRef,
 		"mimeType":    ctx.MimeType,
+		"fileDate":    ctx.FileDate,
 		"xml":         nil,
 		"json":        nil,
 		"csv":         nil,
@@ -379,11 +398,28 @@ func extractResult(vm *goja.Runtime, val goja.Value) (*ImportResult, error) {
 		}
 	}
 
+	// Extract the scan coverage rows
+	coverageVal := obj.Get("scanCoverage")
+	if coverageVal != nil && !goja.IsUndefined(coverageVal) && !goja.IsNull(coverageVal) {
+		if rows, ok := coverageVal.Export().([]interface{}); ok {
+			for _, item := range rows {
+				if m, ok := item.(map[string]interface{}); ok {
+					result.ScanCoverage = append(result.ScanCoverage, ScanCoverageResult{
+						Target:                   jsmap.String(m, "target"),
+						ScanCoverageIntervalDays: jsmap.Int(m, "scanCoverageIntervalDays"),
+						ScanCoverageVerifiedAt:   jsmap.String(m, "scanCoverageVerifiedAt"),
+					})
+				}
+			}
+		}
+	}
+
 	return result, nil
 }
 
 // ValidateWithMockCtx runs the importFunction against mock contexts to catch runtime errors.
-// Tests with: (1) a mock XML file with hosts/vulnerabilities, (2) empty file content.
+// Tests with: (1) a mock XML file with hosts/vulnerabilities, (2) empty file content,
+// (3) a pipe-separated table (a scan coverage table).
 func (e *JSImportExecutor) ValidateWithMockCtx() []error {
 	e.mu.RLock()
 	code := e.code
@@ -429,6 +465,7 @@ func (e *JSImportExecutor) ValidateWithMockCtx() []error {
 			FileName:   "scan_report.xml",
 			SourceType: "Test Report",
 			SourceRef:  "test_report.xml (ID: 1)",
+			FileDate:   "2025-07-02T08:00:00Z",
 		},
 		// Scenario 2: Empty file content (should not crash)
 		{
@@ -436,6 +473,16 @@ func (e *JSImportExecutor) ValidateWithMockCtx() []error {
 			FileName:    "empty.txt",
 			SourceType:  "Test Report",
 			SourceRef:   "empty.txt (ID: 2)",
+			FileDate:    "2025-07-02T08:00:00Z",
+		},
+		// Scenario 3: A table that is not XML — a scan coverage table, as a
+		// routine for one will see it.
+		{
+			FileContent: "target|scan-interval\n192.168.1.1|7\n192.168.2.0/24|1\n192.168.3.1-192.168.3.20|31\nscanner.example.org|14\n",
+			FileName:    "openvas-scan-coverage-192.168.1.250-20250702T080000Z.txt",
+			SourceType:  "Test Report",
+			SourceRef:   "openvas-scan-coverage-192.168.1.250-20250702T080000Z.txt (ID: 3)",
+			FileDate:    "2025-07-02T08:00:00Z",
 		},
 	}
 

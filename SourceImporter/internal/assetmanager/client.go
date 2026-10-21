@@ -141,6 +141,42 @@ func (c *Client) CreateAsset(name, assetType string, sourceID int64, sourceLabel
 	return &asset, nil
 }
 
+// ScanCoverageEntry is one row of a scan coverage table: a target (an address,
+// a CIDR network, an address range or a hostname), the interval in days it is
+// scanned at, and when that was verified ("" when not stated).
+type ScanCoverageEntry struct {
+	Target       string `json:"target"`
+	IntervalDays int    `json:"scanCoverageIntervalDays"`
+	VerifiedAt   string `json:"scanCoverageVerifiedAt,omitempty"`
+}
+
+// ScanCoverageOutcome is what AssetManager did with a scan coverage table.
+type ScanCoverageOutcome struct {
+	Covered   []int64 `json:"covered"`
+	Created   []int64 `json:"created"`
+	Hostnames int     `json:"hostnames"`
+	Unmatched int     `json:"unmatched"`
+	Invalid   int     `json:"invalid"`
+	Refused   int     `json:"refused"`
+}
+
+// ApplyScanCoverage sends a source's scan coverage table to AssetManager,
+// which applies it to the user's host assets: an address covers (and if need
+// be creates) its host asset, a network or range the known hosts inside it.
+func (c *Client) ApplyScanCoverage(sourceID int64, sourceLabel string, userID int64, entries []ScanCoverageEntry) (*ScanCoverageOutcome, error) {
+	payload := struct {
+		UserID      int64               `json:"userId"`
+		SourceID    int64               `json:"sourceId"`
+		SourceLabel string              `json:"sourceLabel"`
+		Entries     []ScanCoverageEntry `json:"entries"`
+	}{userID, sourceID, sourceLabel, entries}
+	var out ScanCoverageOutcome
+	if err := c.rc.JSON("POST", "/api/assets/scan-coverage", payload, &out, http.StatusOK); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // CreateVulnerability creates a new vulnerability via the AssetManager API.
 func (c *Client) CreateVulnerability(name, host, port string, severity int, source string, userID int64, lastSeen string) (*Vulnerability, error) {
 	payload := CreateVulnerabilityRequest{

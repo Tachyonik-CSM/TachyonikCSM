@@ -299,6 +299,7 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 		SourceType:  source.SourceType,
 		SourceRef:   sourceRef,
 		MimeType:    mimeType,
+		FileDate:    fileDate(source),
 	}
 
 	// Execute JS import function
@@ -351,12 +352,38 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	logger.Infof("AI import results: %d assets (%d failed), %d vulns (%d failed), %d detections (%d failed)",
 		assetSuccess, assetFail, vulnSuccess, vulnFail, detSuccess, detFail)
 
+	// A scan coverage table goes to AssetManager as a whole: a network in it
+	// covers whichever host assets fall inside, which only AssetManager knows.
+	var coverageNote string
+	if len(result.ScanCoverage) > 0 {
+		entries := make([]assetmanager.ScanCoverageEntry, len(result.ScanCoverage))
+		for i, c := range result.ScanCoverage {
+			entries[i] = assetmanager.ScanCoverageEntry{Target: c.Target, IntervalDays: c.ScanCoverageIntervalDays, VerifiedAt: c.ScanCoverageVerifiedAt}
+		}
+		out, err := ai.assetManagerAPI.ApplyScanCoverage(source.ID, source.Filename, source.UserID, entries)
+		if err != nil {
+			return "", fmt.Errorf("the scan coverage of %d targets could not be applied: %w", len(entries), err)
+		}
+		logger.Infof("AI import scan coverage: %d targets, %d assets covered, %d created, %d hostnames skipped, %d ranges without a known host, %d invalid, %d refused by the limit",
+			len(entries), len(out.Covered), len(out.Created), out.Hostnames, out.Unmatched, out.Invalid, out.Refused)
+		coverageNote = fmt.Sprintf("; scan coverage of %d targets applied to %d assets (%d created", len(entries), len(out.Covered), len(out.Created))
+		for _, part := range []struct {
+			n    int
+			what string
+		}{{out.Hostnames, "hostnames skipped"}, {out.Unmatched, "ranges without a known host"}, {out.Invalid, "invalid"}, {out.Refused, "not created: host asset limit"}} {
+			if part.n > 0 {
+				coverageNote += fmt.Sprintf(", %d %s", part.n, part.what)
+			}
+		}
+		coverageNote += ")"
+	}
+
 	if assetSuccess == 0 && len(result.Assets) > 0 {
 		return "", fmt.Errorf("0 of %d assets imported. First error: %s", len(result.Assets), assetFails.summary())
 	}
 
-	importNotes := fmt.Sprintf("Imported %d assets, %d vulnerabilities, %d detections (AI Importer, rule: %s v%s)",
-		assetSuccess, vulnSuccess, detSuccess, rule.Type, rule.Version)
+	importNotes := fmt.Sprintf("Imported %d assets, %d vulnerabilities, %d detections%s (AI Importer, rule: %s v%s)",
+		assetSuccess, vulnSuccess, detSuccess, coverageNote, rule.Type, rule.Version)
 	// A partial import is still an import, but what was left out is said.
 	for _, f := range []struct {
 		kind string
@@ -399,6 +426,8 @@ type ImportTestSummary struct {
 	Vulnerabilities int            `json:"vulnerabilities"`
 	Detections      int            `json:"detections"`
 	AssetTypes      map[string]int `json:"assetTypes"`
+	// ScanCoverage is how many scan coverage rows it would apply.
+	ScanCoverage int `json:"scanCoverage"`
 }
 
 // RunImportTest dry-runs a single import routine (by ID, bypassing rule
@@ -429,6 +458,7 @@ func (ai *AIImporter) RunImportTest(source *rscmanager.Source, routineID int64) 
 		SourceType:  source.SourceType,
 		SourceRef:   fmt.Sprintf("%s (test)", source.Filename),
 		MimeType:    mimeType,
+		FileDate:    fileDate(source),
 	}
 
 	result, err := executor.Execute(ctx)
@@ -450,6 +480,7 @@ func (ai *AIImporter) RunImportTest(source *rscmanager.Source, routineID int64) 
 		Vulnerabilities: len(result.Vulnerabilities),
 		Detections:      len(result.Detections),
 		AssetTypes:      assetTypes,
+		ScanCoverage:    len(result.ScanCoverage),
 	}, nil
 }
 
@@ -592,4 +623,13 @@ func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
 // GetImporterVersion returns the AI importer version string for a given rule.
 func (ai *AIImporter) GetImporterVersion(rule *aimanager.ImportRule) string {
 	return fmt.Sprintf("AI-%s-v%s", rule.Type, rule.Version)
+}
+
+// fileDate is when a source's file was received, as a routine sees it in
+// ctx.fileDate: RFC 3339 in UTC, "" when the source does not say.
+func fileDate(source *rscmanager.Source) string {
+	if source.CreatedAt.IsZero() {
+		return ""
+	}
+	return source.CreatedAt.UTC().Format(time.RFC3339)
 }

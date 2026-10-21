@@ -40,6 +40,23 @@ string-match a PDF's content the same way it would a text file (and branch on
 `ctx.mimeType === "application/pdf"`). Encrypted / scanned / malformed PDFs yield
 empty text and are skipped gracefully.
 
+`ctx.fileDate` is when the source file was received (the source's creation
+time, RFC 3339 in UTC), for a routine that dates something by the file itself.
+
+### Scan coverage tables
+
+Besides `assets`, `vulnerabilities` and `detections`, a routine may return
+`scanCoverage`: rows of `{target, scanCoverageIntervalDays,
+scanCoverageVerifiedAt}` for a file that lists which targets a scanner scans on
+a schedule, such as TachyonikProxy's `target|scan-interval` table. A target is
+an address, a CIDR network, a range or a hostname, as the file states it. The
+rows are sent to AssetManager in one request (`POST /api/assets/scan-coverage`),
+which matches them against the user's host assets: a routine cannot see those,
+and a network covers whichever hosts fall inside it. None of it counts as a
+sighting of a host. The import notes say how many assets were covered and
+created, and how many rows were skipped (hostnames, ranges without a known host,
+invalid rows, the host asset limit).
+
 ## Building
 
 ### Prerequisites
@@ -257,6 +274,8 @@ Analysed → Importing → Imported (success)
 6. **Extract**: Extract asset information from parsed data
 7. **Create Assets**: Insert assets into AssetManager database
    - Duplicate assets are skipped
+   - Scan coverage rows, if the routine returned any, go to AssetManager as one
+     table (see [Scan coverage tables](#scan-coverage-tables))
 8. **Update Status**: Set status to "Imported" or "Import failed"
 
 ### Single-routine import test (dry-run)
@@ -265,7 +284,8 @@ The WebUI's import-routine test panel creates a transient "test source" tagged
 with a `testRoutineId` and `testModule` = "SourceImporter" (status "Analysed").
 The daemon runs **only** that routine — fetched fresh from AIManager, bypassing
 source-type rule matching — against the real file (including PDF text
-extraction), counts the assets/vulnerabilities/detections it *would* produce, and
+extraction), counts the assets/vulnerabilities/detections (and scan coverage
+rows) it *would* produce, and
 writes that summary as JSON into the source's import notes with status "Tested"
 (or an error message with status "Test failed"). It **never writes to
 AssetManager** and emits no audit events, so testing a routine has no side
