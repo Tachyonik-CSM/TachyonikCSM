@@ -207,7 +207,10 @@ func optionsForPrompt(ruleID int64, options []aimanager.ActionOption) []aimanage
 
 // GenerateForRule runs the AI code generation pipeline for a single action rule:
 // generate JS, validate syntax and runtime, save to AIManager, set active routine.
-func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
+// Returns the stored routine when it passed. It is not put to work here:
+// which routine runs is the rule's active one, which this routine becomes
+// only when the request asked for it (see the rule change handler).
+func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aimanager.Routine, error) {
 	logger.Infof("Generating JS code for action rule %d (%s)...", rule.ID, rule.Title)
 
 	// Which AI, asked of AIManager now rather than remembered from startup:
@@ -216,7 +219,7 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 	choice, err := ag.pickAI(rule.AI)
 	if err != nil {
 		logger.Warnf("Cannot generate routine for action rule %d: %v", rule.ID, err)
-		return fmt.Errorf("cannot generate the routine for rule %d: %w", rule.ID, err)
+		return nil, fmt.Errorf("cannot generate the routine for rule %d: %w", rule.ID, err)
 	}
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for action rule %d with %s", rule.ID, choice.Describe())
@@ -240,7 +243,7 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 	// Generate JS code
 	code, err := codeGen.Generate(ruleWithOptions)
 	if err != nil {
-		return fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
+		return nil, fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
 	}
 
 	// Compute SHA256
@@ -253,13 +256,13 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 	tempExecutor := ag.newExecutor()
 	if err := tempExecutor.LoadFromString(code); err != nil {
 		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", fmt.Sprintf("Syntax validation failed: %v", err))
-		return fmt.Errorf("syntax validation failed for rule %d: %w", rule.ID, err)
+		return nil, fmt.Errorf("syntax validation failed for rule %d: %w", rule.ID, err)
 	}
 
 	// Validate rule ID matches
 	if err := codegen.ValidateRuleID(tempExecutor.RuleIDs(), rule.ID); err != nil {
 		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", fmt.Sprintf("Rule ID validation failed: %v", err))
-		return fmt.Errorf("rule ID validation failed for rule %d: %w", rule.ID, err)
+		return nil, fmt.Errorf("rule ID validation failed for rule %d: %w", rule.ID, err)
 	}
 
 	// A rule with no trigger of its own is judged differently: its check() is
@@ -281,17 +284,17 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) error {
 			logger.Errorf("  Validation error %d for rule %d: %v", i+1, rule.ID, e)
 		}
 		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", report.Log())
-		return combinedErr
+		return nil, combinedErr
 	}
 
 	// Store as passed routine in AIManager
 	routine, err := ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "passed", report.Log())
 	if err != nil {
-		return fmt.Errorf("failed to store routine for rule %d: %w", rule.ID, err)
+		return nil, fmt.Errorf("failed to store routine for rule %d: %w", rule.ID, err)
 	}
 
-	logger.Infof("Successfully generated and saved JS for action rule %d (%s), routine ID %d (activate manually via UI)", rule.ID, rule.Title, routine.ID)
-	return nil
+	logger.Infof("Successfully generated and saved JS for action rule %d (%s), routine ID %d", rule.ID, rule.Title, routine.ID)
+	return routine, nil
 }
 
 // storeRoutine creates a routine in AIManager with the given parameters.
@@ -364,14 +367,23 @@ func (ag *AIActionGenerator) HandleRuleChange(event actionrulewatcher.RuleChange
 			}
 			// What to report back. Empty means it worked.
 			var failure string
-			if err := ag.GenerateForRule(targetRule); err != nil {
+			// The new routine becomes the active one only when the request
+			// asked for it and the routine passed; a failed one never
+			// replaces what is active. Activating goes through AIManager,
+			// whose update reloads the active routines here.
+			var activate int64
+			routine, err := ag.GenerateForRule(targetRule)
+			if err != nil {
 				logger.Errorf("Failed to generate routine for rule %d: %v", event.RuleID, err)
 				failure = err.Error()
+			} else if targetRule.GenerateActivate && routine != nil {
+				activate = routine.ID
+				logger.Infof("Making routine %d the active routine of action rule %d, as requested", routine.ID, event.RuleID)
 			}
 			// Clear the flag regardless of success/failure to avoid retry
 			// loops, and record the reason so the UI can show it rather than
 			// leaving it in this log.
-			if err := ag.aiMgrClient.ClearGenerateRequest(event.RuleID, failure); err != nil {
+			if err := ag.aiMgrClient.ClearGenerateRequest(event.RuleID, failure, activate); err != nil {
 				logger.Errorf("Failed to clear generate request flag for rule %d: %v", event.RuleID, err)
 			}
 		} else {

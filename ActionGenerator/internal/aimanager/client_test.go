@@ -156,7 +156,7 @@ func TestGetRoutine(t *testing.T) {
 func TestClearGenerateRequest(t *testing.T) {
 	c, got := serve(t, http.StatusOK, `{}`)
 
-	if err := c.ClearGenerateRequest(7, "no AI configured"); err != nil {
+	if err := c.ClearGenerateRequest(7, "no AI configured", 0); err != nil {
 		t.Fatalf("ClearGenerateRequest: %v", err)
 	}
 	if got.method != "PATCH" || got.path != "/api/internal/action-rules/7" {
@@ -172,6 +172,22 @@ func TestClearGenerateRequest(t *testing.T) {
 	}
 	if payload["generateError"] != "no AI configured" {
 		t.Errorf("payload = %v, want the reason carried", payload)
+	}
+	if _, ok := payload["activeRoutine"]; ok {
+		t.Errorf("payload = %v, want no activeRoutine without one to activate", payload)
+	}
+
+	// A passed routine the request asked to activate goes in the same call.
+	c, got = serve(t, http.StatusOK, `{}`)
+	if err := c.ClearGenerateRequest(7, "", 42); err != nil {
+		t.Fatalf("ClearGenerateRequest: %v", err)
+	}
+	payload = nil
+	if err := json.Unmarshal([]byte(got.body), &payload); err != nil {
+		t.Fatalf("body was not JSON: %s", got.body)
+	}
+	if payload["activeRoutine"] != float64(42) {
+		t.Errorf("payload = %v, want activeRoutine 42", payload)
 	}
 }
 

@@ -294,7 +294,12 @@ Rules live in AIManager, not in this repository. An administrator writes one in
 the WebUI (Settings → Action Rules): a title, a trigger description in plain
 language, and the action to raise when it matches. AIManager stores the rule;
 ActionGenerator asks the configured AI to write a JavaScript routine for it,
-validates the result, and stores it back as the rule's active routine.
+validates the result, and stores it back. The stored routine becomes the rule's
+active routine — the one that runs — when an administrator picks it, or when
+the generation request asked for it ("Make new routine the active routine" in
+the Edit Action Rule dialog): ActionGenerator then names a passed routine the
+active one as it clears the request, and reloads the active routines on
+AIManager's update. A failed routine never replaces the active one.
 
 A routine is an array of rule objects, each with a `check(ctx)` that decides
 whether the rule applies and a `createAction(ctx)` that describes the action to
@@ -659,8 +664,9 @@ ResourceManager ┘                            ↑
 ### Workflow
 
 1. An administrator writes an action rule in the WebUI; AIManager stores it
-2. ActionGenerator asks the AI for a routine, validates it, and stores it back
-   as the rule's active routine
+2. ActionGenerator asks the AI for a routine, validates it, and stores it back;
+   it becomes the rule's active routine when picked, or right away when the
+   request asked for that
 3. A user's data changes; the managers broadcast it
 4. ActionGenerator re-evaluates every rule against every user's context
 5. Matching rules create actions in ActionManager; rules that stopped matching

@@ -59,8 +59,11 @@ type ActionRule struct {
 	AI                  *int64  `json:"ai"`
 	ActiveRoutine       *int64  `json:"activeRoutine"`
 	GenerateRequestedAt *string `json:"generateRequestedAt"`
-	CreatedAt           string  `json:"createdAt"`
-	ModifiedAt          string  `json:"modifiedAt"`
+	// Whether the routine the pending request generates is to become the
+	// active one once it passes its checks.
+	GenerateActivate bool   `json:"generateActivate"`
+	CreatedAt        string `json:"createdAt"`
+	ModifiedAt       string `json:"modifiedAt"`
 	// Options is filled in by the caller before code generation, not by the
 	// action-rules endpoint: the AI has to be told which options this rule
 	// offers and when each applies, so it can write the per-option conditions
@@ -189,10 +192,17 @@ func (c *Client) GetRoutine(id int64) (*Routine, error) {
 
 // ClearGenerateRequest clears a rule's generate flag and records why the
 // generation ended as it did. An empty reason means it succeeded.
-func (c *Client) ClearGenerateRequest(ruleID int64, reason string) error {
+//
+// activateRoutineID, when not 0, is made the rule's active routine in the
+// same request: the generated routine, when the request asked for that and
+// it passed.
+func (c *Client) ClearGenerateRequest(ruleID int64, reason string, activateRoutineID int64) error {
 	payload := map[string]interface{}{
 		"clearGenerateRequest": true,
 		"generateError":        reason,
+	}
+	if activateRoutineID != 0 {
+		payload["activeRoutine"] = activateRoutineID
 	}
 	return c.rc.JSON("PATCH", fmt.Sprintf("/api/internal/action-rules/%d", ruleID), payload, nil, http.StatusOK)
 }
