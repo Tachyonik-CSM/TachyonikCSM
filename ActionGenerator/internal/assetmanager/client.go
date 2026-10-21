@@ -37,6 +37,14 @@ type Asset struct {
 	CreatedAt  string `json:"createdAt"`
 	ModifiedAt string `json:"modifiedAt"`
 	LastSeen   string `json:"lastSeen"`
+	// Null when not known. LastScanned is the newest last seen of the host's
+	// vulnerabilities and detections (Host assets only). The scan coverage —
+	// when it was last verified that the asset is in a scheduled
+	// vulnerability scan, and that scan's shortest interval in days — is
+	// only ever set by an import; null means no source has reported it.
+	LastScanned                  *string `json:"lastScanned"`
+	LastScanCoverageVerification *string `json:"lastScanCoverageVerification"`
+	ScanCoverageIntervalDays     *int    `json:"scanCoverageIntervalDays"`
 }
 
 // ListResponse represents the response from the assets endpoint

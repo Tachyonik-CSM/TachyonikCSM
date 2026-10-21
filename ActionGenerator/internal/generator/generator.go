@@ -693,6 +693,22 @@ func (g *Generator) addProxies(ctx *jsruntime.RuleContext, user *systemmanager.U
 	}
 }
 
+// stringOrNil and intOrNil turn an optional value into what a rule sees: the
+// value, or null. A typed nil pointer would not reach JS as null.
+func stringOrNil(v *string) interface{} {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func intOrNil(v *int) interface{} {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
 // addAssets fills the asset list and derives the highest-scoring one.
 func (g *Generator) addAssets(ctx *jsruntime.RuleContext, user *systemmanager.User) {
 	// Fetch all assets, derive highestScoreAsset locally
@@ -716,6 +732,11 @@ func (g *Generator) addAssets(ctx *jsruntime.RuleContext, user *systemmanager.Us
 				"createdAt":  a.CreatedAt,
 				"modifiedAt": a.ModifiedAt,
 				"lastSeen":   a.LastSeen,
+				// Null rather than left out when not known, so a rule can
+				// test for "not set" and validation sees the field exists.
+				"lastScanned":                  stringOrNil(a.LastScanned),
+				"lastScanCoverageVerification": stringOrNil(a.LastScanCoverageVerification),
+				"scanCoverageIntervalDays":     intOrNil(a.ScanCoverageIntervalDays),
 			}
 			if a.Score > 0 && (highest == nil || a.Score > highest.Score) {
 				highest = a

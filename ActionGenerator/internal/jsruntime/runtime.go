@@ -818,10 +818,10 @@ func registeredUserScenario(questionnaires map[string]interface{}) RuleContext {
 		},
 		AssetCount: 4,
 		Assets: []map[string]interface{}{
-			{"id": int64(10), "name": "db-server", "type": "host", "source": "network.xml", "severity": 9, "score": 95, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-20T00:00:00Z", "lastSeen": "2025-05-20T00:00:00Z"},
-			{"id": int64(11), "name": "app-server", "type": "host", "source": "network.xml", "severity": 5, "score": 60, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-15T00:00:00Z", "lastSeen": "2025-05-15T00:00:00Z"},
-			{"id": int64(12), "name": "old-server", "type": "host", "source": "vuln.nessus", "severity": 8, "score": 70, "createdAt": "2025-01-01T00:00:00Z", "modifiedAt": "2025-01-15T00:00:00Z", "lastSeen": "2024-06-01T00:00:00Z"},
-			{"id": int64(13), "name": "printer", "type": "device", "source": "network.xml", "severity": 1, "score": 10, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-01T00:00:00Z", "lastSeen": "2025-05-01T00:00:00Z"},
+			{"id": int64(10), "name": "db-server", "type": "host", "source": "network.xml", "severity": 9, "score": 95, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-20T00:00:00Z", "lastSeen": "2025-05-20T00:00:00Z", "lastScanned": "2025-05-20T00:00:00Z", "lastScanCoverageVerification": "2025-05-19T00:00:00Z", "scanCoverageIntervalDays": 1},
+			{"id": int64(11), "name": "app-server", "type": "host", "source": "network.xml", "severity": 5, "score": 60, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-15T00:00:00Z", "lastSeen": "2025-05-15T00:00:00Z", "lastScanned": "2025-05-15T00:00:00Z", "lastScanCoverageVerification": "2025-05-14T00:00:00Z", "scanCoverageIntervalDays": 7},
+			{"id": int64(12), "name": "old-server", "type": "host", "source": "vuln.nessus", "severity": 8, "score": 70, "createdAt": "2025-01-01T00:00:00Z", "modifiedAt": "2025-01-15T00:00:00Z", "lastSeen": "2024-06-01T00:00:00Z", "lastScanned": "2024-06-01T00:00:00Z", "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
+			{"id": int64(13), "name": "printer", "type": "device", "source": "network.xml", "severity": 1, "score": 10, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-01T00:00:00Z", "lastSeen": "2025-05-01T00:00:00Z", "lastScanned": nil, "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
 		},
 		HighestScoreAsset: map[string]interface{}{
 			"id": int64(10), "name": "db-server", "type": "host", "source": "network.xml", "severity": 9, "score": 95, "lastSeen": "2025-05-20T00:00:00Z",
@@ -899,8 +899,8 @@ func MockScenarios() []MockScenario {
 			},
 			AssetCount: 2,
 			Assets: []map[string]interface{}{
-				{"id": int64(1), "name": "test-host", "type": "host", "source": "scan1.xml", "severity": 7, "score": 85, "createdAt": "2025-06-01T00:00:00Z", "modifiedAt": "2025-07-01T00:00:00Z", "lastSeen": "2025-07-01T00:00:00Z"},
-				{"id": int64(2), "name": "web-server", "type": "host", "source": "scan2.xml", "severity": 3, "score": 40, "createdAt": "2025-06-15T00:00:00Z", "modifiedAt": "2025-06-15T00:00:00Z", "lastSeen": "2025-06-15T00:00:00Z"},
+				{"id": int64(1), "name": "test-host", "type": "host", "source": "scan1.xml", "severity": 7, "score": 85, "createdAt": "2025-06-01T00:00:00Z", "modifiedAt": "2025-07-01T00:00:00Z", "lastSeen": "2025-07-01T00:00:00Z", "lastScanned": "2025-07-01T00:00:00Z", "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
+				{"id": int64(2), "name": "web-server", "type": "host", "source": "scan2.xml", "severity": 3, "score": 40, "createdAt": "2025-06-15T00:00:00Z", "modifiedAt": "2025-06-15T00:00:00Z", "lastSeen": "2025-06-15T00:00:00Z", "lastScanned": nil, "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
 			},
 			HighestScoreAsset: map[string]interface{}{
 				"id": int64(1), "name": "test-host", "type": "host", "source": "scan1.xml", "severity": 7, "score": 85, "lastSeen": "2025-07-01T00:00:00Z",

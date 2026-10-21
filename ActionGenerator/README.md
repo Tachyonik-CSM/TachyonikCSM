@@ -335,7 +335,7 @@ assembled per user by `buildJSRuleContext`. It carries:
 | `ctx.settings` | What the user configured for themselves: `ai.{research,chat,dashboard}` as a state (`personal` / `internal` / `disabled` / `none`), `ai.personalProviderCount`, and `language` |
 | `ctx.sources`, `ctx.sourceCount`, `ctx.sourceMax` | Uploaded sources and the user's limit |
 | `ctx.proxies` | The user's TachyonikProxy installations from ResourceManager's `/api/internal/proxies`: an array of `{id, name, status, connectionMode, version, lastSeen}`. `status` is `online`, `offline` or `pending_enrollment`; `lastSeen` is `""` for a proxy that never connected. `[]` when the user has none or ResourceManager cannot be reached |
-| `ctx.assets`, `ctx.assetCount`, `ctx.highestScoreAsset` | Assets, and the highest-scoring one (or `null`) |
+| `ctx.assets`, `ctx.assetCount`, `ctx.highestScoreAsset` | Assets, and the highest-scoring one (or `null`). Each asset is `{id, name, type, source, severity, score, createdAt, modifiedAt, lastSeen, lastScanned, lastScanCoverageVerification, scanCoverageIntervalDays}`; the last three are `null` when not known. `scanCoverageIntervalDays` and `lastScanCoverageVerification` are only ever set by an import, so `null` means no source has reported a scheduled vulnerability scan for the asset |
 | `ctx.assetStats` | Severity buckets from AssetManager's `/api/assets/stats`, plus the host assets by last seen: `hostsSeen30d` (≤ 30 days), `hostsSeen180d` (31–180 days), `hostsSeenOlder` (> 180 days or unreadable) |
 | `ctx.capabilities` | `{automated, manual}` capability names covered by the user's configured **tools** |
 | `ctx.actions`, `ctx.actionCount` | Existing actions |
