@@ -242,7 +242,10 @@ type ExecutionRequest struct {
 	ExecutionRuleID int64  `json:"executionRuleId"`
 	UserID          int64  `json:"userId"`
 	UserRole        string `json:"userRole"`
-	Status          string `json:"status"`
+	// The action the run was started from, if any (Execute in its dialog).
+	ActionID    *int64 `json:"actionId,omitempty"`
+	ActionTitle string `json:"actionTitle,omitempty"`
+	Status      string `json:"status"`
 }
 
 // ExecutionOutcome is a finished run as the WebUI shows it.

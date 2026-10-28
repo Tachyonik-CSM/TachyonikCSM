@@ -14,6 +14,7 @@
 package run
 
 import (
+	"errors"
 	"github.com/dop251/goja"
 
 	"tachyonik/actionexecutor/internal/aimanager"
@@ -63,17 +64,25 @@ func New(cfg *config.Config, bridge *apibridge.Bridge, reporter *aimanager.Clien
 // routine that reports status "error" returns that result and no error.
 func (r *Runner) Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, subject string) (*jsruntime.ExecResult, error) {
 	// The routine runs in a VM of its own; its api object is made for that VM.
-	buildAPI := func(vm *goja.Runtime) goja.Value { return r.bridge.Build(vm, auth) }
+	// The tool calls it makes are collected for the audit entry.
+	tools := &apibridge.ToolCallLog{}
+	buildAPI := func(vm *goja.Runtime) goja.Value { return r.bridge.BuildRecording(vm, auth, tools) }
 
 	result, err := rt.Run(buildAPI, r.cfg.ExecutionTimeout())
 	if err != nil {
 		r.report(ruleID, "error", err.Error(), nil)
-		r.record(auth.UserID, subject, err, "", "")
+		r.record(auth.UserID, subject, err, "", "", tools.Calls())
 		return nil, err
 	}
 	r.report(ruleID, result.Status, result.Message, result.Changes)
-	r.record(auth.UserID, subject, nil, result.Status, result.Message)
+	r.record(auth.UserID, subject, nil, result.Status, result.Message, tools.Calls())
 	return result, nil
+}
+
+// RecordNotRun audits a run that could not start — no such rule, no active
+// routine — so a request that came to nothing is on record too.
+func (r *Runner) RecordNotRun(userID int64, subject, why string) {
+	r.record(userID, subject, errors.New(why), "", "", nil)
 }
 
 // report is best-effort: the run has happened whether or not AIManager hears
@@ -89,11 +98,11 @@ func (r *Runner) report(ruleID int64, status, message string, changes []map[stri
 	}
 }
 
-func (r *Runner) record(userID int64, subject string, runErr error, status, message string) {
+func (r *Runner) record(userID int64, subject string, runErr error, status, message string, tools []runaudit.ToolCall) {
 	if r.audit == nil || userID == 0 {
 		return
 	}
-	level, text := runaudit.Entry(subject, runErr, status, message)
+	level, text := runaudit.Entry(subject, runErr, status, message, tools)
 	if err := r.audit.CreateAuditEvent(userID, level, "ActionExecutor", text); err != nil {
 		logger.Warnf("audit event emit failed: %v", err)
 	}

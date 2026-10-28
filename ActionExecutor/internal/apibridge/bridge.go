@@ -110,6 +110,12 @@ func noRedirects(*http.Request, []*http.Request) error {
 // request. The returned goja.Value should be passed as the second argument
 // when invoking the run() function.
 func (b *Bridge) Build(vm *goja.Runtime, auth AuthContext) goja.Value {
+	return b.BuildRecording(vm, auth, nil)
+}
+
+// BuildRecording is Build, with every api.tools.execute call recorded in
+// tools (nil records nothing) — for the run's audit entry.
+func (b *Bridge) BuildRecording(vm *goja.Runtime, auth AuthContext, tools *ToolCallLog) goja.Value {
 	api := vm.NewObject()
 
 	api.Set("user", b.buildUser(vm, auth))
@@ -117,7 +123,7 @@ func (b *Bridge) Build(vm *goja.Runtime, auth AuthContext) goja.Value {
 	api.Set("assets", b.buildAssets(vm, auth))
 	api.Set("actions", b.buildActions(vm, auth))
 	api.Set("sources", b.buildSources(vm, auth))
-	api.Set("tools", b.buildTools(vm, auth))
+	api.Set("tools", b.buildTools(vm, auth, tools))
 	api.Set("vulnerabilities", b.buildVulnerabilities(vm, auth))
 	api.Set("detections", b.buildDetections(vm, auth))
 
@@ -357,7 +363,7 @@ func (b *Bridge) buildSources(vm *goja.Runtime, auth AuthContext) *goja.Object {
 // without dereferencing capability IDs themselves; the join lives here
 // rather than in any single backend endpoint because no current
 // endpoint has the right shape.
-func (b *Bridge) buildTools(vm *goja.Runtime, auth AuthContext) *goja.Object {
+func (b *Bridge) buildTools(vm *goja.Runtime, auth AuthContext, log *ToolCallLog) *goja.Object {
 	obj := vm.NewObject()
 
 	obj.Set("list", func(call goja.FunctionCall) goja.Value {
@@ -410,8 +416,10 @@ func (b *Bridge) buildTools(vm *goja.Runtime, auth AuthContext) *goja.Object {
 	// Signature: api.tools.execute(toolId, arguments, ruleId?). The optional
 	// ruleId is required by ToolManager when the tool's overview has more
 	// than one rule attached; without it the call returns HTTP 400. Returns
-	// the raw {content, isError, storedFiles, storedSources, errors, warnings} response so routines
-	// can branch on isError. Output files are stored as Sources by ToolManager.
+	// the raw {toolName, proxyName, content, isError, storedFiles,
+	// storedSources, errors, warnings} response so routines can branch on
+	// isError. Output files are stored as Sources by ToolManager. Each call is
+	// recorded in log for the run's audit entry.
 	obj.Set("execute", func(call goja.FunctionCall) goja.Value {
 		idArg := call.Argument(0).Export()
 		var toolID int64
@@ -440,8 +448,10 @@ func (b *Bridge) buildTools(vm *goja.Runtime, auth AuthContext) *goja.Object {
 		if err := b.doWith(b.toolClient, "POST", b.cfg.ToolManager.URL, "/api/tools/execute",
 			b.cfg.ToolManager.InternalServiceKey, auth,
 			body, &result); err != nil {
+			log.recordFailed(toolID, err)
 			throwJS(vm, err)
 		}
+		log.recordResult(toolID, result)
 		return vm.ToValue(result)
 	})
 

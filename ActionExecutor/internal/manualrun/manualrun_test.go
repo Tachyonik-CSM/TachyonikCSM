@@ -10,6 +10,7 @@ package manualrun
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -67,17 +68,26 @@ func (f fakeRules) GetRule(id int64) *aimanager.ExecutionRule        { return f.
 func (f fakeRules) GetRuntime(id int64) *jsruntime.JSExecutorRuntime { return f.runtimes[id] }
 
 type fakeRunner struct {
-	mu   sync.Mutex
-	runs []apibridge.AuthContext
-	out  *jsruntime.ExecResult
-	err  error
+	mu       sync.Mutex
+	runs     []apibridge.AuthContext
+	subjects []string
+	notRun   []string // subject: why
+	out      *jsruntime.ExecResult
+	err      error
 }
 
-func (f *fakeRunner) Execute(_ int64, _ *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, _ string) (*jsruntime.ExecResult, error) {
+func (f *fakeRunner) Execute(_ int64, _ *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, subject string) (*jsruntime.ExecResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runs = append(f.runs, auth)
+	f.subjects = append(f.subjects, subject)
 	return f.out, f.err
+}
+
+func (f *fakeRunner) RecordNotRun(_ int64, subject, why string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notRun = append(f.notRun, subject+": "+why)
 }
 
 func ruleFour() fakeRules {
@@ -150,6 +160,10 @@ func TestARuleThatCannotRunIsAnsweredWithTheReason(t *testing.T) {
 		if reqs.done[9] || got.Success || got.Error == "" || len(runner.runs) != 0 {
 			t.Errorf("%s: reported %+v (done=%v), %d run(s)", name, got, reqs.done[9], len(runner.runs))
 		}
+		// Not run, but on record: the audit trail says why.
+		if len(runner.notRun) != 1 || !strings.Contains(runner.notRun[0], got.Error) {
+			t.Errorf("%s: audited %v, want the reason %q", name, runner.notRun, got.Error)
+		}
 	}
 }
 
@@ -159,5 +173,19 @@ func TestAFailedRunIsReportedAsFailed(t *testing.T) {
 	New(reqs, ruleFour(), runner).OnRequested(executionrulewatcher.RunRequest{ID: 9})
 	if got := reqs.reported[9]; reqs.done[9] || got.Error != "no executors loaded" {
 		t.Errorf("reported %+v (done=%v)", got, reqs.done[9])
+	}
+}
+
+// Started from an action, the run is named by the action and the rule.
+func TestARunFromAnActionIsNamedByIt(t *testing.T) {
+	id := int64(812)
+	fromAction := request
+	fromAction.ActionID, fromAction.ActionTitle = &id, "Retrieve the host assets of the office"
+	reqs := newFakeRequests(fromAction)
+	runner := &fakeRunner{out: &jsruntime.ExecResult{Status: "success"}}
+	New(reqs, ruleFour(), runner).OnRequested(executionrulewatcher.RunRequest{ID: 9})
+	want := `Action "Retrieve the host assets of the office" (id 812) executed manually by execution rule "Retrieve the host assets" (id 4)`
+	if len(runner.subjects) != 1 || runner.subjects[0] != want {
+		t.Errorf("subjects %q, want %q", runner.subjects, want)
 	}
 }

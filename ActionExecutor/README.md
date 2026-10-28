@@ -195,7 +195,7 @@ The outcome has the shape the Execute dialog shows:
 {
   "success": true,
   "status": "success",
-  "message": "Retrieved 23 host assets from 192.168.178.162 …",
+  "message": "Retrieved 25 asset records (23 distinct hosts) from 192.168.178.162 …",
   "changes": []
 }
 ```
@@ -254,7 +254,7 @@ Every call uses the service key with the run's user id and role
 (`X-User-ID`/`X-User-Role`), so the backend applies that user's permissions — for
 a manual run the user and role AIManager checked when they asked.
 
-`api.tools.execute` returns `{content, isError, storedFiles, storedSources,
+`api.tools.execute` returns `{toolName, proxyName, content, isError, storedFiles, storedSources,
 errors, warnings}`. Output files are stored as sources by ToolManager, and
 `storedSources` gives their ids. A file identical to a source already on record
 is not stored again; it is reported in `warnings`, not `errors`, and that
@@ -292,17 +292,31 @@ routine going on in its place. A deleted rule is unloaded at once.
 
 ## Audit Trail
 
-Each run writes one entry to the user's audit trail in SystemManager:
+Each run writes one entry to the user's audit trail in SystemManager (module
+`ActionExecutor`): what ran, how it ended, and which tools it started where.
 
 | Run | Level | Text |
 | --- | --- | --- |
-| Manual, succeeded | Info | `Execution rule "…" (id 4) run manually (status success)` |
-| Manual, failed | Warning | `Execution rule "…" (id 4) run manually: failed (<reason>)` |
-| Automatic, succeeded | Info | `Action "…" (id 42) executed automatically by execution rule 4 (status success)` |
-| Automatic, failed | Warning | `Action "…" (id 42) executed automatically by execution rule 4: failed (<reason>)` |
+| Manual, from an action | Info | `Action "…" (id 812) executed manually by execution rule "…" (id 4): success — <message>. Tools: gmp-get-results @ office (ok)` |
+| Manual, on the rule | Info | `Execution rule "…" (id 4) run manually: success — <message>` |
+| Automatic | Info | `Action "…" (id 42) executed automatically by execution rule 4: success — <message>. Tools: …` |
+| Any, failed | Warning | `<subject>: failed (<reason>). Tools: …` |
+| Manual, could not start | Warning | `<subject>: failed (execution rule 4 (…) has no active routine)`, or `Execution rule 4 run manually: failed (execution rule 4 not found)` |
 
-A run fails when the routine throws or when it reports `status: "error"`; the
-reason is quoted, capped at 500 characters (`internal/runaudit`).
+- **Status and message.** A success gives the routine's status and, when it
+  reported one, its message. A run fails when the routine throws or reports
+  `status: "error"`; the reason is quoted. Reason and message are one line,
+  capped at 500 characters (`internal/runaudit`).
+- **Action.** A manual run started with Execute in an action's dialog names
+  the action. Its id and title come with the run request from AIManager,
+  because the action is deleted the moment the run is requested.
+- **Tools.** Every `api.tools.execute` call of the run is listed, in order, as
+  `<tool> @ <proxy> (ok)` or `(failed: <reason, at most 120 characters>)`:
+  failed when the tool reported an error or its output could not be stored.
+  A call ToolManager refused is listed as `tool <id>`. At most 10 are listed,
+  the rest counted (`and 3 more`). The names come from ToolManager's answer
+  (`toolName`, `proxyName`); `apibridge.ToolCallLog` collects them.
+- **Tools started by hand** (Tools → Execute) are audited by ToolManager.
 
 ## Architecture
 

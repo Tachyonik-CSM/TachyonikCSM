@@ -38,6 +38,7 @@ type Requests interface {
 // Runner runs one routine for one user and records it (package run).
 type Runner interface {
 	Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, subject string) (*jsruntime.ExecResult, error)
+	RecordNotRun(userID int64, subject, why string)
 }
 
 // Rules are the loaded execution rules and their routines (package aiexecutor).
@@ -102,16 +103,24 @@ func (h *Handler) handle(id int64) {
 func (h *Handler) run(req *aimanager.ExecutionRequest) (bool, aimanager.ExecutionOutcome) {
 	rule := h.rules.GetRule(req.ExecutionRuleID)
 	if rule == nil {
-		return false, failure(fmt.Sprintf("execution rule %d not found", req.ExecutionRuleID))
+		why := fmt.Sprintf("execution rule %d not found", req.ExecutionRuleID)
+		h.runner.RecordNotRun(req.UserID, runaudit.UnknownRuleSubject(req.ExecutionRuleID), why)
+		return false, failure(why)
+	}
+	subject := runaudit.ManualSubject(rule.Title, rule.ID)
+	if req.ActionID != nil {
+		subject = runaudit.ManualActionSubject(req.ActionTitle, *req.ActionID, rule.Title, rule.ID)
 	}
 	rt := h.rules.GetRuntime(req.ExecutionRuleID)
 	if rt == nil {
-		return false, failure(fmt.Sprintf("execution rule %d (%s) has no active routine", rule.ID, rule.Title))
+		why := fmt.Sprintf("execution rule %d (%s) has no active routine", rule.ID, rule.Title)
+		h.runner.RecordNotRun(req.UserID, subject, why)
+		return false, failure(why)
 	}
 
 	logger.Infof("manualrun: running rule %d for user %d (request %d)", rule.ID, req.UserID, req.ID)
 	auth := apibridge.AuthContext{UserID: req.UserID, UserRole: req.UserRole}
-	result, err := h.runner.Execute(rule.ID, rt, auth, runaudit.ManualSubject(rule.Title, rule.ID))
+	result, err := h.runner.Execute(rule.ID, rt, auth, subject)
 	if err != nil {
 		logger.Errorf("manualrun: rule %d for user %d failed: %v", rule.ID, req.UserID, err)
 		return false, failure(err.Error())
