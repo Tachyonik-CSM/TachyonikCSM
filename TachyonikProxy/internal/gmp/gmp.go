@@ -139,8 +139,13 @@ func (c *Client) Version() (string, error) {
 type HostAssets struct {
 	// Document is the complete <get_assets_response>, byte for byte.
 	Document []byte
-	// Count is how many host assets the document holds.
+	// Count is how many host asset records the document holds.
 	Count int
+	// Hosts is how many distinct hosts those records are, by the asset's
+	// name (its address). The appliance can hold several records of one host
+	// — created by different scans — and the platform's import merges them
+	// into one asset, so this is the number of assets an import yields.
+	Hosts int
 }
 
 // hostAssetsRequest asks for every host asset with its details.
@@ -167,7 +172,8 @@ func (c *Client) HostAssets() (*HostAssets, error) {
 		Status     string   `xml:"status,attr"`
 		StatusText string   `xml:"status_text,attr"`
 		Assets     []struct {
-			ID string `xml:"id,attr"`
+			ID   string `xml:"id,attr"`
+			Name string `xml:"name"`
 		} `xml:"asset"`
 		AssetCount struct {
 			Filtered int `xml:"filtered"`
@@ -183,7 +189,11 @@ func (c *Client) HostAssets() (*HostAssets, error) {
 		return nil, fmt.Errorf("get_assets: the appliance reports %d host assets but returned %d — the response is a partial page",
 			resp.AssetCount.Filtered, len(resp.Assets))
 	}
-	return &HostAssets{Document: raw, Count: len(resp.Assets)}, nil
+	hosts := map[string]bool{}
+	for _, a := range resp.Assets {
+		hosts[strings.TrimSpace(a.Name)] = true
+	}
+	return &HostAssets{Document: raw, Count: len(resp.Assets), Hosts: len(hosts)}, nil
 }
 
 // TaskReport is a scan task and the report of its latest run.

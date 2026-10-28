@@ -69,6 +69,9 @@ func TestHostAssetsAreTheAppliancesOwnDocument(t *testing.T) {
 	if assets.Count != 10 {
 		t.Errorf("count = %d, want 10", assets.Count)
 	}
+	if assets.Hosts != 10 {
+		t.Errorf("hosts = %d, want 10", assets.Hosts)
+	}
 
 	sent := ft.written.String()
 	for _, want := range []string{`type="host"`, `details="1"`, `rows=-1`} {
@@ -277,3 +280,21 @@ func testKey(t *testing.T) ssh.PublicKey {
 }
 
 func fingerprintOf(key ssh.PublicKey) string { return ssh.FingerprintSHA256(key) }
+
+// The appliance can hold several records of one host; they count once as a
+// host, since the import merges them into one asset.
+func TestRecordsOfOneHostCountOnce(t *testing.T) {
+	doc := `<get_assets_response status="200" status_text="OK">` +
+		`<asset id="a1"><owner><name>demo</name></owner><name>192.0.2.1</name></asset>` +
+		`<asset id="a2"><owner><name>demo</name></owner><name>192.0.2.1</name></asset>` +
+		`<asset id="a3"><owner><name>demo</name></owner><name>192.0.2.2</name></asset>` +
+		`<asset_count>3<filtered>3</filtered></asset_count></get_assets_response>`
+	c, _ := clientWith(t, doc)
+	assets, err := c.HostAssets()
+	if err != nil {
+		t.Fatalf("HostAssets: %v", err)
+	}
+	if assets.Count != 3 || assets.Hosts != 2 {
+		t.Errorf("count = %d, hosts = %d, want 3 records of 2 hosts", assets.Count, assets.Hosts)
+	}
+}

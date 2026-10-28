@@ -140,16 +140,29 @@ func gmpGetHosts(tool *config.ToolConfig, args map[string]interface{}, secrets S
 	}
 
 	filename := gmpAssetsFilename(target.Host, time.Now())
-	logger.Infof("gmp-get-hosts: %d host asset(s) from %s, %d bytes, as %s", assets.Count, target.Host, len(assets.Document), filename)
+	logger.Infof("gmp-get-hosts: %d asset record(s), %d distinct host(s), from %s, %d bytes, as %s",
+		assets.Count, assets.Hosts, target.Host, len(assets.Document), filename)
 	return &ToolResult{
-		Content: fmt.Sprintf("Retrieved %d host assets from %s (%d bytes) as %s.",
-			assets.Count, target.Host, len(assets.Document), filename),
+		// Records and hosts both: the appliance can hold several records of one
+		// host, which the import merges, so the record count alone overstates
+		// the assets an import will show.
+		Content: fmt.Sprintf("Retrieved %s (%s) from %s (%d bytes) as %s.",
+			countOf(assets.Count, "asset record"), countOf(assets.Hosts, "distinct host"),
+			target.Host, len(assets.Document), filename),
 		OutputFiles: []OutputFile{{
 			Filename: filename,
 			MimeType: "application/xml",
 			Data:     base64.StdEncoding.EncodeToString(assets.Document),
 		}},
 	}, nil
+}
+
+// countOf is "1 asset record" or "33 asset records".
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // gmpGetResults fetches the results of every scan task's latest report and
