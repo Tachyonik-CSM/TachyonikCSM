@@ -77,6 +77,18 @@ type Organisation struct {
 	// Questionnaire progress and verdicts, computed by SystemManager from the
 	// stored answers when this was fetched. Nil when it could not compute them.
 	Questionnaires *Questionnaires `json:"questionnaires"`
+	// The organisation's policies and their status, from Organisation →
+	// Policies. Nil when SystemManager could not read them.
+	Policies []Policy `json:"policies"`
+}
+
+// Policy is one of the organisation's policies: "cyber_strategy",
+// "nis2_impact" or "nis2_readiness", with its status — "mandatory",
+// "recommended", "not_applicable" or "not_checked" — and the reason.
+type Policy struct {
+	Policy string `json:"policy"`
+	Status string `json:"status"`
+	Note   string `json:"note"`
 }
 
 // Questionnaires is SystemManager's summary of the organisation questionnaires.

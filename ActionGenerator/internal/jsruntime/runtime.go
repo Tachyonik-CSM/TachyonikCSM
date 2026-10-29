@@ -100,6 +100,7 @@ type RuleContext struct {
 	Organisation      map[string]interface{}   `json:"organisation"`
 	Settings          map[string]interface{}   `json:"settings"`
 	Questionnaires    map[string]interface{}   `json:"questionnaires"`
+	Policies          map[string]interface{}   `json:"policies"`
 	SourceCount       int                      `json:"sourceCount"`
 	SourceMax         int                      `json:"sourceMax"`
 	Sources           []map[string]interface{} `json:"sources"`
@@ -140,9 +141,12 @@ func (c RuleContext) ToMap() map[string]interface{} {
 		// Never an empty object: a rule reads ctx.questionnaires.nis2Impact.progress
 		// straight away, and must get zeros rather than fail on undefined.
 		"questionnaires": questionnairesOrEmpty(c.Questionnaires),
-		"sourceCount":    c.SourceCount,
-		"sourceMax":      c.SourceMax,
-		"sources":        c.Sources,
+		// Never an empty object either: ctx.policies.nis2Impact.status is read
+		// straight away.
+		"policies":    policiesOrEmpty(c.Policies),
+		"sourceCount": c.SourceCount,
+		"sourceMax":   c.SourceMax,
+		"sources":     c.Sources,
 		// Never null: "no proxies" must read as an empty list, which a rule
 		// about offline proxies then correctly finds nothing in.
 		"proxies":    listOrEmpty(c.Proxies),
@@ -318,6 +322,58 @@ func QuestionnairesToMap(q *systemmanager.Questionnaires) map[string]interface{}
 func EmptyQuestionnaires() map[string]interface{} {
 	return QuestionnairesToMap(&systemmanager.Questionnaires{
 		NIS2Impact: systemmanager.QuestionnaireImpact{Size: "small"},
+	})
+}
+
+// policyKeys maps SystemManager's policy keys to the names a rule reads them
+// under — the questionnaires' own names, so ctx.policies.nis2Impact goes with
+// ctx.questionnaires.nis2Impact.
+var policyKeys = map[string]string{
+	"cyber_strategy": "cyberStrategy",
+	"nis2_impact":    "nis2Impact",
+	"nis2_readiness": "nis2Readiness",
+}
+
+// PoliciesToMap renders the organisation's policies for the JS context: each
+// of the three always present, as {status, note}; one SystemManager did not
+// send counts as not checked.
+func PoliciesToMap(policies []systemmanager.Policy) map[string]interface{} {
+	out := EmptyPolicies()
+	for _, p := range policies {
+		name, ok := policyKeys[p.Policy]
+		if !ok || p.Status == "" {
+			continue
+		}
+		out[name] = map[string]interface{}{"status": p.Status, "note": p.Note}
+	}
+	return out
+}
+
+// EmptyPolicies is what a rule sees when the policies could not be fetched:
+// every policy present and not checked, so a rule asking whether one is
+// mandatory or recommended gets no.
+func EmptyPolicies() map[string]interface{} {
+	out := make(map[string]interface{}, len(policyKeys))
+	for _, name := range policyKeys {
+		out[name] = map[string]interface{}{"status": "not_checked", "note": ""}
+	}
+	return out
+}
+
+func policiesOrEmpty(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return EmptyPolicies()
+	}
+	return m
+}
+
+// mockPolicies is a policy set with each status stated: strategy, impact,
+// readiness.
+func mockPolicies(strategy, impact, readiness string) map[string]interface{} {
+	return PoliciesToMap([]systemmanager.Policy{
+		{Policy: "cyber_strategy", Status: strategy},
+		{Policy: "nis2_impact", Status: impact},
+		{Policy: "nis2_readiness", Status: readiness},
 	})
 }
 
@@ -775,7 +831,7 @@ func floatPtr(v float64) *float64 { return &v }
 // capabilities, a filled-in organisation and an AI provider — with the given
 // questionnaire state. A constructor rather than a literal so the scenarios
 // built from it share no maps.
-func registeredUserScenario(questionnaires map[string]interface{}) RuleContext {
+func registeredUserScenario(questionnaires, policies map[string]interface{}) RuleContext {
 	return RuleContext{
 		User: map[string]interface{}{
 			"id":                     int64(3),
@@ -839,6 +895,7 @@ func registeredUserScenario(questionnaires map[string]interface{}) RuleContext {
 			{"id": int64(12), "title": "Update firmware", "type": "Fix", "status": "Done", "priority": 30, "assignedTo": "User", "issuedBy": "User", "trigger": "manual", "createdAt": "2025-04-01T00:00:00Z"},
 		},
 		Questionnaires: questionnaires,
+		Policies:       policies,
 	}
 }
 
@@ -859,6 +916,7 @@ var mockScenarioLabels = []string{
 	"Registered user — NIS2 orange, readiness red",
 	"Registered user — NIS2 yellow, readiness green, strategy expired",
 	"Registered user — NIS2 orange, readiness in progress",
+	"Registered user — NIS2 impact in progress, recommended",
 }
 
 // MockScenarios returns the mock contexts every generated routine is validated
@@ -889,9 +947,12 @@ func MockScenarios() []MockScenario {
 			}),
 			// Nothing started: the case "please fill in X" rules are for.
 			Questionnaires: EmptyQuestionnaires(),
-			Settings:       EmptySettings(),
-			SourceCount:    3,
-			SourceMax:      3,
+			// The policies as a new organisation has them: only the strategy
+			// is recommended, the NIS-2 ones not checked (no country).
+			Policies:    mockPolicies("recommended", "not_checked", "not_checked"),
+			Settings:    EmptySettings(),
+			SourceCount: 3,
+			SourceMax:   3,
 			Sources: []map[string]interface{}{
 				{"id": int64(1), "filename": "scan1.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-01T00:00:00Z"},
 				{"id": int64(2), "filename": "scan2.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-15T00:00:00Z"},
@@ -943,6 +1004,8 @@ func MockScenarios() []MockScenario {
 				systemmanager.QuestionnaireStrategy{Progress: 20, Answered: 2, Total: 10,
 					MissingRequired: []string{"01", "02.1"}},
 			),
+			// Outside Germany: NIS-2 does not apply.
+			Policies:          mockPolicies("recommended", "not_applicable", "not_applicable"),
 			Settings:          EmptySettings(),
 			SourceCount:       0,
 			SourceMax:         10,
@@ -978,7 +1041,7 @@ func MockScenarios() []MockScenario {
 				ReportingScore: floatPtr(35), ReportingCritical: true, LastUpdated: "2026-08-21T10:00:00Z"},
 			systemmanager.QuestionnaireStrategy{Progress: 100, Answered: 10, Total: 10, Complete: true,
 				MissingRequired: []string{}, LastUpdated: "2026-08-22T10:00:00Z"},
-		)),
+		), mockPolicies("recommended", "mandatory", "mandatory")),
 		registeredUserScenario(mockQuestionnaires(
 			systemmanager.QuestionnaireImpact{Progress: 100, Answered: 10, Total: 10, Complete: true,
 				Level: "orange", Size: "medium", LastUpdated: "2026-07-01T10:00:00Z"},
@@ -991,7 +1054,7 @@ func MockScenarios() []MockScenario {
 			// 100 — the case a rule must not confuse with "not complete".
 			systemmanager.QuestionnaireStrategy{Progress: 80, Answered: 8, Total: 10, Complete: true,
 				MissingRequired: []string{}, LastUpdated: "2026-07-03T10:00:00Z"},
-		)),
+		), mockPolicies("recommended", "recommended", "recommended")),
 		registeredUserScenario(mockQuestionnaires(
 			systemmanager.QuestionnaireImpact{Progress: 100, Answered: 10, Total: 10, Complete: true,
 				Level: "yellow", Size: "small", UnclearTreatedAsYes: true, LastUpdated: "2026-09-01T10:00:00Z"},
@@ -1000,7 +1063,7 @@ func MockScenarios() []MockScenario {
 				ReportingScore: floatPtr(90), LastUpdated: "2026-09-02T10:00:00Z"},
 			systemmanager.QuestionnaireStrategy{Progress: 100, Answered: 10, Total: 10, Complete: true,
 				MissingRequired: []string{}, LastUpdated: "2025-01-03T10:00:00Z", Expired: true},
-		)),
+		), mockPolicies("recommended", "recommended", "not_applicable")),
 		// Directly affected by NIS2 (Impact complete, orange) while Readiness is
 		// still being filled in. Without it no scenario is "affected and not
 		// ready yet" — the situation rules about Readiness are written for — and
@@ -1013,7 +1076,17 @@ func MockScenarios() []MockScenario {
 				ReportingScore: floatPtr(25), ReportingCritical: true},
 			systemmanager.QuestionnaireStrategy{Progress: 40, Answered: 4, Total: 10,
 				MissingRequired: []string{"01"}, LastUpdated: "2026-09-06T10:00:00Z"},
-		)),
+		), mockPolicies("recommended", "recommended", "recommended")),
+		// The Impact assessment under way while NIS-2 Impact is recommended:
+		// the one scenario where "Impact below 100% and the policy concerns the
+		// organisation" holds — scenario 1 has it below 100% too, but not
+		// checked, which is what keeps such a rule from being degenerate.
+		registeredUserScenario(mockQuestionnaires(
+			systemmanager.QuestionnaireImpact{Progress: 60, Answered: 6, Total: 10, Size: "medium"},
+			systemmanager.QuestionnaireReadiness{},
+			systemmanager.QuestionnaireStrategy{Progress: 50, Answered: 5, Total: 10,
+				MissingRequired: []string{"02.1"}},
+		), mockPolicies("recommended", "recommended", "not_checked")),
 	)
 
 	// Proxies, varied so a rule about them fires somewhere and not everywhere:
@@ -1035,6 +1108,7 @@ func MockScenarios() []MockScenario {
 		{online(1, "Office proxy"), offline(2, "Branch proxy")},
 		{ProxyToMap(3, "New proxy", "pending_enrollment", "inbound", "", nil)},
 		{offline(2, "Branch proxy"), online(4, "Datacenter proxy")},
+		{online(1, "Office proxy")},
 	}
 	if len(mockProxies) != len(mockContexts) {
 		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d proxy lists", len(mockContexts), len(mockProxies)))

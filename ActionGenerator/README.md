@@ -337,6 +337,7 @@ assembled per user by `buildJSRuleContext`. It carries:
 | `ctx.organisation` | The organisation record: name, assetsHosts, score, homepageUrl, naceCode, employees, employeesAffiliated, the postal address, companyLegalName, vatNumber, vatNumberValid, itStaffHourlyCost, currency, and `itProviders` |
 | `ctx.organisation.itProviders` | The IT service providers the organisation recorded: an array of `{name, homepageUrl, contactEmail, types}`, where `types` is an array of `"cybersecurity"`, `"network_infrastructure"`, `"general_it_support"`. Notes and logos are not included |
 | `ctx.questionnaires` | Progress and verdicts of the three organisation questionnaires, computed by SystemManager from the stored answers: `nis2Impact` (progress, complete, level `red`/`orange`/`yellow`/`green`, size, expired, …), `nis2Readiness` (progress, complete, score, level `red`/`yellow`/`green`, gaps, reportingCritical, …) and `cyberStrategy` (progress, complete, missingRequired, expired). Levels are `""` until complete; the strategy's `complete` means all required parts, not progress 100 |
+| `ctx.policies` | The organisation's policies (Organisation → Policies) from SystemManager: `cyberStrategy`, `nis2Impact` and `nis2Readiness`, each `{status, note}` with status `mandatory`, `recommended`, `not_applicable` or `not_checked` — whether the policy concerns the organisation |
 | `ctx.settings` | What the user configured for themselves: `ai.{research,chat,dashboard}` as a state (`personal` / `internal` / `disabled` / `none`), `ai.personalProviderCount`, and `language` |
 | `ctx.sources`, `ctx.sourceCount`, `ctx.sourceMax` | Uploaded sources and the user's limit |
 | `ctx.proxies` | The user's TachyonikProxy installations from ResourceManager's `/api/internal/proxies`: an array of `{id, name, status, connectionMode, version, lastSeen}`. `status` is `online`, `offline` or `pending_enrollment`; `lastSeen` is `""` for a proxy that never connected. `[]` when the user has none or ResourceManager cannot be reached |
@@ -359,17 +360,20 @@ Every field is always defined — strings default to `""`, numbers to `0`, boole
 arrays to `[]` (`itProviders`, and each provider's `types`), including when the backing service
 call fails. `ctx.highestScoreAsset` is the one exception: it is `null` when no asset is scored,
 because that is a real state a rule must test for. When the questionnaire summary cannot be fetched
-a rule sees every questionnaire as not started. `ctx.questionnaires.nis2Readiness.reportingScore`
+a rule sees every questionnaire as not started, and when the policies cannot be fetched (or one is
+missing) every such policy as `not_checked`. `ctx.questionnaires.nis2Readiness.reportingScore`
 is `0` rather than `null` when unanswered — `null < 50` is true in JavaScript — with
 `reportingAnswered` to tell the cases apart.
 
 ### Validating generated routines
 
 Before a generated routine is stored as `passed`, `ValidateWithMockCtxReport` runs every rule
-against six mock scenarios (`jsruntime.MockScenarios`): an anonymous user with nothing configured,
-an admin with no data, and a registered user with everything filled in, four times over with
+against seven mock scenarios (`jsruntime.MockScenarios`): an anonymous user with nothing configured,
+an admin with no data, and a registered user with everything filled in, five times over with
 different questionnaire states, so that every Impact and Readiness level appears in some scenario and
-not in another.
+not in another. The policy statuses vary too — the last scenario has the Impact assessment under way
+while the NIS-2 Impact policy is recommended, the first has it under way but not checked — so a rule
+that combines a questionnaire with a policy decides differently between them.
 
 The context each rule sees is traced (`tachyonik/lib/jsctxtrace`), so validation judges a rule by what
 it decided **and** what it read:

@@ -479,8 +479,10 @@ func (g *Generator) buildSharedContext(users []systemmanager.User, primary *syst
 			// everyone's configuration at once.
 			merged.Organisation = ctx.Organisation
 			merged.Settings = ctx.Settings
-			// The questionnaires belong to the organisation, so they follow it.
+			// The questionnaires and policies belong to the organisation, so
+			// they follow it.
 			merged.Questionnaires = ctx.Questionnaires
+			merged.Policies = ctx.Policies
 		}
 		merged.Sources = append(merged.Sources, ctx.Sources...)
 		merged.Proxies = append(merged.Proxies, ctx.Proxies...)
@@ -525,6 +527,9 @@ func (g *Generator) buildSharedContext(users []systemmanager.User, primary *syst
 	}
 	if merged.Questionnaires == nil {
 		merged.Questionnaires = jsruntime.EmptyQuestionnaires()
+	}
+	if merged.Policies == nil {
+		merged.Policies = jsruntime.EmptyPolicies()
 	}
 	merged.HighestScoreAsset = highest
 	stats := make(map[string]interface{}, len(statKeys))
@@ -602,6 +607,7 @@ func (g *Generator) addOrganisation(ctx *jsruntime.RuleContext, user *systemmana
 	// host-asset count silently produces NaN rather than failing visibly.
 	ctx.Organisation = jsruntime.EmptyOrganisation()
 	ctx.Questionnaires = jsruntime.EmptyQuestionnaires()
+	ctx.Policies = jsruntime.EmptyPolicies()
 	org, err := g.systemMgr.GetOrganisationForUser(user.ID)
 	if err != nil {
 		logger.Warnf("Could not fetch organisation for user %d: %v", user.ID, err)
@@ -615,6 +621,10 @@ func (g *Generator) addOrganisation(ctx *jsruntime.RuleContext, user *systemmana
 				user.ID, org.Questionnaires.NIS2Impact.Progress, org.Questionnaires.NIS2Impact.Level,
 				org.Questionnaires.NIS2Readiness.Progress, org.Questionnaires.NIS2Readiness.Level,
 				org.Questionnaires.CyberStrategy.Progress)
+		}
+		// Arrive with the organisation too; nil keeps "not checked".
+		if org.Policies != nil {
+			ctx.Policies = jsruntime.PoliciesToMap(org.Policies)
 		}
 		logger.Infof("Context user=%d organisation: name=%q assetsHosts=%d score=%v nace=%q homepage=%q itProviders=%d",
 			user.ID, org.Name, org.AssetsHosts, org.Score, org.NaceCode, org.HomepageURL, len(org.ITProviders))

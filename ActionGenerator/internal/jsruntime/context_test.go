@@ -508,3 +508,41 @@ func TestValidateAcceptsUnmetConditionWithANote(t *testing.T) {
 		t.Errorf("notes = %v", report.Notes)
 	}
 }
+
+// The policies: always present, a missing one not checked, and the rule 17
+// condition — "Impact below 100% and the policy concerns the organisation" —
+// true in some scenario and false in another, so it is accepted rather than
+// rejected as degenerate, and it reads no field the scenarios lack.
+func TestPoliciesReachTheRules(t *testing.T) {
+	bare := RuleContext{}
+	if v := evalAgainst(t, bare, `ctx.policies.nis2Impact.status === "not_checked" && ctx.policies.cyberStrategy.note === ""`); !v.ToBoolean() {
+		t.Error("an empty context does not have every policy not checked")
+	}
+	got := PoliciesToMap([]systemmanager.Policy{{Policy: "nis2_impact", Status: "recommended", Note: "DE"}})
+	if p := got["nis2Impact"].(map[string]interface{}); p["status"] != "recommended" || p["note"] != "DE" {
+		t.Errorf("nis2Impact = %v", p)
+	}
+	if p := got["nis2Readiness"].(map[string]interface{}); p["status"] != "not_checked" {
+		t.Errorf("a policy not sent should be not checked: %v", p)
+	}
+
+	for name, check := range map[string]string{
+		"rule 17": `ctx.questionnaires.nis2Impact.progress < 100 &&
+			(ctx.policies.nis2Impact.status === "mandatory" || ctx.policies.nis2Impact.status === "recommended")`,
+		"readiness concerns the organisation": `ctx.policies.nis2Readiness.status === "recommended"`,
+		"impact not applicable":               `ctx.policies.nis2Impact.status === "not_applicable"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := New(5 * time.Second)
+			code := `var rules = [{ name: "p", ruleId: 17,
+				check: function (ctx) { return ` + check + `; },
+				createAction: function () { return { title: "t" }; } }];`
+			if err := e.LoadFromString(code); err != nil {
+				t.Fatalf("LoadFromString: %v", err)
+			}
+			if errs := e.ValidateWithMockCtxReport().Errors; len(errs) > 0 {
+				t.Errorf("rejected: %v", errs)
+			}
+		})
+	}
+}
