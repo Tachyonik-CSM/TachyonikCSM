@@ -546,3 +546,33 @@ func TestPoliciesReachTheRules(t *testing.T) {
 		})
 	}
 }
+
+// The display condition of a Questionnaire option — "only when the user has an
+// AI assigned to Research and the organisation has a homepage" — is
+// expressible with what a routine sees, decides differently between the mock
+// scenarios, and a routine carrying it (beside rule 17's check) is accepted.
+func TestTheQuestionnaireOptionConditionIsExpressible(t *testing.T) {
+	const condition = `ctx.settings.ai.research !== "none" && ctx.organisation.homepageUrl !== ""`
+	seen := map[bool]bool{}
+	for _, s := range MockScenarios() {
+		seen[evalAgainst(t, s.Ctx, condition).ToBoolean()] = true
+	}
+	if !seen[true] || !seen[false] {
+		t.Fatalf("the condition decides the same in every scenario: %v", seen)
+	}
+
+	e := New(5 * time.Second)
+	code := `var rules = [{ name: "q", ruleId: 17,
+		check: function (ctx) {
+			return ctx.questionnaires.nis2Impact.progress < 100 &&
+				(ctx.policies.nis2Impact.status === "mandatory" || ctx.policies.nis2Impact.status === "recommended");
+		},
+		options: { "55": function (ctx) { return ` + condition + `; } },
+		createAction: function () { return { title: "t" }; } }];`
+	if err := e.LoadFromString(code); err != nil {
+		t.Fatalf("LoadFromString: %v", err)
+	}
+	if errs := e.ValidateWithMockCtxReport().Errors; len(errs) > 0 {
+		t.Errorf("rejected: %v", errs)
+	}
+}
