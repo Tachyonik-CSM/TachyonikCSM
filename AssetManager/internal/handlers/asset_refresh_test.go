@@ -23,10 +23,10 @@ func TestDeletingASourcesFindingsAsAServiceRecomputesTheirHosts(t *testing.T) {
 	if _, err := h.db.CreateAsset("10.0.0.7", "Host", 7, 2, "s2.xml", day(20)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.db.CreateVulnerability("CVE-1", "10.0.0.7", "443", 80, "s1.xml (ID: 1)", 7, day(1)); err != nil {
+	if _, err := h.db.CreateVulnerability("CVE-1", "10.0.0.7", "443", 80, 1, "s1.xml", 7, day(1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.db.CreateDetection("ssh", "10.0.0.7", "22", "s1.xml (ID: 1)", 7, day(1)); err != nil {
+	if _, err := h.db.CreateDetection("ssh", "10.0.0.7", "22", 1, "s1.xml", 7, day(1)); err != nil {
 		t.Fatal(err)
 	}
 	h.refreshHosts(nil) // nothing to do, must not fail

@@ -213,3 +213,56 @@ func TestCreateAssetNeedsASource(t *testing.T) {
 		}
 	}
 }
+
+// A finding names its source by sourceId and sourceLabel. For one release the
+// older "filename (ID: N)" string is still read when both are missing; a
+// finding without either has no source.
+func TestFindingSourceOnCreate(t *testing.T) {
+	h := scopedHandler(t)
+	for name, c := range map[string]struct {
+		body  string
+		id    int64
+		label string
+	}{
+		"source id and label": {`"sourceId":5,"sourceLabel":"scan.xml"`, 5, "scan.xml"},
+		"the older string":    {`"source":"old.xml (ID: 6)"`, 6, "old.xml"},
+		"both: the new wins":  {`"sourceId":7,"sourceLabel":"new.xml","source":"old.xml (ID: 6)"`, 7, "new.xml"},
+		"entered by hand":     {``, 0, ""},
+	} {
+		body := `{"name":"CVE-1","host":"10.0.0.7","port":"443","severity":50`
+		if c.body != "" {
+			body += "," + c.body
+		}
+		body += "}"
+		w := httptest.NewRecorder()
+		h.CreateVulnerability(w, callAs("POST", "/api/vulnerabilities", body, 7, false))
+		var v database.Vulnerability
+		json.Unmarshal(w.Body.Bytes(), &v)
+		var id int64
+		if v.SourceID != nil {
+			id = *v.SourceID
+		}
+		if w.Code != http.StatusCreated || id != c.id || v.SourceLabel != c.label {
+			t.Errorf("%s: %d, source %d %q; want 201, %d %q (%s)", name, w.Code, id, v.SourceLabel, c.id, c.label, w.Body.String())
+		}
+	}
+}
+
+// The by-source endpoints find a source's findings by the id in ?source=, and
+// refuse a reference without one.
+func TestFindingsBySourceGoByTheID(t *testing.T) {
+	h := scopedHandler(t)
+	if _, err := h.db.CreateDetection("ssh", "10.0.0.7", "22", 3, "old-name.xml", 7, nil); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.DeleteDetectionsBySource(w, callAs("DELETE", "/api/detections/by-source?source="+url.QueryEscape("new-name.xml (ID: 3)"), "", 7, false))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"deleted":1`) {
+		t.Errorf("by the id under a new name: %d %s, want the detection deleted", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.DeleteDetectionsBySource(w, callAs("DELETE", "/api/detections/by-source?source=new-name.xml", "", 7, false))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("without an id: %d, want 400", w.Code)
+	}
+}

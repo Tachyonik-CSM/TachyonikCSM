@@ -15,16 +15,19 @@ import (
 
 // Vulnerability represents a vulnerability in the database
 type Vulnerability struct {
-	ID         int64     `json:"id" db:"id"`
-	Name       string    `json:"name" db:"name"`
-	Host       string    `json:"host" db:"host"`
-	Port       string    `json:"port" db:"port"`
-	Severity   int       `json:"severity" db:"severity"`
-	Source     string    `json:"source" db:"source"`
-	UserID     int64     `json:"userId" db:"user_id"`
-	CreatedAt  time.Time `json:"createdAt" db:"created_at"`
-	ModifiedAt time.Time `json:"modifiedAt" db:"modified_at"`
-	LastSeen   time.Time `json:"lastSeen" db:"last_seen"`
+	ID       int64  `json:"id" db:"id"`
+	Name     string `json:"name" db:"name"`
+	Host     string `json:"host" db:"host"`
+	Port     string `json:"port" db:"port"`
+	Severity int    `json:"severity" db:"severity"`
+	// The source the finding came from: its ResourceManager id (nil when only
+	// its name is known) and its filename. Both empty for one entered by hand.
+	SourceID    *int64    `json:"sourceId" db:"source_id"`
+	SourceLabel string    `json:"sourceLabel" db:"source_label"`
+	UserID      int64     `json:"userId" db:"user_id"`
+	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
+	ModifiedAt  time.Time `json:"modifiedAt" db:"modified_at"`
+	LastSeen    time.Time `json:"lastSeen" db:"last_seen"`
 }
 
 // GetVulnerabilityHostsByIDs returns the distinct hosts of the user's
@@ -51,7 +54,7 @@ func (db *DB) CountVulnerabilitiesByUserWithFilter(userID int64, filter *Vulnera
 
 // CreateVulnerability creates a new vulnerability and returns it
 // If lastSeen is nil, uses current time
-func (db *DB) CreateVulnerability(name, host, port string, severity int, source string, userID int64, lastSeen *time.Time) (*Vulnerability, error) {
+func (db *DB) CreateVulnerability(name, host, port string, severity int, sourceID int64, sourceLabel string, userID int64, lastSeen *time.Time) (*Vulnerability, error) {
 	// Validate severity range
 	if severity < 0 || severity > 100 {
 		return nil, fmt.Errorf("severity must be between 0 and 100")
@@ -65,8 +68,8 @@ func (db *DB) CreateVulnerability(name, host, port string, severity int, source 
 	}
 
 	result, err := db.Exec(
-		"INSERT INTO vulnerabilities (name, host, port, severity, source, user_id, created_at, modified_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		name, host, port, severity, source, userID, now, now, lastSeenTime,
+		"INSERT INTO vulnerabilities (name, host, port, severity, source_id, source_label, user_id, created_at, modified_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		name, host, port, severity, sourceIDArg(sourceID), sourceLabel, userID, now, now, lastSeenTime,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vulnerability: %w", err)
@@ -78,32 +81,33 @@ func (db *DB) CreateVulnerability(name, host, port string, severity int, source 
 	}
 
 	return &Vulnerability{
-		ID:         id,
-		Name:       name,
-		Host:       host,
-		Port:       port,
-		Severity:   severity,
-		Source:     source,
-		UserID:     userID,
-		CreatedAt:  now,
-		ModifiedAt: now,
-		LastSeen:   lastSeenTime,
+		ID:          id,
+		Name:        name,
+		Host:        host,
+		Port:        port,
+		Severity:    severity,
+		SourceID:    sourceIDPtr(sourceID),
+		SourceLabel: sourceLabel,
+		UserID:      userID,
+		CreatedAt:   now,
+		ModifiedAt:  now,
+		LastSeen:    lastSeenTime,
 	}, nil
 }
 
 // DeleteVulnerabilitiesBySource deletes a source's vulnerabilities — the
 // user's, or everyone's for userID 0 (an internal service request) — and
 // returns their IDs.
-func (db *DB) DeleteVulnerabilitiesBySource(source string, userID int64) ([]int64, error) {
-	where, args := sourceScope(source, userID, nil)
+func (db *DB) DeleteVulnerabilitiesBySource(sourceID int64, userID int64) ([]int64, error) {
+	where, args := sourceScope(sourceID, userID, nil)
 	return db.deleteFindingsWhere(vulnerabilityKind, where, args)
 }
 
 // DeleteStaleVulnerabilitiesBySource deletes a source's vulnerabilities not
 // modified since modifiedBefore — what a re-import no longer produced — and
 // returns their IDs.
-func (db *DB) DeleteStaleVulnerabilitiesBySource(source string, userID int64, modifiedBefore time.Time) ([]int64, error) {
-	where, args := sourceScope(source, userID, &modifiedBefore)
+func (db *DB) DeleteStaleVulnerabilitiesBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]int64, error) {
+	where, args := sourceScope(sourceID, userID, &modifiedBefore)
 	return db.deleteFindingsWhere(vulnerabilityKind, where, args)
 }
 
@@ -115,6 +119,6 @@ func (db *DB) DeleteVulnerabilitiesByIDs(ids []int64, userID int64) (deleted []i
 
 // ClearVulnerabilitySourceBySource unlinks a source's vulnerabilities from it,
 // keeping them, and returns their IDs.
-func (db *DB) ClearVulnerabilitySourceBySource(source string, userID int64) ([]int64, error) {
-	return db.clearFindingSource(vulnerabilityKind, source, userID)
+func (db *DB) ClearVulnerabilitySourceBySource(sourceID int64, userID int64) ([]int64, error) {
+	return db.clearFindingSource(vulnerabilityKind, sourceID, userID)
 }

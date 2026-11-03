@@ -52,11 +52,11 @@ func TestEachSeverityClassFilterListsItsClass(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.CreateDetection("ssh", "zero-detected", "22", "test", 7, nil); err != nil {
+	if _, err := db.CreateDetection("ssh", "zero-detected", "22", 0, "test", 7, nil); err != nil {
 		t.Fatal(err)
 	}
 	// A detection another member of the workspace recorded for this host.
-	if _, err := db.CreateDetection("http", "zero-other-member", "80", "test", 8, nil); err != nil {
+	if _, err := db.CreateDetection("http", "zero-other-member", "80", 0, "test", 8, nil); err != nil {
 		t.Fatal(err)
 	}
 

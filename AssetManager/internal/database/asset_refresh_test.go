@@ -37,10 +37,10 @@ func TestAnAssetFollowsTheSourcesItKeeps(t *testing.T) {
 	if _, err := db.CreateAsset(host, "Host", 7, 2, "s2.xml", ago(30)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateVulnerability("CVE-1", host, "443", 70, "s1.xml (ID: 1)", 7, ago(1)); err != nil {
+	if _, err := db.CreateVulnerability("CVE-1", host, "443", 70, 1, "s1.xml", 7, ago(1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateVulnerability("CVE-2", host, "22", 30, "s2.xml (ID: 2)", 7, ago(40)); err != nil {
+	if _, err := db.CreateVulnerability("CVE-2", host, "22", 30, 2, "s2.xml", 7, ago(40)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.RefreshAssetsForHosts([]HostRef{{Host: host, UserID: 7}}); err != nil {
@@ -53,11 +53,11 @@ func TestAnAssetFollowsTheSourcesItKeeps(t *testing.T) {
 
 	// Source 1 is deleted, as ResourceManager does it: its vulnerabilities,
 	// then its link, both on behalf of every user (userID 0).
-	refs, err := db.VulnerabilityHostRefsBySource("s1.xml (ID: 1)", 0)
+	refs, err := db.VulnerabilityHostRefsBySource(1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.DeleteVulnerabilitiesBySource("s1.xml (ID: 1)", 0); err != nil {
+	if _, err := db.DeleteVulnerabilitiesBySource(1, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.RefreshAssetsForHosts(refs); err != nil {
@@ -84,7 +84,7 @@ func TestAnAssetFollowsTheSourcesItKeeps(t *testing.T) {
 
 	// Source 2's findings go too (a re-import that no longer has them): the
 	// host is unmanaged, and its last seen falls back to the listing.
-	if _, err := db.DeleteVulnerabilitiesBySource("s2.xml (ID: 2)", 7); err != nil {
+	if _, err := db.DeleteVulnerabilitiesBySource(2, 7); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.RefreshAssetsForHosts([]HostRef{{Host: host, UserID: 7}}); err != nil {
@@ -114,7 +114,7 @@ func TestLastSeenIsTheNewestEvidence(t *testing.T) {
 	if !res.Asset.LastSeen.Equal(*ago(5)) {
 		t.Errorf("after an older listing: %v, want %v", res.Asset.LastSeen, ago(5))
 	}
-	if _, err := db.CreateDetection("ssh", "10.0.0.2", "22", "s3.xml (ID: 3)", 7, ago(1)); err != nil {
+	if _, err := db.CreateDetection("ssh", "10.0.0.2", "22", 3, "s3.xml", 7, ago(1)); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := db.RefreshAssetsForHosts([]HostRef{{Host: "10.0.0.2", UserID: 7}})

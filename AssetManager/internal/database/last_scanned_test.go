@@ -53,7 +53,7 @@ func TestLastScanned(t *testing.T) {
 		t.Fatalf("host without findings: last_scanned = %v, want NULL", v)
 	}
 
-	vuln, err := db.CreateVulnerability("CVE-1", "10.0.0.1", "443", 50, "", 7, ago(20))
+	vuln, err := db.CreateVulnerability("CVE-1", "10.0.0.1", "443", 50, 0, "", 7, ago(20))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestLastScanned(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Someone else's finding on the same name.
-	if _, err := db.CreateVulnerability("CVE-2", "10.0.0.1", "443", 50, "", 8, ago(1)); err != nil {
+	if _, err := db.CreateVulnerability("CVE-2", "10.0.0.1", "443", 50, 0, "", 8, ago(1)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.RefreshAssetsForHosts([]HostRef{{Host: "10.0.0.1", UserID: 7}}); err != nil {
@@ -97,7 +97,7 @@ func TestLastScanned(t *testing.T) {
 	}
 
 	// Findings first, host afterwards.
-	if _, err := db.CreateVulnerability("CVE-3", "10.0.0.2", "80", 50, "", 7, ago(40)); err != nil {
+	if _, err := db.CreateVulnerability("CVE-3", "10.0.0.2", "80", 50, 0, "", 7, ago(40)); err != nil {
 		t.Fatal(err)
 	}
 	res, err := db.CreateAsset("10.0.0.2", "Host", 7, 0, "", ago(0))
@@ -140,7 +140,7 @@ func TestMigrateAddLastScannedFillsExistingHosts(t *testing.T) {
 	if _, err := db.CreateAsset("10.0.0.9", "Host", 7, 0, "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateDetection("ssh", "10.0.0.9", "22", "", 7, &seen); err != nil {
+	if _, err := db.CreateDetection("ssh", "10.0.0.9", "22", 0, "", 7, &seen); err != nil {
 		t.Fatal(err)
 	}
 	// As a database from before v2: no column, no recorded v2.
@@ -167,7 +167,7 @@ func TestScanBucketsMatchFilter(t *testing.T) {
 	for i, d := range []float64{0.5, 1.9, 2.1, 9.9, 10.1, 40} {
 		name := "10.0.2." + string(rune('1'+i))
 		seen := now.Add(-time.Duration(d * 24 * float64(time.Hour)))
-		if _, err := db.CreateVulnerability("CVE-"+name, name, "443", 50, "", 7, &seen); err != nil {
+		if _, err := db.CreateVulnerability("CVE-"+name, name, "443", 50, 0, "", 7, &seen); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.CreateAsset(name, "Host", 7, 0, "", &now); err != nil {

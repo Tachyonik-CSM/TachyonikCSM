@@ -225,3 +225,58 @@ func migrateAddLinkModifiedAt(db *DB) error {
 	}
 	return nil
 }
+
+// migrateAddFindingSourceColumns (v6) gives vulnerabilities and detections
+// the source_id and source_label an asset's link has, and fills them from the
+// "filename (ID: N)" string the source column held: the id where the string
+// has one (NULL otherwise), the filename as the label. Additive only: the
+// source column stays, no longer read or written, and is dropped in a later
+// release, as destructive changes wait one release after a column falls out
+// of use.
+func migrateAddFindingSourceColumns(db *DB) error {
+	for _, table := range []string{"vulnerabilities", "detections"} {
+		for _, col := range []struct{ name, decl string }{
+			{"source_id", "INTEGER"},
+			{"source_label", "TEXT NOT NULL DEFAULT ''"},
+		} {
+			var n int
+			if err := db.Get(&n, "SELECT COUNT(*) FROM pragma_table_info('"+table+"') WHERE name = ?", col.name); err != nil {
+				return fmt.Errorf("check %s.%s column: %w", table, col.name, err)
+			}
+			if n == 0 {
+				if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN " + col.name + " " + col.decl); err != nil {
+					return fmt.Errorf("add %s.%s column: %w", table, col.name, err)
+				}
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_" + table + "_source_id ON " + table + "(source_id)"); err != nil {
+			return fmt.Errorf("index %s.source_id: %w", table, err)
+		}
+
+		// Filled per distinct source string, in Go, with the parser the API
+		// uses — the strings are few (one per imported file), the rows many.
+		var refs []string
+		if err := db.Select(&refs, "SELECT DISTINCT source FROM "+table+" WHERE source != '' AND source_id IS NULL AND source_label = ''"); err != nil {
+			return fmt.Errorf("read %s sources: %w", table, err)
+		}
+		tx, err := db.Beginx()
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			id, label := ParseSourceRef(ref)
+			var idArg interface{}
+			if id > 0 {
+				idArg = id
+			}
+			if _, err := tx.Exec("UPDATE "+table+" SET source_id = ?, source_label = ? WHERE source = ? AND source_id IS NULL AND source_label = ''", idArg, label, ref); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("fill %s source columns: %w", table, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit %s source columns: %w", table, err)
+		}
+	}
+	return nil
+}

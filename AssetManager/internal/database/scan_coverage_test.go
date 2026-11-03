@@ -74,7 +74,7 @@ func TestScanCoverage(t *testing.T) {
 	}
 
 	// Findings leave it alone.
-	if _, err := db.CreateVulnerability("CVE-1", "10.0.0.1", "443", 50, "", 7, ago(0)); err != nil {
+	if _, err := db.CreateVulnerability("CVE-1", "10.0.0.1", "443", 50, 0, "", 7, ago(0)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.RefreshAssetsForHosts([]HostRef{{Host: "10.0.0.1", UserID: 7}}); err != nil {

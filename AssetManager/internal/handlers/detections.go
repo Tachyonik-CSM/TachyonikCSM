@@ -28,10 +28,18 @@ type ListDetectionsResponse struct {
 
 // CreateDetectionRequest represents the request to create a detection
 type CreateDetectionRequest struct {
-	Name     string  `json:"name"`
-	Host     string  `json:"host"`
-	Port     string  `json:"port"`
-	Source   string  `json:"source"`
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Port string `json:"port"`
+	// The source the finding came from: sourceId, the ResourceManager source
+	// id, and sourceLabel, its filename. Both left out for one entered by
+	// hand.
+	SourceID    *int64 `json:"sourceId,omitempty"`
+	SourceLabel string `json:"sourceLabel,omitempty"`
+	// Source is the older "filename (ID: N)" form, read only when sourceId
+	// and sourceLabel are both missing. Kept for one release, so an importer
+	// updated after AssetManager still works; removed in the next.
+	Source   string  `json:"source,omitempty"`
 	UserID   *int64  `json:"userId,omitempty"`
 	LastSeen *string `json:"lastSeen,omitempty"`
 }
@@ -120,6 +128,8 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sourceID, sourceLabel := findingSource("detection", req.SourceID, req.SourceLabel, req.Source)
+
 	// Enforce detection limit
 	if h.systemManagerClient != nil {
 		smUser, smErr := h.systemManagerClient.GetUser(userID)
@@ -129,7 +139,7 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 			currentCount, _ := h.db.CountDetectionsByUserWithFilter(userID, nil)
 			if currentCount >= smUser.MaxDetections {
 				// Coalesced into one summary audit per (user, source) — see limitaudit.go.
-				h.limitAudit.record(detectionLimit, userID, currentCount, smUser.MaxDetections, req.Source, 0)
+				h.limitAudit.record(detectionLimit, userID, currentCount, smUser.MaxDetections, sourceLabel, sourceID)
 				http.Error(w, fmt.Sprintf("Detection limit reached (%d/%d)", currentCount, smUser.MaxDetections), http.StatusForbidden)
 				return
 			}
@@ -160,7 +170,7 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create detection
-	detection, err := h.db.CreateDetection(req.Name, req.Host, req.Port, req.Source, userID, lastSeen)
+	detection, err := h.db.CreateDetection(req.Name, req.Host, req.Port, sourceID, sourceLabel, userID, lastSeen)
 	if err != nil {
 		logger.Errorf("Failed to create detection: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to create detection")
@@ -183,9 +193,8 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 
 // DeleteDetectionsBySource deletes all detections associated with a source
 func (h *Handler) DeleteDetectionsBySource(w http.ResponseWriter, r *http.Request) {
-	source := r.URL.Query().Get("source")
-	if source == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
+	source, sourceID, refOK := sourceIDParam(w, r)
+	if !refOK {
 		return
 	}
 
@@ -206,10 +215,10 @@ func (h *Handler) DeleteDetectionsBySource(w http.ResponseWriter, r *http.Reques
 
 	// The hosts concerned, with their owners: on the internal path userID is
 	// 0, and refreshing "for user 0" would match no asset.
-	affectedHosts, _ := h.db.DetectionHostRefsBySource(source, userID)
+	affectedHosts, _ := h.db.DetectionHostRefsBySource(sourceID, userID)
 
 	// Delete detections
-	deletedIDs, err := h.db.DeleteDetectionsBySource(source, userID)
+	deletedIDs, err := h.db.DeleteDetectionsBySource(sourceID, userID)
 	if err != nil {
 		logger.Errorf("Failed to delete detections: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to delete detections")
@@ -243,9 +252,8 @@ func (h *Handler) DeleteDetectionsBySource(w http.ResponseWriter, r *http.Reques
 
 // ClearDetectionSourcesBySource clears the source field for all detections associated with a source
 func (h *Handler) ClearDetectionSourcesBySource(w http.ResponseWriter, r *http.Request) {
-	source := r.URL.Query().Get("source")
-	if source == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
+	source, sourceID, refOK := sourceIDParam(w, r)
+	if !refOK {
 		return
 	}
 
@@ -265,7 +273,7 @@ func (h *Handler) ClearDetectionSourcesBySource(w http.ResponseWriter, r *http.R
 	}
 
 	// Clear detection sources
-	updatedIDs, err := h.db.ClearDetectionSourceBySource(source, userID)
+	updatedIDs, err := h.db.ClearDetectionSourceBySource(sourceID, userID)
 	if err != nil {
 		logger.Errorf("Failed to clear detection sources: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to clear detection sources")
@@ -296,9 +304,8 @@ func (h *Handler) DeleteStaleDetectionsBySource(w http.ResponseWriter, r *http.R
 	}
 
 	// Get source from query parameter
-	source := r.URL.Query().Get("source")
-	if source == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
+	source, sourceID, refOK := sourceIDParam(w, r)
+	if !refOK {
 		return
 	}
 
@@ -315,10 +322,10 @@ func (h *Handler) DeleteStaleDetectionsBySource(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	affectedHosts, _ := h.db.StaleDetectionHostRefsBySource(source, modifiedBefore)
+	affectedHosts, _ := h.db.StaleDetectionHostRefsBySource(sourceID, modifiedBefore)
 
 	// Internal service request - delete for all users
-	deletedIDs, err := h.db.DeleteStaleDetectionsBySource(source, 0, modifiedBefore)
+	deletedIDs, err := h.db.DeleteStaleDetectionsBySource(sourceID, 0, modifiedBefore)
 	if err != nil {
 		logger.Errorf("Failed to delete stale detections: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to delete stale detections")

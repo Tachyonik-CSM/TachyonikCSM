@@ -15,15 +15,18 @@ import (
 
 // Detection represents a detection (severity 0 finding) in the database
 type Detection struct {
-	ID         int64     `json:"id" db:"id"`
-	Name       string    `json:"name" db:"name"`
-	Host       string    `json:"host" db:"host"`
-	Port       string    `json:"port" db:"port"`
-	Source     string    `json:"source" db:"source"`
-	UserID     int64     `json:"userId" db:"user_id"`
-	CreatedAt  time.Time `json:"createdAt" db:"created_at"`
-	ModifiedAt time.Time `json:"modifiedAt" db:"modified_at"`
-	LastSeen   time.Time `json:"lastSeen" db:"last_seen"`
+	ID   int64  `json:"id" db:"id"`
+	Name string `json:"name" db:"name"`
+	Host string `json:"host" db:"host"`
+	Port string `json:"port" db:"port"`
+	// The source the finding came from: its ResourceManager id (nil when only
+	// its name is known) and its filename. Both empty for one entered by hand.
+	SourceID    *int64    `json:"sourceId" db:"source_id"`
+	SourceLabel string    `json:"sourceLabel" db:"source_label"`
+	UserID      int64     `json:"userId" db:"user_id"`
+	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
+	ModifiedAt  time.Time `json:"modifiedAt" db:"modified_at"`
+	LastSeen    time.Time `json:"lastSeen" db:"last_seen"`
 }
 
 // GetDetectionHostsByIDs returns the distinct hosts of the user's detections
@@ -50,7 +53,7 @@ func (db *DB) CountDetectionsByUserWithFilter(userID int64, filter *DetectionFil
 
 // CreateDetection creates a new detection and returns it
 // If lastSeen is nil, uses current time
-func (db *DB) CreateDetection(name, host, port, source string, userID int64, lastSeen *time.Time) (*Detection, error) {
+func (db *DB) CreateDetection(name, host, port string, sourceID int64, sourceLabel string, userID int64, lastSeen *time.Time) (*Detection, error) {
 	now := time.Now()
 	lastSeenTime := now
 	if lastSeen != nil {
@@ -58,8 +61,8 @@ func (db *DB) CreateDetection(name, host, port, source string, userID int64, las
 	}
 
 	result, err := db.Exec(
-		"INSERT INTO detections (name, host, port, source, user_id, created_at, modified_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		name, host, port, source, userID, now, now, lastSeenTime,
+		"INSERT INTO detections (name, host, port, source_id, source_label, user_id, created_at, modified_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		name, host, port, sourceIDArg(sourceID), sourceLabel, userID, now, now, lastSeenTime,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create detection: %w", err)
@@ -71,15 +74,16 @@ func (db *DB) CreateDetection(name, host, port, source string, userID int64, las
 	}
 
 	return &Detection{
-		ID:         id,
-		Name:       name,
-		Host:       host,
-		Port:       port,
-		Source:     source,
-		UserID:     userID,
-		CreatedAt:  now,
-		ModifiedAt: now,
-		LastSeen:   lastSeenTime,
+		ID:          id,
+		Name:        name,
+		Host:        host,
+		Port:        port,
+		SourceID:    sourceIDPtr(sourceID),
+		SourceLabel: sourceLabel,
+		UserID:      userID,
+		CreatedAt:   now,
+		ModifiedAt:  now,
+		LastSeen:    lastSeenTime,
 	}, nil
 }
 
@@ -92,21 +96,21 @@ func (db *DB) DeleteDetectionsByIDs(ids []int64, userID int64) (deleted []int64,
 // DeleteDetectionsBySource deletes a source's detections — the user's, or
 // everyone's for userID 0 (an internal service request) — and returns their
 // IDs.
-func (db *DB) DeleteDetectionsBySource(source string, userID int64) ([]int64, error) {
-	where, args := sourceScope(source, userID, nil)
+func (db *DB) DeleteDetectionsBySource(sourceID int64, userID int64) ([]int64, error) {
+	where, args := sourceScope(sourceID, userID, nil)
 	return db.deleteFindingsWhere(detectionKind, where, args)
 }
 
 // DeleteStaleDetectionsBySource deletes a source's detections not modified
 // since modifiedBefore — what a re-import no longer produced — and returns
 // their IDs.
-func (db *DB) DeleteStaleDetectionsBySource(source string, userID int64, modifiedBefore time.Time) ([]int64, error) {
-	where, args := sourceScope(source, userID, &modifiedBefore)
+func (db *DB) DeleteStaleDetectionsBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]int64, error) {
+	where, args := sourceScope(sourceID, userID, &modifiedBefore)
 	return db.deleteFindingsWhere(detectionKind, where, args)
 }
 
 // ClearDetectionSourceBySource unlinks a source's detections from it, keeping
 // them, and returns their IDs.
-func (db *DB) ClearDetectionSourceBySource(source string, userID int64) ([]int64, error) {
-	return db.clearFindingSource(detectionKind, source, userID)
+func (db *DB) ClearDetectionSourceBySource(sourceID int64, userID int64) ([]int64, error) {
+	return db.clearFindingSource(detectionKind, sourceID, userID)
 }

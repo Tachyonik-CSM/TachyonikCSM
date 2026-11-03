@@ -28,11 +28,19 @@ type ListVulnerabilitiesResponse struct {
 
 // CreateVulnerabilityRequest represents the request to create a vulnerability
 type CreateVulnerabilityRequest struct {
-	Name     string  `json:"name"`
-	Host     string  `json:"host"`
-	Port     string  `json:"port"`
-	Severity int     `json:"severity"`
-	Source   string  `json:"source"`
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     string `json:"port"`
+	Severity int    `json:"severity"`
+	// The source the finding came from: sourceId, the ResourceManager source
+	// id, and sourceLabel, its filename. Both left out for one entered by
+	// hand.
+	SourceID    *int64 `json:"sourceId,omitempty"`
+	SourceLabel string `json:"sourceLabel,omitempty"`
+	// Source is the older "filename (ID: N)" form, read only when sourceId
+	// and sourceLabel are both missing. Kept for one release, so an importer
+	// updated after AssetManager still works; removed in the next.
+	Source   string  `json:"source,omitempty"`
 	UserID   *int64  `json:"userId,omitempty"`
 	LastSeen *string `json:"lastSeen,omitempty"`
 }
@@ -125,6 +133,8 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sourceID, sourceLabel := findingSource("vulnerability", req.SourceID, req.SourceLabel, req.Source)
+
 	// Enforce vulnerability limit
 	if h.systemManagerClient != nil {
 		smUser, smErr := h.systemManagerClient.GetUser(userID)
@@ -134,7 +144,7 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 			currentCount, _ := h.db.CountVulnerabilitiesByUserWithFilter(userID, nil)
 			if currentCount >= smUser.MaxVulnerabilities {
 				// Coalesced into one summary audit per (user, source) — see limitaudit.go.
-				h.limitAudit.record(vulnerabilityLimit, userID, currentCount, smUser.MaxVulnerabilities, req.Source, 0)
+				h.limitAudit.record(vulnerabilityLimit, userID, currentCount, smUser.MaxVulnerabilities, sourceLabel, sourceID)
 				http.Error(w, fmt.Sprintf("Vulnerability limit reached (%d/%d)", currentCount, smUser.MaxVulnerabilities), http.StatusForbidden)
 				return
 			}
@@ -165,7 +175,7 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create vulnerability
-	vulnerability, err := h.db.CreateVulnerability(req.Name, req.Host, req.Port, req.Severity, req.Source, userID, lastSeen)
+	vulnerability, err := h.db.CreateVulnerability(req.Name, req.Host, req.Port, req.Severity, sourceID, sourceLabel, userID, lastSeen)
 	if err != nil {
 		logger.Errorf("Failed to create vulnerability: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to create vulnerability")
@@ -190,9 +200,8 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 
 // DeleteVulnerabilitiesBySource deletes all vulnerabilities associated with a source
 func (h *Handler) DeleteVulnerabilitiesBySource(w http.ResponseWriter, r *http.Request) {
-	source := r.URL.Query().Get("source")
-	if source == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
+	source, sourceID, refOK := sourceIDParam(w, r)
+	if !refOK {
 		return
 	}
 
@@ -213,10 +222,10 @@ func (h *Handler) DeleteVulnerabilitiesBySource(w http.ResponseWriter, r *http.R
 
 	// The hosts concerned, with their owners: on the internal path userID is
 	// 0, and refreshing "for user 0" would match no asset.
-	affectedHosts, _ := h.db.VulnerabilityHostRefsBySource(source, userID)
+	affectedHosts, _ := h.db.VulnerabilityHostRefsBySource(sourceID, userID)
 
 	// Delete vulnerabilities
-	deletedIDs, err := h.db.DeleteVulnerabilitiesBySource(source, userID)
+	deletedIDs, err := h.db.DeleteVulnerabilitiesBySource(sourceID, userID)
 	if err != nil {
 		logger.Errorf("Failed to delete vulnerabilities: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to delete vulnerabilities")
@@ -249,9 +258,8 @@ func (h *Handler) DeleteVulnerabilitiesBySource(w http.ResponseWriter, r *http.R
 
 // ClearVulnerabilitySourcesBySource clears the source field for all vulnerabilities associated with a source
 func (h *Handler) ClearVulnerabilitySourcesBySource(w http.ResponseWriter, r *http.Request) {
-	source := r.URL.Query().Get("source")
-	if source == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
+	source, sourceID, refOK := sourceIDParam(w, r)
+	if !refOK {
 		return
 	}
 
@@ -271,7 +279,7 @@ func (h *Handler) ClearVulnerabilitySourcesBySource(w http.ResponseWriter, r *ht
 	}
 
 	// Clear vulnerability sources
-	updatedIDs, err := h.db.ClearVulnerabilitySourceBySource(source, userID)
+	updatedIDs, err := h.db.ClearVulnerabilitySourceBySource(sourceID, userID)
 	if err != nil {
 		logger.Errorf("Failed to clear vulnerability sources: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to clear vulnerability sources")
@@ -302,9 +310,8 @@ func (h *Handler) DeleteStaleVulnerabilitiesBySource(w http.ResponseWriter, r *h
 	}
 
 	// Get source from query parameter
-	source := r.URL.Query().Get("source")
-	if source == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
+	source, sourceID, refOK := sourceIDParam(w, r)
+	if !refOK {
 		return
 	}
 
@@ -321,10 +328,10 @@ func (h *Handler) DeleteStaleVulnerabilitiesBySource(w http.ResponseWriter, r *h
 		return
 	}
 
-	affectedHosts, _ := h.db.StaleVulnerabilityHostRefsBySource(source, modifiedBefore)
+	affectedHosts, _ := h.db.StaleVulnerabilityHostRefsBySource(sourceID, modifiedBefore)
 
 	// Internal service request - delete for all users
-	deletedIDs, err := h.db.DeleteStaleVulnerabilitiesBySource(source, 0, modifiedBefore)
+	deletedIDs, err := h.db.DeleteStaleVulnerabilitiesBySource(sourceID, 0, modifiedBefore)
 	if err != nil {
 		logger.Errorf("Failed to delete stale vulnerabilities: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to delete stale vulnerabilities")

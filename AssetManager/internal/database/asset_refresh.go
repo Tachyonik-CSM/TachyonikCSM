@@ -150,32 +150,33 @@ func (db *DB) hostRefs(query string, args ...interface{}) ([]HostRef, error) {
 
 // VulnerabilityHostRefsBySource is the hosts a source's vulnerabilities refer
 // to; userID 0 means every user's (the internal service path).
-func (db *DB) VulnerabilityHostRefsBySource(source string, userID int64) ([]HostRef, error) {
-	if userID == 0 {
-		return db.hostRefs("SELECT DISTINCT host, user_id FROM vulnerabilities WHERE source = ?", source)
-	}
-	return db.hostRefs("SELECT DISTINCT host, user_id FROM vulnerabilities WHERE source = ? AND user_id = ?", source, userID)
+func (db *DB) VulnerabilityHostRefsBySource(sourceID int64, userID int64) ([]HostRef, error) {
+	return db.findingHostRefs(vulnerabilityKind, sourceID, userID, nil)
 }
 
 // StaleVulnerabilityHostRefsBySource is the hosts the vulnerabilities a
 // re-import is about to drop refer to.
-func (db *DB) StaleVulnerabilityHostRefsBySource(source string, modifiedBefore time.Time) ([]HostRef, error) {
-	return db.hostRefs("SELECT DISTINCT host, user_id FROM vulnerabilities WHERE source = ? AND modified_at < ?", source, modifiedBefore)
+func (db *DB) StaleVulnerabilityHostRefsBySource(sourceID int64, modifiedBefore time.Time) ([]HostRef, error) {
+	return db.findingHostRefs(vulnerabilityKind, sourceID, 0, &modifiedBefore)
 }
 
 // DetectionHostRefsBySource is the hosts a source's detections refer to;
 // userID 0 means every user's.
-func (db *DB) DetectionHostRefsBySource(source string, userID int64) ([]HostRef, error) {
-	if userID == 0 {
-		return db.hostRefs("SELECT DISTINCT host, user_id FROM detections WHERE source = ?", source)
-	}
-	return db.hostRefs("SELECT DISTINCT host, user_id FROM detections WHERE source = ? AND user_id = ?", source, userID)
+func (db *DB) DetectionHostRefsBySource(sourceID int64, userID int64) ([]HostRef, error) {
+	return db.findingHostRefs(detectionKind, sourceID, userID, nil)
 }
 
 // StaleDetectionHostRefsBySource is the hosts the detections a re-import is
 // about to drop refer to.
-func (db *DB) StaleDetectionHostRefsBySource(source string, modifiedBefore time.Time) ([]HostRef, error) {
-	return db.hostRefs("SELECT DISTINCT host, user_id FROM detections WHERE source = ? AND modified_at < ?", source, modifiedBefore)
+func (db *DB) StaleDetectionHostRefsBySource(sourceID int64, modifiedBefore time.Time) ([]HostRef, error) {
+	return db.findingHostRefs(detectionKind, sourceID, 0, &modifiedBefore)
+}
+
+// findingHostRefs is the hosts, with their owners, of the findings in a
+// source's scope (see sourceScope).
+func (db *DB) findingHostRefs(k findingKind, sourceID int64, userID int64, modifiedBefore *time.Time) ([]HostRef, error) {
+	where, args := sourceScope(sourceID, userID, modifiedBefore)
+	return db.hostRefs("SELECT DISTINCT host, user_id FROM "+k.table+" WHERE "+where, args...)
 }
 
 // HostRefsOf names one user's hosts as refs.
