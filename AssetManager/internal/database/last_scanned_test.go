@@ -46,7 +46,7 @@ func TestLastScanned(t *testing.T) {
 	if _, err := db.CreateAsset("10.0.0.1", "Host", 7, 0, "", ago(0)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateAsset("10.0.0.1", "Domain", 7, 0, "", ago(0)); err != nil {
+	if _, err := insertLegacyAsset(db, "10.0.0.1", "Domain", 7, ago(0)); err != nil {
 		t.Fatal(err)
 	}
 	if v := lastScanned(t, db, "10.0.0.1", "Host"); v != nil {
@@ -183,7 +183,7 @@ func TestScanBucketsMatchFilter(t *testing.T) {
 	if _, err := db.Exec("UPDATE assets SET last_scanned = 'garbage' WHERE name = '10.0.3.2'"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateAsset("www.example.com", "Domain", 7, 0, "", &now); err != nil {
+	if _, err := insertLegacyAsset(db, "www.example.com", "Domain", 7, &now); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := db.GetAssetStatsByUser(7)

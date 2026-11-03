@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Tests GET and PATCH /api/assets/{id}: a user reads and retypes their own
-// asset, another user's id is "not found", and fields that are computed or
+// asset (an unknown type refused), another user's id is "not found", and fields that are computed or
 // that link the asset's findings cannot be set.
 
 package handlers
@@ -34,17 +34,20 @@ func assetFixture(t *testing.T) (http.Handler, int64) {
 	if err := db.Migrate(); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	res, err := db.CreateAsset("192.168.178.10", "Device", 52, 0, "", nil)
+	// Stored directly, as an asset of a type from before the types were a
+	// fixed set: retyping it to Host is how such a row is put right.
+	res, err := db.Exec(`INSERT INTO assets (user_id, name, type) VALUES (52, '192.168.178.10', 'Device')`)
 	if err != nil {
-		t.Fatalf("CreateAsset: %v", err)
+		t.Fatalf("insert asset: %v", err)
 	}
+	assetID, _ := res.LastInsertId()
 	hub := ws.NewHub()
 	go hub.Run()
 	h := &Handler{db: db, hub: hub, config: &config.Config{}}
 	r := mux.NewRouter()
 	r.HandleFunc("/api/assets/{id:[0-9]+}", h.GetAsset).Methods("GET")
 	r.HandleFunc("/api/assets/{id:[0-9]+}", h.UpdateAsset).Methods("PATCH")
-	return r, res.Asset.ID
+	return r, assetID
 }
 
 func asUser(t *testing.T, r http.Handler, method, path string, userID int64, body string) (int, database.Asset, string) {
@@ -64,6 +67,9 @@ func TestAUserReadsAndRetypesTheirAsset(t *testing.T) {
 
 	if code, a, _ := asUser(t, r, "GET", path, 52, ""); code != http.StatusOK || a.Name != "192.168.178.10" {
 		t.Fatalf("GET: %d %+v", code, a)
+	}
+	if code, _, msg := asUser(t, r, "PATCH", path, 52, `{"type":"Domain"}`); code != http.StatusBadRequest {
+		t.Errorf("PATCH to an unknown type: %d %s, want 400", code, msg)
 	}
 	code, a, _ := asUser(t, r, "PATCH", path, 52, `{"type":"host"}`)
 	if code != http.StatusOK || a.Type != "Host" {

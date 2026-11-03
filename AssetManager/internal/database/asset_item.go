@@ -44,6 +44,11 @@ func (db *DB) GetAssetForUsers(id int64, userIDs []int64) (*Asset, error) {
 // UpdateAssetTypeForUsers sets the type of asset id if it belongs to one of
 // userIDs, and returns the asset as it now is.
 func (db *DB) UpdateAssetTypeForUsers(id int64, userIDs []int64, assetType string) (*Asset, error) {
+	canonical, ok := CanonicalAssetType(assetType)
+	if !ok {
+		return nil, unknownAssetType(assetType)
+	}
+	assetType = canonical
 	if len(userIDs) == 0 {
 		return nil, ErrAssetNotFound
 	}

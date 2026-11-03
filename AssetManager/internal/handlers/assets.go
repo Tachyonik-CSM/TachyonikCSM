@@ -188,14 +188,15 @@ func (h *Handler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Asset type is required")
 		return
 	}
-	// Normalise the canonical "Host" spelling so the limit check below and
-	// the row that gets stored use the same casing. Without this, an
-	// importer sending type:"host" would slip past the limit (the gate is
-	// case-insensitive but CountHostAssetsByUser is case-sensitive on
-	// 'Host'), letting unbounded host rows accumulate.
-	if strings.EqualFold(req.Type, "Host") {
-		req.Type = "Host"
+	// The types are a fixed set. The canonical spelling matters beyond
+	// tidiness: the limit check below compares against "Host" exactly, so an
+	// importer sending "host" would otherwise slip past it.
+	assetType, ok := database.CanonicalAssetType(req.Type)
+	if !ok {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("Unknown asset type %q (known: %s)", req.Type, strings.Join(database.AssetTypes, ", ")))
+		return
 	}
+	req.Type = assetType
 
 	var sourceID int64
 	sourceLabel := req.SourceLabel

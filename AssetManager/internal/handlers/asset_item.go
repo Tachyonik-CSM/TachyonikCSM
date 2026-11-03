@@ -16,6 +16,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -92,12 +93,12 @@ func (h *Handler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "A non-empty \"type\" is required")
 		return
 	}
-	assetType = strings.TrimSpace(assetType)
-	// The canonical spelling, as CreateAsset stores it: host limits and counts
-	// compare against "Host" exactly.
-	if strings.EqualFold(assetType, "Host") {
-		assetType = "Host"
+	canonical, ok := database.CanonicalAssetType(assetType)
+	if !ok {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("Unknown asset type %q (known: %s)", assetType, strings.Join(database.AssetTypes, ", ")))
+		return
 	}
+	assetType = canonical
 
 	asset, err := h.db.UpdateAssetTypeForUsers(id, h.GetVisibleUserIDs(r), assetType)
 	if errors.Is(err, database.ErrAssetNotFound) {

@@ -43,7 +43,7 @@ func TestHostAgeBuckets(t *testing.T) {
 		}
 	}
 	// Not a host: counted in the total, not in the buckets.
-	if _, err := db.CreateAsset("www.example.com", "Domain", 7, 0, "", days(1)); err != nil {
+	if _, err := insertLegacyAsset(db, "www.example.com", "Domain", 7, days(1)); err != nil {
 		t.Fatal(err)
 	}
 	// Another layout of last_seen ("T", no offset), 10 days ago.
@@ -102,7 +102,7 @@ func TestLastSeenFilterMatchesBuckets(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.CreateAsset("www.example.com", "Domain", 7, 0, "", &now); err != nil {
+	if _, err := insertLegacyAsset(db, "www.example.com", "Domain", 7, &now); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := db.GetAssetStatsByUser(7)

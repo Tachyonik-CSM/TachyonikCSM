@@ -272,7 +272,7 @@ Authorization: Bearer <JWT_TOKEN>
 **Asset Object:**
 - `id`: Unique asset identifier (integer)
 - `name`: Asset name/identifier (string)
-- `type`: Asset type (string)
+- `type`: Asset type (string); `Host`, the only type
 - `sources`: The sources that reported the asset, each `{sourceId, sourceLabel, lastSeen}` (`sourceId` is null for a source known only by name)
 - `sourcesLabel`: The sources' names, comma-separated, for display
 - `userId`: User ID who owns this asset (integer)
@@ -316,7 +316,7 @@ Content-Type: application/json
 
 **Request Fields:**
 - `name`: Asset name/identifier (required, string)
-- `type`: Asset type (required, string)
+- `type`: Asset type (required, string). The types are a fixed set, for now only `Host`; a case variant such as `host` is stored as `Host`, any other type is refused with `400`. Assets of another type stored before the set was fixed are kept, reported in a startup warning, and can be retyped with `PATCH /api/assets/{id}`
 - `sourceId`: ResourceManager id of the source the asset came from (integer)
 - `sourceLabel`: The source's filename (string). At least one of `sourceId` and `sourceLabel` is required; without either the request is refused with `400`. (The `"filename (ID: N)"` string once accepted as `source` is no longer read.)
 - `userId`: User ID (optional, only for internal service requests)

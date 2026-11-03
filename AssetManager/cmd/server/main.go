@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -94,6 +95,16 @@ func main() {
 		logger.Fatalf("Failed to run migrations: %v", err)
 	}
 	logger.Info("Database migrations completed")
+
+	// Assets stored before the types were a fixed set stay as they are;
+	// say so, as nothing type-specific treats them.
+	if unknown, err := db.AssetsOfUnknownType(); err != nil {
+		logger.Warnf("Could not check for assets of unknown type: %v", err)
+	} else {
+		for t, n := range unknown {
+			logger.Warnf("%d asset(s) of unknown type %q are stored (known: %s); they are kept but no longer accepted", n, t, strings.Join(database.AssetTypes, ", "))
+		}
+	}
 
 	// Initialize WebSocket hub
 	hub := websocket.NewHub()

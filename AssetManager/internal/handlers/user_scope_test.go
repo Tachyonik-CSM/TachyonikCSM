@@ -21,6 +21,7 @@ import (
 
 	"tachyonik/assetmanager/internal/config"
 	"tachyonik/assetmanager/internal/database"
+	"tachyonik/assetmanager/internal/systemmanager"
 	ws "tachyonik/assetmanager/internal/websocket"
 )
 
@@ -39,7 +40,26 @@ func scopedHandler(t *testing.T) *Handler {
 	}
 	hub := ws.NewHub()
 	go hub.Run()
-	return &Handler{db: db, hub: hub, config: &config.Config{}}
+	return &Handler{db: db, hub: hub, config: &config.Config{}, systemManagerClient: stubSystemManager(t)}
+}
+
+// stubSystemManager stands in for SystemManager: every user exists, is
+// active and has no limits, and is the only member of their workspace.
+// Statistics and audit events are taken and dropped.
+func stubSystemManager(t *testing.T) *systemmanager.Client {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/internal/users/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/internal/users/")
+		w.Write([]byte(`{"id":` + id + `,"active":true}`))
+	})
+	mux.HandleFunc("/api/internal/group-members", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"userIds":[` + r.URL.Query().Get("userId") + `]}`))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusCreated) })
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return systemmanager.NewClient(srv.URL, "")
 }
 
 func callAs(method, target, body string, userID int64, service bool) *http.Request {
@@ -89,7 +109,7 @@ func TestAUsersOwnListIsUnchanged(t *testing.T) {
 // — still creates the asset for themselves, not for the body's userId.
 func TestAUserCannotChooseAnAssetsOwner(t *testing.T) {
 	h := scopedHandler(t)
-	r := callAs("POST", "/api/assets", `{"name":"printer-9","type":"Device","userId":7,"sourceId":1,"sourceLabel":"scan.xml"}`, 52, false)
+	r := callAs("POST", "/api/assets", `{"name":"printer-9","type":"Host","userId":7,"sourceId":1,"sourceLabel":"scan.xml"}`, 52, false)
 	r.Header.Set("X-Internal-Service-Key", "anything")
 	w := httptest.NewRecorder()
 	h.CreateAsset(w, r)
@@ -105,7 +125,7 @@ func TestAUserCannotChooseAnAssetsOwner(t *testing.T) {
 // — used to make this act for ALL users. It now clears only their own.
 func TestAUserCannotClearAnotherUsersAssetSources(t *testing.T) {
 	h := scopedHandler(t)
-	if _, err := h.db.CreateAsset("printer-7", "Device", 7, 1, "scan.xml", nil); err != nil {
+	if _, err := h.db.CreateAsset("printer-7", "Host", 7, 1, "scan.xml", nil); err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
 	r := callAs("PATCH", "/api/assets/by-source?source="+url.QueryEscape("scan.xml (ID: 1)"), "", 52, false)
@@ -183,8 +203,8 @@ func TestCreateAssetNeedsASource(t *testing.T) {
 	}{
 		"no source":           {`{"name":"10.0.0.9","type":"Host"}`, http.StatusBadRequest},
 		"only the old string": {`{"name":"10.0.0.9","type":"Host","source":"scan.xml (ID: 1)"}`, http.StatusBadRequest},
-		// A Domain, as a Host would first ask SystemManager for the limits.
-		"source id and label": {`{"name":"www.example.com","type":"Domain","sourceId":1,"sourceLabel":"scan.xml"}`, http.StatusCreated},
+		"source id and label": {`{"name":"10.0.0.9","type":"Host","sourceId":1,"sourceLabel":"scan.xml"}`, http.StatusCreated},
+		"an unknown type":     {`{"name":"www.example.com","type":"Domain","sourceId":1,"sourceLabel":"scan.xml"}`, http.StatusBadRequest},
 	} {
 		w := httptest.NewRecorder()
 		h.CreateAsset(w, callAs("POST", "/api/assets", c.body, 7, false))

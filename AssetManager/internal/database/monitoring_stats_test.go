@@ -30,7 +30,7 @@ func TestMonitoringBucketsMatchFilter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.CreateAsset("www.example.com", "Domain", 7, 1, "a.xml", nil); err != nil {
+	if _, err := insertLegacyAsset(db, "www.example.com", "Domain", 7, nil); err != nil {
 		t.Fatal(err)
 	}
 

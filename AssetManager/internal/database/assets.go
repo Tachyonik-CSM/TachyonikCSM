@@ -315,6 +315,11 @@ type CreateAssetResult struct {
 // alone identifies the observation. If sourceLabel is empty and sourceID is 0,
 // no junction row is written (manual creation).
 func (db *DB) CreateAsset(name, assetType string, userID int64, sourceID int64, sourceLabel string, lastSeen *time.Time) (*CreateAssetResult, error) {
+	canonical, ok := CanonicalAssetType(assetType)
+	if !ok {
+		return nil, unknownAssetType(assetType)
+	}
+	assetType = canonical
 	now := time.Now()
 	lastSeenTime := now
 	if lastSeen != nil {
