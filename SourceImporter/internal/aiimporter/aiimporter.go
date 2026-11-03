@@ -336,7 +336,7 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	vulnSuccess := 0
 	vulnFail := 0
 	for _, vuln := range result.Vulnerabilities {
-		if _, err := ai.assetManagerAPI.CreateVulnerability(vuln.Name, vuln.Host, vuln.Port, vuln.Severity, sourceRef, source.UserID, vuln.LastSeen); err != nil {
+		if _, err := ai.assetManagerAPI.CreateVulnerability(vuln.Name, vuln.Host, vuln.Port, vuln.Severity, source.ID, source.Filename, source.UserID, vuln.LastSeen); err != nil {
 			logger.Errorf("Failed to create vulnerability %s on %s:%s: %v", vuln.Name, vuln.Host, vuln.Port, err)
 			vulnFails.add(fmt.Sprintf("%s on %s:%s", vuln.Name, vuln.Host, vuln.Port), err)
 			vulnFail++
@@ -348,7 +348,7 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	detSuccess := 0
 	detFail := 0
 	for _, det := range result.Detections {
-		if _, err := ai.assetManagerAPI.CreateDetection(det.Name, det.Host, det.Port, sourceRef, source.UserID, det.LastSeen); err != nil {
+		if _, err := ai.assetManagerAPI.CreateDetection(det.Name, det.Host, det.Port, source.ID, source.Filename, source.UserID, det.LastSeen); err != nil {
 			logger.Errorf("Failed to create detection %s on %s:%s: %v", det.Name, det.Host, det.Port, err)
 			detFails.add(fmt.Sprintf("%s on %s:%s", det.Name, det.Host, det.Port), err)
 			detFail++

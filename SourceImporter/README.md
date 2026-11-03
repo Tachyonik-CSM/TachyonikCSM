@@ -373,15 +373,19 @@ over every user's uploads of that type.
 - Each unique IP address becomes a separate asset
 - Duplicate IPs are deduplicated automatically
 - Asset name: IP address (e.g., "192.168.222.131")
-- Asset type: "host"
-- Source reference: "{filename} (ID: {sourceID})"
+- Asset type: "Host", the only asset type AssetManager accepts
+- Source: the ResourceManager source id and filename (`sourceId`, `sourceLabel`),
+  sent the same way for assets, vulnerabilities and detections
 
 **Example**:
 ```
 Name: 192.168.222.131
-Type: host
-Source: openvas-sample-report-1.xml (ID: 15)
+Type: Host
+Source: sourceId 15, sourceLabel openvas-sample-report-1.xml
 ```
+
+The stale-record cleanup after a re-import names the source by its reference
+`"{filename} (ID: {sourceID})"`; AssetManager finds the records by the id in it.
 
 ### Adding New File Types
 

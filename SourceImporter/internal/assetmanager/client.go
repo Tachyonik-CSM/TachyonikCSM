@@ -71,9 +71,12 @@ type CreateVulnerabilityRequest struct {
 	Host     string `json:"host"`
 	Port     string `json:"port"`
 	Severity int    `json:"severity"`
-	Source   string `json:"source"`
-	UserID   int64  `json:"userId,omitempty"`
-	LastSeen string `json:"lastSeen,omitempty"`
+	// The source the finding came from, as for an asset: its ResourceManager
+	// id and its filename.
+	SourceID    int64  `json:"sourceId"`
+	SourceLabel string `json:"sourceLabel"`
+	UserID      int64  `json:"userId,omitempty"`
+	LastSeen    string `json:"lastSeen,omitempty"`
 }
 
 // Vulnerability represents a vulnerability response
@@ -90,12 +93,15 @@ type Vulnerability struct {
 
 // CreateDetectionRequest represents the create detection request
 type CreateDetectionRequest struct {
-	Name     string `json:"name"`
-	Host     string `json:"host"`
-	Port     string `json:"port"`
-	Source   string `json:"source"`
-	UserID   int64  `json:"userId,omitempty"`
-	LastSeen string `json:"lastSeen,omitempty"`
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Port string `json:"port"`
+	// The source the finding came from, as for an asset: its ResourceManager
+	// id and its filename.
+	SourceID    int64  `json:"sourceId"`
+	SourceLabel string `json:"sourceLabel"`
+	UserID      int64  `json:"userId,omitempty"`
+	LastSeen    string `json:"lastSeen,omitempty"`
 }
 
 // Detection represents a detection response
@@ -178,15 +184,16 @@ func (c *Client) ApplyScanCoverage(sourceID int64, sourceLabel string, userID in
 }
 
 // CreateVulnerability creates a new vulnerability via the AssetManager API.
-func (c *Client) CreateVulnerability(name, host, port string, severity int, source string, userID int64, lastSeen string) (*Vulnerability, error) {
+func (c *Client) CreateVulnerability(name, host, port string, severity int, sourceID int64, sourceLabel string, userID int64, lastSeen string) (*Vulnerability, error) {
 	payload := CreateVulnerabilityRequest{
-		Name:     name,
-		Host:     host,
-		Port:     port,
-		Severity: severity,
-		Source:   source,
-		UserID:   userID,
-		LastSeen: lastSeen,
+		Name:        name,
+		Host:        host,
+		Port:        port,
+		Severity:    severity,
+		SourceID:    sourceID,
+		SourceLabel: sourceLabel,
+		UserID:      userID,
+		LastSeen:    lastSeen,
 	}
 	var vulnerability Vulnerability
 	if err := c.rc.JSON("POST", "/api/vulnerabilities", payload, &vulnerability, http.StatusCreated); err != nil {
@@ -196,14 +203,15 @@ func (c *Client) CreateVulnerability(name, host, port string, severity int, sour
 }
 
 // CreateDetection creates a new detection via the AssetManager API.
-func (c *Client) CreateDetection(name, host, port, source string, userID int64, lastSeen string) (*Detection, error) {
+func (c *Client) CreateDetection(name, host, port string, sourceID int64, sourceLabel string, userID int64, lastSeen string) (*Detection, error) {
 	payload := CreateDetectionRequest{
-		Name:     name,
-		Host:     host,
-		Port:     port,
-		Source:   source,
-		UserID:   userID,
-		LastSeen: lastSeen,
+		Name:        name,
+		Host:        host,
+		Port:        port,
+		SourceID:    sourceID,
+		SourceLabel: sourceLabel,
+		UserID:      userID,
+		LastSeen:    lastSeen,
 	}
 	var detection Detection
 	if err := c.rc.JSON("POST", "/api/detections", payload, &detection, http.StatusCreated); err != nil {
