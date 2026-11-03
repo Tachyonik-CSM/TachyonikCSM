@@ -1,0 +1,10 @@
+assetmanager
+*.db
+*.db-shm
+*.db-wal
+*.log
+/data
+/cmd/**/assetmanager
+config.yaml
+.env
+.env.*

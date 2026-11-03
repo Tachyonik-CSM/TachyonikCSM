@@ -1,0 +1,78 @@
+# AssetManager Configuration File Example
+# Copy this file to config.yaml and adjust the values as needed.
+#
+# Configuration priority (highest wins):
+#   environment variables > config.yaml > built-in defaults
+#
+# The config file location can be overridden with ASSETMANAGER_CONFIG
+# (default: ./config.yaml).
+
+server:
+  port: 8081       # HTTP port (default: 8081) — Env: ASSETMANAGER_PORT
+  host: localhost  # Listen address (default: localhost) — Env: ASSETMANAGER_HOST
+
+# Operating mode — must match SystemManager's instance.mode. In appliance mode
+# host-asset quotas are enforced instance-wide (one shared budget across all
+# users); saas keeps per-user enforcement.
+instance:
+  mode: appliance  # appliance or saas (default: appliance) — Env: ASSETMANAGER_INSTANCE_MODE
+
+database:
+  path: /home/tachyon/data/AssetManager.db  # SQLite database file (default: /home/tachyon/data/AssetManager.db)
+                                            # Env: ASSETMANAGER_DB_PATH
+
+auth:
+  jwt_secret: "CHANGE-THIS-SECRET-KEY-MIN-32-CHARS"  # Must match the JWT secret of SystemManager, which issues the tokens.
+                                                     # At least 32 characters. Env: ASSETMANAGER_JWT_SECRET
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # The key other services present to call this one (imports,
+                                                            # the daemons, SystemManager). Empty refuses every internal
+                                                            # call. Env: ASSETMANAGER_INTERNAL_SERVICE_KEY
+
+# Browser origins allowed to call the API and open its WebSockets. List the
+# WebUI's public URL exactly (scheme, host, port; no trailing slash).
+cors:
+  allowed_origins:  # (default: http://localhost:5173, http://localhost:3000)
+    - http://localhost:5173
+    - http://localhost:3000
+
+# ResourceManager is asked for the source an asset came from, so a record is
+# reported against the file or tool that produced it. Nothing is written there.
+rscmanager:
+  url: http://localhost:8080  # ResourceManager API URL (default: http://localhost:8080)
+                              # Env: ASSETMANAGER_RESOURCEMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ResourceManager's internal_service_key
+                                                            # Env: ASSETMANAGER_RESOURCEMANAGER_INTERNAL_SERVICE_KEY
+
+# SystemManager supplies the users' limits, the members of a shared workspace
+# and the organisation record the Coverage Score is measured against. Sub-scores,
+# statistics and audit-trail events are sent there.
+systemmanager:
+  url: http://localhost:8083  # SystemManager API URL (default: http://localhost:8083)
+                              # Env: ASSETMANAGER_SYSTEMMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match SystemManager's internal_service_key
+                                                            # Env: ASSETMANAGER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY
+
+# AIManager serves this appliance's license, i.e. the licensed host-asset cap.
+# Set url on an appliance (instance mode: appliance) so the cap is enforced;
+# leave it empty on the SaaS, where there is no appliance license. If AIManager
+# cannot be reached, assets are still created (the cap fails open).
+aimanager:
+  url: ""  # AIManager API URL, e.g. http://localhost:8085 (default: empty = no instance-wide cap)
+           # Env: ASSETMANAGER_AIMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AIManager's internal_service_key
+                                                            # Env: ASSETMANAGER_AIMANAGER_INTERNAL_SERVICE_KEY
+
+# NOTE: to_console and to_file must be stated explicitly whenever this file
+# exists. Unlike every other setting, they are applied unconditionally rather
+# than only when non-empty — YAML cannot distinguish an absent boolean from
+# "false" — so omitting them yields false and silently disables that log sink,
+# rather than falling back to the built-in default of true. Keep both keys.
+log:
+  file_path: /home/tachyon/log/tachyonik-assetmanager.log  # Log file path (default: ./assetmanager.log)
+                                                           # Env: ASSETMANAGER_LOG_FILE
+  to_console: false  # Write logs to stdout (built-in default: true; see NOTE above)
+                     # Env: ASSETMANAGER_LOG_TO_CONSOLE (true/1 to enable)
+  to_file: true      # Write logs to file_path (built-in default: true; see NOTE above)
+                     # Env: ASSETMANAGER_LOG_TO_FILE (true/1 to enable)
+  level: INFO        # Log verbosity: DEBUG, INFO, WARN, ERROR (default: INFO)
+                     # Env: ASSETMANAGER_LOG_LEVEL
