@@ -2,6 +2,8 @@
 
 AssetManager is a REST API server that manages asset records with real-time WebSocket updates.
 
+What AssetManager must and must not do is specified in [spec/](spec/README.md), its HTTP contract in [spec/openapi.yaml](spec/openapi.yaml). This README covers building, configuring and running it; where the two disagree, the specification wins.
+
 ## Table of Contents
 
 - [Building](#building)
@@ -659,112 +661,23 @@ All messages are JSON objects with the following structure:
 
 #### From Server to Client
 
-**ASSET_CREATED**
-Sent when a new asset is created.
+Every change to a record is announced. A created record is sent whole; a change or deletion sends only its id, and the client reads the record again. The messages are specified in [spec/03-api.md](spec/03-api.md#3-the-websocket).
+
+| Type | Payload | Sent when |
+|---|---|---|
+| `ASSET_CREATED` | the asset, as `GET /api/assets/{id}` returns it | an asset is created, by a request or a coverage table |
+| `ASSET_UPDATED` | `{"id"}` | an asset is reported again, its type changes, its derived values or coverage change, or it loses a source |
+| `ASSET_DELETED` | `{"id"}` | an asset is deleted |
+| `VULNERABILITY_CREATED` | the vulnerability, as listed | a vulnerability is created |
+| `VULNERABILITY_UPDATED` | `{"id"}` | a vulnerability loses its source |
+| `VULNERABILITY_DELETED` | `{"id"}` | a vulnerability is deleted |
+| `DETECTION_CREATED` | the detection, as listed | a detection is created |
+| `DETECTION_UPDATED` | `{"id"}` | a detection loses its source |
+| `DETECTION_DELETED` | `{"id"}` | a detection is deleted |
+| `PONG` | `null` | in answer to a client's `PING` |
 
 ```json
-{
-  "type": "ASSET_CREATED",
-  "payload": {
-    "id": 1,
-    "name": "192.168.1.1",
-    "type": "Host",
-    "sources": [{"sourceId": 15, "sourceLabel": "openvas-report.xml", "lastSeen": "2026-01-07T10:30:00Z"}],
-    "sourcesLabel": "openvas-report.xml",
-    "createdAt": "2026-01-07T10:30:00Z",
-    "modifiedAt": "2026-01-07T10:30:00Z"
-  }
-}
-```
-
-**ASSET_UPDATED**
-Sent when an asset is modified.
-
-```json
-{
-  "type": "ASSET_UPDATED",
-  "payload": {
-    "id": 1,
-    "name": "192.168.1.1",
-    "type": "Host",
-    "sources": [{"sourceId": 15, "sourceLabel": "openvas-report.xml", "lastSeen": "2026-01-07T10:30:00Z"}],
-    "sourcesLabel": "openvas-report.xml",
-    "createdAt": "2026-01-07T10:30:00Z",
-    "modifiedAt": "2026-01-07T10:35:00Z"
-  }
-}
-```
-
-**ASSET_DELETED**
-Sent when an asset is deleted.
-
-```json
-{
-  "type": "ASSET_DELETED",
-  "payload": {
-    "id": 1
-  }
-}
-```
-
-**VULNERABILITY_CREATED**
-Sent when a new vulnerability is created.
-
-```json
-{
-  "type": "VULNERABILITY_CREATED",
-  "payload": {
-    "id": 1,
-    "name": "CVE-2024-1234",
-    "host": "192.168.222.131",
-    "port": "80/tcp",
-    "severity": 75,
-    "userId": 5,
-    "createdAt": "2026-01-20T10:30:00Z",
-    "modifiedAt": "2026-01-20T10:30:00Z"
-  }
-}
-```
-
-**VULNERABILITY_UPDATED**
-Sent when a vulnerability is modified.
-
-```json
-{
-  "type": "VULNERABILITY_UPDATED",
-  "payload": {
-    "id": 1,
-    "name": "CVE-2024-1234",
-    "host": "192.168.222.131",
-    "port": "80/tcp",
-    "severity": 75,
-    "userId": 5,
-    "createdAt": "2026-01-20T10:30:00Z",
-    "modifiedAt": "2026-01-20T10:35:00Z"
-  }
-}
-```
-
-**VULNERABILITY_DELETED**
-Sent when a vulnerability is deleted.
-
-```json
-{
-  "type": "VULNERABILITY_DELETED",
-  "payload": {
-    "id": 1
-  }
-}
-```
-
-**PONG**
-Response to client PING messages.
-
-```json
-{
-  "type": "PONG",
-  "payload": null
-}
+{"type": "ASSET_DELETED", "payload": {"id": 1}}
 ```
 
 #### From Client to Server

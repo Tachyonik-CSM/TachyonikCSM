@@ -6,8 +6,8 @@
 // is refused, so nothing is stored that the type-specific behaviour — last
 // scanned, the host-asset limit and licence cap, scan coverage, the dashboard's
 // counts — does not know how to treat. Adding a type is a deliberate change to
-// the specification (spec/01-purpose-and-scope.md, open question 1), which
-// must then say what those mean for it.
+// the specification (spec/02-data-model-and-behaviour.md, AM-DATA-02 and
+// AM-DATA-03), which must then say what those mean for it.
 //
 // A case variant is accepted as the canonical spelling: imports have sent
 // "host", and the limits compare against "Host" exactly.
