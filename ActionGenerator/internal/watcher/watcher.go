@@ -41,6 +41,19 @@ const (
 	TypeUserUpdated         MessageType = "USER_UPDATED"
 	TypeUserDeleted         MessageType = "USER_DELETED"
 	TypeOrganisationUpdated MessageType = "ORGANISATION_UPDATED"
+
+	// ctx.tools and ctx.proxies come from ResourceManager. Without these an
+	// action about a tool without its credential outlived linking one, and an
+	// action about an offline proxy outlived the proxy coming back.
+	TypeToolCreated       MessageType = "TOOL_CREATED"
+	TypeToolUpdated       MessageType = "TOOL_UPDATED"
+	TypeToolDeleted       MessageType = "TOOL_DELETED"
+	TypeCredentialCreated MessageType = "CREDENTIAL_CREATED"
+	TypeCredentialUpdated MessageType = "CREDENTIAL_UPDATED"
+	TypeCredentialDeleted MessageType = "CREDENTIAL_DELETED"
+	TypeProxyCreated      MessageType = "PROXY_CREATED"
+	TypeProxyUpdated      MessageType = "PROXY_UPDATED"
+	TypeProxyDeleted      MessageType = "PROXY_DELETED"
 )
 
 // DefaultTriggers is what the AssetManager connection reacts to.
@@ -57,6 +70,18 @@ var DefaultTriggers = []MessageType{
 // event, and does not need to: it re-reads the context either way.
 var SystemTriggers = []MessageType{
 	TypeUserCreated, TypeUserUpdated, TypeUserDeleted, TypeOrganisationUpdated,
+}
+
+// ResourceTriggers is what the ResourceManager connection reacts to.
+//
+// TOOL_ACTIVITY is deliberately absent: it fires on every tool call, and a
+// call changes nothing a rule reads. PROXY_UPDATED fires on enrolment, edits
+// and a status flip — the liveness monitor announces only an actual change,
+// not every heartbeat.
+var ResourceTriggers = []MessageType{
+	TypeToolCreated, TypeToolUpdated, TypeToolDeleted,
+	TypeCredentialCreated, TypeCredentialUpdated, TypeCredentialDeleted,
+	TypeProxyCreated, TypeProxyUpdated, TypeProxyDeleted,
 }
 
 // Watcher reacts to one manager's events by calling onChange.

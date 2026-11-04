@@ -453,6 +453,7 @@ func (g *Generator) buildSharedContext(users []systemmanager.User, primary *syst
 	merged := jsruntime.RuleContext{
 		Sources:      []map[string]interface{}{},
 		Proxies:      []map[string]interface{}{},
+		Tools:        []map[string]interface{}{},
 		Assets:       []map[string]interface{}{},
 		Actions:      []map[string]interface{}{},
 		Capabilities: jsruntime.CapabilitySet{Automated: []string{}, Manual: []string{}},
@@ -486,6 +487,7 @@ func (g *Generator) buildSharedContext(users []systemmanager.User, primary *syst
 		}
 		merged.Sources = append(merged.Sources, ctx.Sources...)
 		merged.Proxies = append(merged.Proxies, ctx.Proxies...)
+		merged.Tools = append(merged.Tools, ctx.Tools...)
 		merged.SourceCount += ctx.SourceCount
 		if ctx.SourceMax > merged.SourceMax {
 			merged.SourceMax = ctx.SourceMax
@@ -590,7 +592,14 @@ func (g *Generator) buildJSRuleContext(user *systemmanager.User) jsruntime.RuleC
 	g.addProxies(&ctx, user)
 	g.addAssets(&ctx, user)
 	g.addAssetStats(&ctx, user)
-	ctx.Capabilities = g.resolveCapabilities(user)
+	// Fetched once: the tool records and the capabilities both come from it.
+	tools, toolsErr := g.resourceMgr.GetToolsForUser(user.ID)
+	if toolsErr != nil {
+		logger.Warnf("Could not fetch tools for user %d: %v", user.ID, toolsErr)
+		tools = nil
+	}
+	g.addTools(&ctx, tools)
+	ctx.Capabilities = g.resolveCapabilities(user, tools)
 	logger.Infof("Context user=%d assetStats=%+v capabilities=automated=%v manual=%v", user.ID, ctx.AssetStats, ctx.Capabilities.Automated, ctx.Capabilities.Manual)
 	g.addActions(&ctx, user)
 
@@ -800,16 +809,13 @@ func (g *Generator) addAssetStats(ctx *jsruntime.RuleContext, user *systemmanage
 
 // resolveCapabilities works out what the user's tools can do, split the way the
 // Resources/Tools page splits them.
-func (g *Generator) resolveCapabilities(user *systemmanager.User) jsruntime.CapabilitySet {
+func (g *Generator) resolveCapabilities(user *systemmanager.User, tools []resourcemanager.Tool) jsruntime.CapabilitySet {
 	capabilities := jsruntime.CapabilitySet{Automated: []string{}, Manual: []string{}}
-	// Fetch user's tools and resolve capabilities, mirroring the
+	// Resolve the user's tools' capabilities, mirroring the
 	// Resources/Tools page: split into "automated" (covered by an
 	// enabled tool_rule) and "manual" (listed in manualCapabilityIds
 	// on the tool's ToolOverview). Both sets are distinct + sorted.
-	tools, err := g.resourceMgr.GetToolsForUser(user.ID)
-	if err != nil {
-		logger.Warnf("Could not fetch tools for user %d: %v", user.ID, err)
-	} else if len(tools) > 0 && g.aiMgr != nil {
+	if len(tools) > 0 && g.aiMgr != nil {
 		// Set of overview IDs the user owns. Skip unmanaged rows
 		// (ToolID nil) — no overview, nothing to resolve.
 		ownedOverviewIDs := make(map[int64]struct{}, len(tools))
@@ -883,6 +889,52 @@ func (g *Generator) resolveCapabilities(user *systemmanager.User) jsruntime.Capa
 		}
 	}
 	return capabilities
+}
+
+// addTools fills the user's tool records, each with what its kind needs to
+// authenticate and whether a credential is linked — so a rule can find a tool
+// that cannot be used for want of one. Named as the Tools view names them, and
+// with the proxy's name taken from ctx.proxies, which must be filled first.
+//
+// When the catalogue cannot be read, a managed tool keeps its record name and
+// an empty credentialType: the rule then sees no tool missing a credential,
+// which is quiet rather than wrong in the other direction.
+func (g *Generator) addTools(ctx *jsruntime.RuleContext, tools []resourcemanager.Tool) {
+	ctx.Tools = []map[string]interface{}{}
+	if len(tools) == 0 {
+		return
+	}
+	overviews := map[int64]aimanager.ToolOverviewEntry{}
+	if g.aiMgr != nil {
+		list, err := g.aiMgr.GetToolOverviews()
+		if err != nil {
+			logger.Warnf("Could not fetch tool overviews for the tool context: %v", err)
+		}
+		for _, o := range list {
+			overviews[o.ID] = o
+		}
+	}
+	proxyNames := map[int64]string{}
+	for _, p := range ctx.Proxies {
+		if id, ok := p["id"].(int64); ok {
+			proxyNames[id], _ = p["name"].(string)
+		}
+	}
+	for _, t := range tools {
+		name, credentialType := t.Command, ""
+		if t.ToolID != nil {
+			if o, ok := overviews[*t.ToolID]; ok {
+				name, credentialType = o.Name, o.CredentialType
+			} else if t.Name != "" {
+				name = t.Name
+			}
+		}
+		if name == "" {
+			name = fmt.Sprintf("#%d", t.ID)
+		}
+		ctx.Tools = append(ctx.Tools, jsruntime.ToolToMap(t.ID, name, t.ProxyID, proxyNames[t.ProxyID],
+			t.Host, credentialType, t.CredentialID != nil))
+	}
 }
 
 // addActions fills the actions the user already has, so a rule can avoid

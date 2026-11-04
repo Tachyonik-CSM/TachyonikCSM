@@ -96,6 +96,25 @@ func TestSystemEventsWakeTheDaemon(t *testing.T) {
 	waitFor(t, 3*time.Second, "resync + two events", func() bool { return fired.get() >= 3 })
 }
 
+// Tool, credential and proxy changes wake the daemon; a tool call does not.
+func TestResourceEventsWakeTheDaemon(t *testing.T) {
+	srv := fakeManager(t, []string{"TOOL_UPDATED", "TOOL_ACTIVITY", "CREDENTIAL_DELETED", "PROXY_UPDATED"})
+
+	var fired counter
+	w, err := NewFor("ResourceManager", srv.URL, "k", ResourceTriggers, fired.inc)
+	if err != nil {
+		t.Fatalf("NewFor: %v", err)
+	}
+	w.Start()
+	defer w.Close()
+
+	waitFor(t, 3*time.Second, "resync + three events", func() bool { return fired.get() >= 4 })
+	time.Sleep(150 * time.Millisecond)
+	if n := fired.get(); n != 4 {
+		t.Errorf("callback fired %d times, want 4: TOOL_ACTIVITY must not wake the daemon", n)
+	}
+}
+
 // A watcher must ignore what it did not subscribe to. The AssetManager and
 // SystemManager connections share one callback, so a watcher reacting to
 // everything would double every re-evaluation.

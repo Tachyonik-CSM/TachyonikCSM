@@ -259,13 +259,16 @@ func (c *Client) GetEnabledToolRules() ([]EnabledToolRule, error) {
 	return result.Tools, nil
 }
 
-// ToolOverviewEntry is the subset of tool_overview fields needed to
-// map a user's tools to their "Manual Capabilities" (the overview's
-// manualCapabilityIds list).
+// ToolOverviewEntry is the subset of tool_overview fields the rule context
+// needs: a tool's name, its "Manual Capabilities" (the overview's
+// manualCapabilityIds list), and whether it needs a credential.
 type ToolOverviewEntry struct {
 	ID                  int64   `json:"id"`
 	Name                string  `json:"name"`
 	ManualCapabilityIDs []int64 `json:"manualCapabilityIds"`
+	// CredentialType is what a tool of this kind needs to authenticate, ""
+	// when nothing.
+	CredentialType string `json:"credentialType"`
 }
 
 // GetToolOverviews fetches the tool catalogue.

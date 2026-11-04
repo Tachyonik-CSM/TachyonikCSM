@@ -309,6 +309,20 @@ func runDaemon(cfg *config.Config) {
 		logger.Info("SystemManager WebSocket watcher started")
 	}
 
+	// Start WebSocket watcher for ResourceManager events: the user's tools,
+	// credentials and proxies, which ctx.tools and ctx.proxies are built from.
+	// Linking a credential to a tool must withdraw the action asking for it.
+	// Same onChange, so it debounces together with the other watchers.
+	rw, err := watcher.NewFor("ResourceManager", cfg.ResourceManager.URL,
+		cfg.ResourceManager.InternalServiceKey, watcher.ResourceTriggers, onChange)
+	if err != nil {
+		logger.Errorf("Failed to create ResourceManager watcher: %v", err)
+	} else {
+		defer rw.Close()
+		rw.Start()
+		logger.Info("ResourceManager WebSocket watcher started")
+	}
+
 	// Start liveness heartbeat to SystemManager.
 	heartbeat.Start(context.Background(), heartbeat.Config{
 		ServiceName:        "ActionGenerator",

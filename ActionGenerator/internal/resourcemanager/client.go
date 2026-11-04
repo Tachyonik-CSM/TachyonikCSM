@@ -51,10 +51,17 @@ type sourceListResponse struct {
 // from TypeID after the schema rekey from rule reference to overview
 // reference — RM now emits this as "toolId".
 type Tool struct {
-	ID     int64  `json:"id"`
-	ToolID *int64 `json:"toolId"`
-	Name   string `json:"name"`
-	UserID int64  `json:"userId"`
+	ID      int64  `json:"id"`
+	ProxyID int64  `json:"proxyId"`
+	ToolID  *int64 `json:"toolId"`
+	// Command is the detected binary, what names an unmanaged tool.
+	Command string `json:"command"`
+	Host    string `json:"host"`
+	Name    string `json:"name"`
+	UserID  int64  `json:"userId"`
+	// CredentialID is the linked credential, or nil. Whether one is needed is
+	// a property of the tool's kind (AIManager's credentialType).
+	CredentialID *int64 `json:"credentialId"`
 }
 
 // Proxy is one of a user's TachyonikProxy installations, with only the fields

@@ -105,6 +105,7 @@ type RuleContext struct {
 	SourceMax         int                      `json:"sourceMax"`
 	Sources           []map[string]interface{} `json:"sources"`
 	Proxies           []map[string]interface{} `json:"proxies"`
+	Tools             []map[string]interface{} `json:"tools"`
 	AssetCount        int                      `json:"assetCount"`
 	Assets            []map[string]interface{} `json:"assets"`
 	HighestScoreAsset map[string]interface{}   `json:"highestScoreAsset"`
@@ -149,7 +150,10 @@ func (c RuleContext) ToMap() map[string]interface{} {
 		"sources":     c.Sources,
 		// Never null: "no proxies" must read as an empty list, which a rule
 		// about offline proxies then correctly finds nothing in.
-		"proxies":    listOrEmpty(c.Proxies),
+		"proxies": listOrEmpty(c.Proxies),
+		// Never null either: a rule looking for a tool without its credential
+		// finds none in an empty list.
+		"tools":      listOrEmpty(c.Tools),
 		"assetCount": c.AssetCount,
 		"assets":     c.Assets,
 		// Null when no asset is scored — a real state the rule must check for,
@@ -183,6 +187,27 @@ func ProxyToMap(id int64, name, status, connectionMode, version string, lastSeen
 		"connectionMode": connectionMode,
 		"version":        version,
 		"lastSeen":       seen,
+	}
+}
+
+// ToolToMap renders one of the user's tool records for the JS context.
+//
+// name is the tool as the Tools view names it: its catalogue name, or for an
+// unmanaged tool its command. credentialType is what the tool's kind needs to
+// authenticate (tool_overview.credential_type), "" when it needs nothing or
+// the tool is unmanaged. hasCredential is whether one is linked. A tool that
+// cannot be used for want of a credential is therefore
+// credentialType !== "" && !hasCredential — the same test as the Tools view's
+// "Credential missing".
+func ToolToMap(id int64, name string, proxyID int64, proxyName, host, credentialType string, hasCredential bool) map[string]interface{} {
+	return map[string]interface{}{
+		"id":             id,
+		"name":           name,
+		"proxyId":        proxyID,
+		"proxyName":      proxyName,
+		"host":           host,
+		"credentialType": credentialType,
+		"hasCredential":  hasCredential,
 	}
 }
 
@@ -1115,6 +1140,32 @@ func MockScenarios() []MockScenario {
 	}
 	for i := range mockContexts {
 		mockContexts[i].Proxies = mockProxies[i]
+	}
+
+	// Tools, on the scenarios' proxies, varied the same way: none (1, 2, 5),
+	// every one usable (3, 7), and one whose kind needs a credential that has
+	// none linked (4, 6). Scenario 3 has a tool that needs a credential and
+	// has it, and one that needs none, so neither field alone decides.
+	mockTools := [][]map[string]interface{}{
+		{},
+		{},
+		{
+			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false),
+			ToolToMap(12, "Greenbone", 1, "Office proxy", "10.0.0.5", "username-password", true),
+		},
+		{
+			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false),
+			ToolToMap(13, "Greenbone", 2, "Branch proxy", "10.1.0.5", "username-password", false),
+		},
+		{},
+		{ToolToMap(14, "Greenbone", 4, "Datacenter proxy", "10.2.0.5", "username-password", false)},
+		{ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false)},
+	}
+	if len(mockTools) != len(mockContexts) {
+		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d tool lists", len(mockContexts), len(mockTools)))
+	}
+	for i := range mockContexts {
+		mockContexts[i].Tools = mockTools[i]
 	}
 
 	if len(mockContexts) != len(mockScenarioLabels) {

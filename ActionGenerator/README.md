@@ -316,15 +316,18 @@ triggered by:
 | Startup | daemon start |
 | AssetManager WebSocket | asset / vulnerability changes (2s debounce) |
 | SystemManager WebSocket | user, organisation and settings changes (2s debounce) |
+| ResourceManager WebSocket | tool, credential and proxy changes (`TOOL_*` except `TOOL_ACTIVITY`, `CREDENTIAL_*`, `PROXY_*`; 2s debounce) |
 | Action-rule watcher | a rule created, edited or deleted; an evaluation request; a feed import |
 
 There is deliberately **no periodic sweep**: staleness is fixed by watching the
 data the context is built from, not by re-running on a timer. The consequence is
 that a context source with no watcher goes stale silently, so adding a field to
 `RuleContext` means asking where its change events come from. Currently
-unwatched: sources (ResourceManager), tools and capabilities (ResourceManager +
-AIManager), and existing actions (ActionManager) — a rule reading those is
-re-evaluated only when one of the triggers above happens to fire.
+unwatched: sources (ResourceManager), the tool catalogue — capabilities, tool
+rules and what a tool kind needs to authenticate (AIManager; it changes through
+a feed import, which does trigger) — and existing actions (ActionManager). A
+rule reading those is re-evaluated only when one of the triggers above happens
+to fire.
 
 ### Rule context
 
@@ -341,6 +344,7 @@ assembled per user by `buildJSRuleContext`. It carries:
 | `ctx.settings` | What the user configured for themselves: `ai.{research,chat,dashboard}` as a state (`personal` / `internal` / `disabled` / `none`), `ai.personalProviderCount`, and `language` |
 | `ctx.sources`, `ctx.sourceCount`, `ctx.sourceMax` | Uploaded sources and the user's limit |
 | `ctx.proxies` | The user's TachyonikProxy installations from ResourceManager's `/api/internal/proxies`: an array of `{id, name, status, connectionMode, version, lastSeen}`. `status` is `online`, `offline` or `pending_enrollment`; `lastSeen` is `""` for a proxy that never connected. `[]` when the user has none or ResourceManager cannot be reached |
+| `ctx.tools` | The user's tool records from ResourceManager: an array of `{id, name, proxyId, proxyName, host, credentialType, hasCredential}`. `name` is the tool as the Tools view names it (the catalogue name, or the command for an unmanaged tool). `credentialType` is what the tool's kind needs to authenticate (AIManager's catalogue, e.g. `"username-password"`), `""` when nothing or unmanaged; `hasCredential` is whether one is linked. A tool that cannot be used for want of a credential is `credentialType !== "" && !hasCredential`, the Tools view's "none — required". `[]` when the user has none or ResourceManager cannot be reached |
 | `ctx.assets`, `ctx.assetCount`, `ctx.highestScoreAsset` | Assets, and the highest-scoring one (or `null`). Each asset is `{id, name, type, source, severity, score, createdAt, modifiedAt, lastSeen, lastScanned, lastScanCoverageVerification, scanCoverageIntervalDays}`; the last three are `null` when not known. `type` is `"Host"`, the only asset type. `source` is always `""`: AssetManager's assets carry their sources as a list (`sources`, `sourcesLabel`), which the context does not pass on, so a rule cannot tell an asset's source from it. `scanCoverageIntervalDays` and `lastScanCoverageVerification` are only ever set by an import, so `null` means no source has reported a scheduled vulnerability scan for the asset |
 | `ctx.assetStats` | Severity buckets from AssetManager's `/api/assets/stats`, plus the host assets by last seen: `hostsSeen30d` (≤ 30 days), `hostsSeen180d` (31–180 days), `hostsSeenOlder` (> 180 days or unreadable) |
 | `ctx.capabilities` | `{automated, manual}` capability names covered by the user's configured **tools** |
@@ -519,12 +523,16 @@ input on both sides.
   they return.
 - **generator** — the evaluation engine: assembles each user's context, runs
   every rule, creates matching actions and withdraws stale ones.
-- **Watchers** — four WebSocket connections, all authenticated with the internal
+- **Watchers** — five WebSocket connections, all authenticated with the internal
   service key:
   - **AssetManager** — asset and vulnerability changes.
   - **SystemManager** — user, organisation and settings changes (`USER_*`,
     `ORGANISATION_UPDATED`). A rule's context is not only assets, so a change to
     the organisation record or to a user's own settings must wake the daemon too.
+  - **ResourceManager** — tool, credential and proxy changes, which `ctx.tools`
+    and `ctx.proxies` are built from. Linking a credential to a tool must
+    withdraw the action asking for one. `TOOL_ACTIVITY`, sent on every tool
+    call, is ignored.
   - **Action rules** — rules created, edited or deleted; explicit evaluation
     requests from the UI; feed imports. Debounced per rule, so saving a rule
     several times in quick succession triggers one regeneration.
@@ -580,6 +588,7 @@ Manager event → Watcher → 2s debounce → Generator → for each user:
 [INFO] Action rule watcher started
 [INFO] AssetManager WebSocket watcher started
 [INFO] SystemManager WebSocket watcher started
+[INFO] ResourceManager WebSocket watcher started
 [INFO] ActionGenerator daemon is running. Press Ctrl+C to stop.
 ```
 
