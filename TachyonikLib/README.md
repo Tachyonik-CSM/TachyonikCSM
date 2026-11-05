@@ -30,6 +30,7 @@ replace tachyonik/lib => ../TachyonikLib
   Logos inside a references, customers, partners or slider block, or in a wall of three or more logos, come last, and at most three "logo" images are offered, so a wall of customer logos can't push out the site's own icons. Bounded at both ends (see below). Best-effort and never fatal. |
 | `httpguard` | Makes an outbound request to a user-influenced address survivable: refuses loopback, unspecified, link-local (cloud metadata), multicast and private/ULA addresses. Three layers — validate the URL up front, re-validate every redirect hop, and check again in the dialer at connect time, which is what defeats DNS rebinding. Used by ChatAI for user-supplied AI endpoints and by SystemManager for the organisation homepage fetch. |
 | `providererr` | Turns a failed AI-provider HTTP response into a short reason that is safe to show the user who configured that provider. Echoes no bytes of the body: it lifts at most `message` and `type` out of a document that has to declare a JSON content type and parse as a provider error envelope (`{"error":{"message":…}}` or `{"error":"…"}`), then flattens it to one line and cuts it to 300 runes. Lets a user see "credit balance is too low" instead of "status 400" without turning a user-supplied endpoint into an SSRF read primitive. |
+| `proxyrelease` | Tells the latest TachyonikProxy release from the signed auto-update manifest the proxies update from (`manifest.json` + its detached Ed25519 signature `manifest.json.sig`). Believes it only with a valid signature from an embedded release key (`proxyrelease/pubkeys`, the same key the proxy embeds — the proxy's selfupdate tests check the copies agree; rotate both), schema 1, the `stable` channel and a numeric version. Compares versions numerically, as the proxy does; `UpdateAvailable` judges a development build (`1.2.0-2-g8882cc9-dirty`) by the release it was built from. Used by ResourceManager to mark outdated proxies. |
 | `jsctxtrace` | Records which properties JavaScript reads from a context object — the `ctx` a generated rule routine is handed — by path (`questionnaires.nis2Impact.level`, with `[]` for array elements), and which of those do not exist. Behaves like a plain goja conversion otherwise: array methods, `Object.keys`, JSON and `in` work, writes go to a private copy. Used by ActionGenerator's validation and ActionExecutor's dry run to tell a misspelt field from a correct rule no scenario satisfies. |
 | `aiclient/claude` | Client for the Anthropic (Claude) Messages API. |
 | `aiclient/openai` | Client for OpenAI-compatible APIs (OpenAI, Mistral, Google OpenAI-compat, self-hosted). |
@@ -100,11 +101,11 @@ All twelve service modules depend on this library:
 | AIManager | `logger`, `textextract`, `aiclient/*` |
 | AssetManager | `logger`, `systemmanager` |
 | ChatAI | `logger`, `aimwatcher`, `providererr` |
-| ResourceManager | `logger`, `systemmanager` |
+| ResourceManager | `logger`, `systemmanager`, `proxyrelease` |
 | SourceAnalyser | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
 | SourceImporter | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
 | SystemManager | `logger` |
-| TachyonikProxy | `logger` |
+| TachyonikProxy | `logger` (and `proxyrelease` in a test, to check both copies of the release key agree) |
 | ToolManager | `logger`, `aimwatcher`, `providererr` |
 
 ## Versioning
