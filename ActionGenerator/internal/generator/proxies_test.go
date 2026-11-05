@@ -34,8 +34,9 @@ func TestProxiesComeFromResourceManager(t *testing.T) {
 			{"id":6,"name":"Feature test Proxy","status":"offline","connectionMode":"inbound",
 			 "version":"0.9.2","lastSeen":"2026-10-02T00:33:21+02:00","ipAddress":"192.168.178.20",
 			 "netscanNetworks":"192.168.178.0/24"},
-			{"id":7,"name":"New","status":"pending_enrollment","connectionMode":"outbound","lastSeen":null}
-		],"total":2}`))
+			{"id":7,"name":"New","status":"pending_enrollment","connectionMode":"outbound","lastSeen":null,
+			 "version":"0.9.1","updateAvailable":true}
+		],"total":2,"latestVersion":"1.4.0"}`))
 	})
 
 	ctx := jsruntime.RuleContext{}
@@ -60,6 +61,12 @@ func TestProxiesComeFromResourceManager(t *testing.T) {
 			t.Errorf("%s reached the rule context", leaked)
 		}
 	}
+	if ctx.ProxyRelease["latestVersion"] != "1.4.0" {
+		t.Errorf("proxyRelease = %v", ctx.ProxyRelease)
+	}
+	if first["updateAvailable"] != false || ctx.Proxies[1]["updateAvailable"] != true {
+		t.Errorf("updateAvailable = %v / %v, want false / true", first["updateAvailable"], ctx.Proxies[1]["updateAvailable"])
+	}
 	if ctx.Proxies[1]["lastSeen"] != "" {
 		t.Errorf("a never-seen proxy has lastSeen %#v, want \"\"", ctx.Proxies[1]["lastSeen"])
 	}
@@ -74,5 +81,8 @@ func TestProxiesAreEmptyWhenResourceManagerFails(t *testing.T) {
 	g.addProxies(&ctx, &systemmanager.User{ID: 52})
 	if ctx.Proxies == nil || len(ctx.Proxies) != 0 {
 		t.Errorf("proxies = %#v, want an empty list", ctx.Proxies)
+	}
+	if ctx.ProxyRelease["latestVersion"] != "" {
+		t.Errorf("proxyRelease = %v, want an unknown release", ctx.ProxyRelease)
 	}
 }

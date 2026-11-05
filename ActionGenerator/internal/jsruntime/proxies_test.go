@@ -87,7 +87,7 @@ func TestProxiesAreAlwaysAList(t *testing.T) {
 // A proxy that never connected has no last-seen time; it reads as "", like
 // every other absent string in the context.
 func TestANeverSeenProxyHasAnEmptyLastSeen(t *testing.T) {
-	p := ProxyToMap(3, "New proxy", "pending_enrollment", "inbound", "", nil)
+	p := ProxyToMap(3, "New proxy", "pending_enrollment", "inbound", "", nil, false)
 	if p["lastSeen"] != "" {
 		t.Errorf("lastSeen = %#v, want \"\"", p["lastSeen"])
 	}

@@ -54,6 +54,8 @@ const (
 	TypeProxyCreated      MessageType = "PROXY_CREATED"
 	TypeProxyUpdated      MessageType = "PROXY_UPDATED"
 	TypeProxyDeleted      MessageType = "PROXY_DELETED"
+	// A new TachyonikProxy release makes proxies outdated that were current.
+	TypeProxyReleaseUpdated MessageType = "PROXY_RELEASE_UPDATED"
 )
 
 // DefaultTriggers is what the AssetManager connection reacts to.
@@ -82,6 +84,7 @@ var ResourceTriggers = []MessageType{
 	TypeToolCreated, TypeToolUpdated, TypeToolDeleted,
 	TypeCredentialCreated, TypeCredentialUpdated, TypeCredentialDeleted,
 	TypeProxyCreated, TypeProxyUpdated, TypeProxyDeleted,
+	TypeProxyReleaseUpdated,
 }
 
 // Watcher reacts to one manager's events by calling onChange.

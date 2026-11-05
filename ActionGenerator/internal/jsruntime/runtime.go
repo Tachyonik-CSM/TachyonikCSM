@@ -105,6 +105,7 @@ type RuleContext struct {
 	SourceMax         int                      `json:"sourceMax"`
 	Sources           []map[string]interface{} `json:"sources"`
 	Proxies           []map[string]interface{} `json:"proxies"`
+	ProxyRelease      map[string]interface{}   `json:"proxyRelease"`
 	Tools             []map[string]interface{} `json:"tools"`
 	AssetCount        int                      `json:"assetCount"`
 	Assets            []map[string]interface{} `json:"assets"`
@@ -151,6 +152,9 @@ func (c RuleContext) ToMap() map[string]interface{} {
 		// Never null: "no proxies" must read as an empty list, which a rule
 		// about offline proxies then correctly finds nothing in.
 		"proxies": listOrEmpty(c.Proxies),
+		// Never an empty object: ctx.proxyRelease.latestVersion is read
+		// straight away, and is "" while the latest release is not known.
+		"proxyRelease": proxyReleaseOrEmpty(c.ProxyRelease),
 		// Never null either: a rule looking for a tool without its credential
 		// finds none in an empty list.
 		"tools":      listOrEmpty(c.Tools),
@@ -173,20 +177,37 @@ func listOrEmpty(l []map[string]interface{}) []map[string]interface{} {
 	return l
 }
 
+// ProxyReleaseToMap renders the latest TachyonikProxy release for the JS
+// context; latestVersion is "" while it is not known.
+func ProxyReleaseToMap(latestVersion string) map[string]interface{} {
+	return map[string]interface{}{"latestVersion": latestVersion}
+}
+
+func proxyReleaseOrEmpty(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return ProxyReleaseToMap("")
+	}
+	return m
+}
+
 // ProxyToMap renders one proxy for the JS context. lastSeen is "" for a proxy
 // that never connected, so every field is a string a rule can compare.
-func ProxyToMap(id int64, name, status, connectionMode, version string, lastSeen *string) map[string]interface{} {
+// updateAvailable is whether a newer TachyonikProxy release exists than the
+// version the proxy reported, compared numerically by ResourceManager; false
+// while the latest release or the proxy's version is not known.
+func ProxyToMap(id int64, name, status, connectionMode, version string, lastSeen *string, updateAvailable bool) map[string]interface{} {
 	seen := ""
 	if lastSeen != nil {
 		seen = *lastSeen
 	}
 	return map[string]interface{}{
-		"id":             id,
-		"name":           name,
-		"status":         status,
-		"connectionMode": connectionMode,
-		"version":        version,
-		"lastSeen":       seen,
+		"id":              id,
+		"name":            name,
+		"status":          status,
+		"connectionMode":  connectionMode,
+		"version":         version,
+		"lastSeen":        seen,
+		"updateAvailable": updateAvailable,
 	}
 }
 
@@ -1118,28 +1139,38 @@ func MockScenarios() []MockScenario {
 	// none at all (1, 2), all online (3), one offline (4 and 6), and one that
 	// was installed but never enrolled (5). Fresh maps per scenario, for the
 	// same reason the registered-user scenarios are built separately.
-	online := func(id int64, name string) map[string]interface{} {
+	//
+	// The latest release is 0.9.2 wherever it is known (unknown in 1). Being
+	// outdated is varied independently of being offline: the outdated proxies
+	// are the offline one in 4 and the online one in 7, so a rule about either
+	// condition reads something the other does not decide.
+	online := func(id int64, name, version string) map[string]interface{} {
 		seen := "2026-09-10T08:00:00Z"
-		return ProxyToMap(id, name, "online", "inbound", "0.9.2", &seen)
+		return ProxyToMap(id, name, "online", "inbound", version, &seen, version != "0.9.2")
 	}
-	offline := func(id int64, name string) map[string]interface{} {
+	offline := func(id int64, name, version string) map[string]interface{} {
 		seen := "2026-08-30T17:45:00Z"
-		return ProxyToMap(id, name, "offline", "outbound", "0.9.1", &seen)
+		return ProxyToMap(id, name, "offline", "outbound", version, &seen, version != "0.9.2")
 	}
 	mockProxies := [][]map[string]interface{}{
 		{},
 		{},
-		{online(1, "Office proxy")},
-		{online(1, "Office proxy"), offline(2, "Branch proxy")},
-		{ProxyToMap(3, "New proxy", "pending_enrollment", "inbound", "", nil)},
-		{offline(2, "Branch proxy"), online(4, "Datacenter proxy")},
-		{online(1, "Office proxy")},
+		{online(1, "Office proxy", "0.9.2")},
+		{online(1, "Office proxy", "0.9.2"), offline(2, "Branch proxy", "0.9.1")},
+		{ProxyToMap(3, "New proxy", "pending_enrollment", "inbound", "", nil, false)},
+		{offline(2, "Branch proxy", "0.9.2"), online(4, "Datacenter proxy", "0.9.2")},
+		{online(1, "Office proxy", "0.9.1")},
 	}
 	if len(mockProxies) != len(mockContexts) {
 		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d proxy lists", len(mockContexts), len(mockProxies)))
 	}
 	for i := range mockContexts {
 		mockContexts[i].Proxies = mockProxies[i]
+		latest := "0.9.2"
+		if i == 0 {
+			latest = ""
+		}
+		mockContexts[i].ProxyRelease = ProxyReleaseToMap(latest)
 	}
 
 	// Tools, on the scenarios' proxies, varied the same way: none (1, 2, 5),

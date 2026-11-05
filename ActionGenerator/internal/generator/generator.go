@@ -487,6 +487,10 @@ func (g *Generator) buildSharedContext(users []systemmanager.User, primary *syst
 		}
 		merged.Sources = append(merged.Sources, ctx.Sources...)
 		merged.Proxies = append(merged.Proxies, ctx.Proxies...)
+		// The release is the same for every user; take any known one.
+		if v, _ := ctx.ProxyRelease["latestVersion"].(string); v != "" {
+			merged.ProxyRelease = ctx.ProxyRelease
+		}
 		merged.Tools = append(merged.Tools, ctx.Tools...)
 		merged.SourceCount += ctx.SourceCount
 		if ctx.SourceMax > merged.SourceMax {
@@ -700,15 +704,20 @@ func (g *Generator) addSources(ctx *jsruntime.RuleContext, user *systemmanager.U
 // not a missing one, when ResourceManager cannot be reached: a rule about
 // offline proxies then finds none and stays quiet, rather than failing — or
 // firing — on a lookup that did not happen.
+//
+// The latest proxy release comes with them: unknown ("") when ResourceManager
+// does not know it or cannot be reached, so no proxy is reported outdated.
 func (g *Generator) addProxies(ctx *jsruntime.RuleContext, user *systemmanager.User) {
 	ctx.Proxies = []map[string]interface{}{}
-	proxies, err := g.resourceMgr.GetProxiesForUser(user.ID)
+	ctx.ProxyRelease = jsruntime.ProxyReleaseToMap("")
+	proxies, latest, err := g.resourceMgr.GetProxiesForUser(user.ID)
 	if err != nil {
 		logger.Errorf("Error getting proxies for user %d: %v", user.ID, err)
 		return
 	}
+	ctx.ProxyRelease = jsruntime.ProxyReleaseToMap(latest)
 	for _, p := range proxies {
-		ctx.Proxies = append(ctx.Proxies, jsruntime.ProxyToMap(p.ID, p.Name, p.Status, p.ConnectionMode, p.Version, p.LastSeen))
+		ctx.Proxies = append(ctx.Proxies, jsruntime.ProxyToMap(p.ID, p.Name, p.Status, p.ConnectionMode, p.Version, p.LastSeen, p.UpdateAvailable))
 	}
 }
 

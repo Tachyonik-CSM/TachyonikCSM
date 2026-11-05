@@ -36,7 +36,7 @@ func TestToolsCarryTheirCredentialState(t *testing.T) {
 	one, two := int64(1), int64(2)
 	cred := int64(9)
 	ctx := jsruntime.RuleContext{Proxies: []map[string]interface{}{
-		jsruntime.ProxyToMap(5, "Office proxy", "online", "inbound", "1.0", nil),
+		jsruntime.ProxyToMap(5, "Office proxy", "online", "inbound", "1.0", nil, false),
 	}}
 	g.addTools(&ctx, []resourcemanager.Tool{
 		{ID: 10, ProxyID: 5, ToolID: &one, Host: "10.0.0.5"},

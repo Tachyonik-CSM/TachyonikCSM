@@ -98,7 +98,7 @@ func TestSystemEventsWakeTheDaemon(t *testing.T) {
 
 // Tool, credential and proxy changes wake the daemon; a tool call does not.
 func TestResourceEventsWakeTheDaemon(t *testing.T) {
-	srv := fakeManager(t, []string{"TOOL_UPDATED", "TOOL_ACTIVITY", "CREDENTIAL_DELETED", "PROXY_UPDATED"})
+	srv := fakeManager(t, []string{"TOOL_UPDATED", "TOOL_ACTIVITY", "CREDENTIAL_DELETED", "PROXY_UPDATED", "PROXY_RELEASE_UPDATED"})
 
 	var fired counter
 	w, err := NewFor("ResourceManager", srv.URL, "k", ResourceTriggers, fired.inc)
@@ -108,10 +108,10 @@ func TestResourceEventsWakeTheDaemon(t *testing.T) {
 	w.Start()
 	defer w.Close()
 
-	waitFor(t, 3*time.Second, "resync + three events", func() bool { return fired.get() >= 4 })
+	waitFor(t, 3*time.Second, "resync + four events", func() bool { return fired.get() >= 5 })
 	time.Sleep(150 * time.Millisecond)
-	if n := fired.get(); n != 4 {
-		t.Errorf("callback fired %d times, want 4: TOOL_ACTIVITY must not wake the daemon", n)
+	if n := fired.get(); n != 5 {
+		t.Errorf("callback fired %d times, want 5: TOOL_ACTIVITY must not wake the daemon", n)
 	}
 }
 

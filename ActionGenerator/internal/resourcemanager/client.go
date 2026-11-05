@@ -74,6 +74,9 @@ type Proxy struct {
 	ConnectionMode string  `json:"connectionMode"`
 	Version        string  `json:"version"`
 	LastSeen       *string `json:"lastSeen"` // null until the proxy first connects
+	// UpdateAvailable is whether a newer TachyonikProxy release exists than
+	// Version, as ResourceManager compares them.
+	UpdateAvailable bool `json:"updateAvailable"`
 }
 
 // NewClient creates a new ResourceManager API client
@@ -124,13 +127,15 @@ func (c *Client) GetToolsForUser(userID int64) ([]Tool, error) {
 }
 
 // GetProxiesForUser retrieves the proxies the specified user owns, from the
-// service-only route.
-func (c *Client) GetProxiesForUser(userID int64) ([]Proxy, error) {
+// service-only route, and the latest TachyonikProxy release ("" while
+// ResourceManager does not know it).
+func (c *Client) GetProxiesForUser(userID int64) ([]Proxy, string, error) {
 	var result struct {
-		Proxies []Proxy `json:"proxies"`
+		Proxies       []Proxy `json:"proxies"`
+		LatestVersion string  `json:"latestVersion"`
 	}
 	if err := c.rc.JSON("GET", fmt.Sprintf("/api/internal/proxies?userId=%d", userID), nil, &result, http.StatusOK); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return result.Proxies, nil
+	return result.Proxies, result.LatestVersion, nil
 }

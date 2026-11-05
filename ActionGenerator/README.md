@@ -316,7 +316,7 @@ triggered by:
 | Startup | daemon start |
 | AssetManager WebSocket | asset / vulnerability changes (2s debounce) |
 | SystemManager WebSocket | user, organisation and settings changes (2s debounce) |
-| ResourceManager WebSocket | tool, credential and proxy changes (`TOOL_*` except `TOOL_ACTIVITY`, `CREDENTIAL_*`, `PROXY_*`; 2s debounce) |
+| ResourceManager WebSocket | tool, credential and proxy changes (`TOOL_*` except `TOOL_ACTIVITY`, `CREDENTIAL_*`, `PROXY_*`, `PROXY_RELEASE_UPDATED`; 2s debounce) |
 | Action-rule watcher | a rule created, edited or deleted; an evaluation request; a feed import |
 
 There is deliberately **no periodic sweep**: staleness is fixed by watching the
@@ -343,7 +343,8 @@ assembled per user by `buildJSRuleContext`. It carries:
 | `ctx.policies` | The organisation's policies (Organisation → Policies) from SystemManager: `cyberStrategy`, `nis2Impact` and `nis2Readiness`, each `{status, note}` with status `mandatory`, `recommended`, `not_applicable` or `not_checked` — whether the policy concerns the organisation |
 | `ctx.settings` | What the user configured for themselves: `ai.{research,chat,dashboard}` as a state (`personal` / `internal` / `disabled` / `none`), `ai.personalProviderCount`, and `language` |
 | `ctx.sources`, `ctx.sourceCount`, `ctx.sourceMax` | Uploaded sources and the user's limit |
-| `ctx.proxies` | The user's TachyonikProxy installations from ResourceManager's `/api/internal/proxies`: an array of `{id, name, status, connectionMode, version, lastSeen}`. `status` is `online`, `offline` or `pending_enrollment`; `lastSeen` is `""` for a proxy that never connected. `[]` when the user has none or ResourceManager cannot be reached |
+| `ctx.proxies` | The user's TachyonikProxy installations from ResourceManager's `/api/internal/proxies`: an array of `{id, name, status, connectionMode, version, lastSeen, updateAvailable}`. `status` is `online`, `offline` or `pending_enrollment`; `lastSeen` is `""` for a proxy that never connected. `updateAvailable` is whether a newer TachyonikProxy release exists than `version`, compared numerically by ResourceManager; `false` while the latest release or the proxy's version is not known. `[]` when the user has none or ResourceManager cannot be reached |
+| `ctx.proxyRelease` | The latest TachyonikProxy release: `{latestVersion}`, from the signed manifest the proxies update from (ResourceManager, see its README). `latestVersion` is `""` while it is not known — the check is off, or the manifest could not be read or verified |
 | `ctx.tools` | The user's tool records from ResourceManager: an array of `{id, name, proxyId, proxyName, host, credentialType, hasCredential}`. `name` is the tool as the Tools view names it (the catalogue name, or the command for an unmanaged tool). `credentialType` is what the tool's kind needs to authenticate (AIManager's catalogue, e.g. `"username-password"`), `""` when nothing or unmanaged; `hasCredential` is whether one is linked. A tool that cannot be used for want of a credential is `credentialType !== "" && !hasCredential`, the Tools view's "none — required". `[]` when the user has none or ResourceManager cannot be reached |
 | `ctx.assets`, `ctx.assetCount`, `ctx.highestScoreAsset` | Assets, and the highest-scoring one (or `null`). Each asset is `{id, name, type, source, severity, score, createdAt, modifiedAt, lastSeen, lastScanned, lastScanCoverageVerification, scanCoverageIntervalDays}`; the last three are `null` when not known. `type` is `"Host"`, the only asset type. `source` is always `""`: AssetManager's assets carry their sources as a list (`sources`, `sourcesLabel`), which the context does not pass on, so a rule cannot tell an asset's source from it. `scanCoverageIntervalDays` and `lastScanCoverageVerification` are only ever set by an import, so `null` means no source has reported a scheduled vulnerability scan for the asset |
 | `ctx.assetStats` | Severity buckets from AssetManager's `/api/assets/stats`, plus the host assets by last seen: `hostsSeen30d` (≤ 30 days), `hostsSeen180d` (31–180 days), `hostsSeenOlder` (> 180 days or unreadable) |
@@ -530,7 +531,8 @@ input on both sides.
     `ORGANISATION_UPDATED`). A rule's context is not only assets, so a change to
     the organisation record or to a user's own settings must wake the daemon too.
   - **ResourceManager** — tool, credential and proxy changes, which `ctx.tools`
-    and `ctx.proxies` are built from. Linking a credential to a tool must
+    and `ctx.proxies` are built from, and a new proxy release
+    (`PROXY_RELEASE_UPDATED`), which makes proxies outdated that were current. Linking a credential to a tool must
     withdraw the action asking for one. `TOOL_ACTIVITY`, sent on every tool
     call, is ignored.
   - **Action rules** — rules created, edited or deleted; explicit evaluation
