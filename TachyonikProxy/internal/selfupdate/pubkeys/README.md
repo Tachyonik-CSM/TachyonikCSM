@@ -35,3 +35,11 @@ window where verification fails.
 
 After all proxies have been updated to the build that includes the new key,
 remove the old file in a subsequent release.
+
+## The platform's copy
+
+ResourceManager reads the same signed manifest to tell which proxies are
+outdated, and trusts it with its own copy of these keys in
+`TachyonikLib/proxyrelease/pubkeys/`. Every replacement or rotation here is
+made there too, in the same commit: `TestThePlatformTrustsTheSameReleaseKeys`
+fails while the two directories name different keys.
