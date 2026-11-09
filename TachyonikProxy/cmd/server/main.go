@@ -43,6 +43,7 @@ import (
 	"tachyonik/tachyonikproxy/internal/enroll"
 	"tachyonik/tachyonikproxy/internal/mcpserver"
 	"tachyonik/tachyonikproxy/internal/netscan"
+	"tachyonik/tachyonikproxy/internal/platforminfo"
 	"tachyonik/tachyonikproxy/internal/reverseconnect"
 	"tachyonik/tachyonikproxy/internal/selfupdate"
 	"tachyonik/tachyonikproxy/internal/tlsutil"
@@ -130,6 +131,11 @@ func runServer() {
 
 	// Initialize MCP server
 	mcpSrv := mcpserver.NewServer(cfg, registry, version, netScanner)
+	// Where and how this proxy is installed, so the platform's Upgrade dialog
+	// can give the update path that fits.
+	platform := platforminfo.Detect(cfg.AutoUpdate.Enabled)
+	mcpSrv.SetPlatform(platform)
+	logger.Infof("Platform: %s/%s %q, installed as %s (auto-update %v)", platform.OS, platform.Arch, platform.OSName, platform.InstallMethod, platform.AutoUpdate)
 
 	// Tools execute as this process's user. Running the proxy as root means
 	// every tool (and every scan routine's exec()) runs as root too, turning

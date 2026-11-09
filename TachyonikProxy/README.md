@@ -34,6 +34,7 @@ TachyonikProxy is a standalone, cross-platform MCP (Model Context Protocol) serv
 - [MCP Protocol](#mcp-protocol)
 - [Logging](#logging)
 - [Enrollment](#enrollment)
+- [Platform report](#platform-report)
 - [Auto-update](#auto-update)
 - [Integration](#integration)
 - [Troubleshooting](#troubleshooting)
@@ -835,7 +836,7 @@ The MCP server speaks JSON-RPC 2.0 and supports the following methods. Unknown m
 
 | Method                        | Direction          | Purpose                                                         |
 |-------------------------------|--------------------|-----------------------------------------------------------------|
-| `initialize`                  | client → server    | Capability handshake; returns proxy name and protocol version `2024-11-05` |
+| `initialize`                  | client → server    | Capability handshake; returns proxy name and version (`serverInfo`), protocol version `2024-11-05`, and — beyond MCP, ignored by other clients — `tachyonik.platform`: where and how this proxy is installed (see [Platform report](#platform-report)) |
 | `notifications/initialized`   | client → server    | Notification (no response)                                      |
 | `tools/list`                  | client → server    | Lists local tools and (eventually) tools proxied from upstream MCP servers |
 | `tools/call`                  | client → server    | Executes a tool; returns text + optional `resource` content     |
@@ -919,6 +920,36 @@ tachyonikproxy reset-enrollment --force
 ```
 
 Removes all on-disk cert material and clears the relevant config sections so the proxy can be re-enrolled.
+
+## Platform report
+
+The `initialize` reply tells TachyonikCSM where and how the proxy is installed,
+so the WebUI's Upgrade dialog can give the one update path that fits:
+
+```json
+"tachyonik": { "platform": {
+  "os": "linux", "arch": "arm64", "osName": "Debian GNU/Linux 13 (trixie)",
+  "installMethod": "deb", "autoUpdate": false
+} }
+```
+
+- `os` / `arch` — the build target.
+- `osName` — the operating system's own name: `PRETTY_NAME` from `/etc/os-release`, `macOS <sw_vers -productVersion>`, or the output of `ver` on Windows; `""` when unreadable.
+- `installMethod` — read from what each installer leaves behind (`internal/platforminfo`):
+
+  | Value | Recognised by |
+  |---|---|
+  | `deb` / `rpm` | the package marker `/usr/share/tachyonik/tachyonikproxy/package-managed`; dpkg's record of the package (`/var/lib/dpkg/info/tachyonikproxy.list`) tells `.deb` from `.rpm` |
+  | `pkg` | the macOS installer's receipt `/var/db/receipts/com.tachyonik.tachyonikproxy.plist` |
+  | `msi` | the binary in `Program Files\Tachyonik\TachyonikProxy` |
+  | `user` | a binary under the user's home directory |
+  | `tarball` | a system install on the self-update layout (`/opt/tachyonik/proxy/<version>/`) |
+  | `tarball-legacy` | a system install from before that layout (the binary is `/usr/local/bin/tachyonikproxy` itself) |
+  | `unknown` | anything else, e.g. a build run from a source tree |
+
+- `autoUpdate` — `auto_update.enabled` in the configuration, and only for `tarball`, the one installation that updates itself.
+
+Detection runs once at startup, only reads files and runs read-only version commands, and is logged as `Platform: …`. ToolManager forwards it to ResourceManager.
 
 ## Auto-update
 

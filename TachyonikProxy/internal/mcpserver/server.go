@@ -20,6 +20,7 @@ import (
 
 	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
+	"tachyonik/tachyonikproxy/internal/platforminfo"
 	"tachyonik/tachyonikproxy/internal/tools"
 	"tachyonik/tachyonikproxy/internal/toolscan"
 )
@@ -80,6 +81,17 @@ type InitializeResult struct {
 	ProtocolVersion string       `json:"protocolVersion"`
 	Capabilities    Capabilities `json:"capabilities"`
 	ServerInfo      ServerInfo   `json:"serverInfo"`
+	// Tachyonik carries what TachyonikCSM wants to know beyond MCP: where and
+	// how this proxy is installed. Other MCP clients ignore the field.
+	Tachyonik *TachyonikInfo `json:"tachyonik,omitempty"`
+}
+
+// TachyonikInfo is the Tachyonik-specific part of the initialize reply.
+type TachyonikInfo struct {
+	// Platform is the operating system, architecture and installation
+	// method (platforminfo). ToolManager forwards it to ResourceManager, and
+	// the WebUI's Upgrade dialog gives the update path that fits.
+	Platform *platforminfo.Platform `json:"platform,omitempty"`
 }
 
 type ToolsListResult struct {
@@ -204,6 +216,9 @@ type Server struct {
 	netScan     toolscan.NetScanProvider
 	initialized atomic.Bool
 	mu          sync.RWMutex
+	// platform is where and how this proxy is installed (SetPlatform); nil
+	// until set, and then not reported.
+	platform *platforminfo.Platform
 }
 
 // NewServer creates a new MCP server. version is the proxy's binary
@@ -279,7 +294,27 @@ func (s *Server) handleInitialize(req Request) *Response {
 			Name:    s.config.Proxy.Name,
 			Version: s.version,
 		},
+		Tachyonik: s.tachyonikInfo(),
 	})
+}
+
+// SetPlatform records where and how this proxy is installed, reported in
+// every initialize reply. Detected once at startup: it does not change while
+// the process runs.
+func (s *Server) SetPlatform(p platforminfo.Platform) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.platform = &p
+}
+
+func (s *Server) tachyonikInfo() *TachyonikInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.platform == nil {
+		return nil
+	}
+	p := *s.platform
+	return &TachyonikInfo{Platform: &p}
 }
 
 func (s *Server) handleToolsList(req Request) *Response {
