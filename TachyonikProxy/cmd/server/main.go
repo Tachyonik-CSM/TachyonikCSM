@@ -800,6 +800,7 @@ func runScan() {
 	}
 
 	scanner := toolscan.New()
+	scanner.SetVersion(version)
 	results := scanner.Scan(nil)
 
 	if jsonOutput {

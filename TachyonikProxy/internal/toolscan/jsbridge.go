@@ -4,12 +4,13 @@
 
 // What a scan routine can reach from JavaScript.
 //
-// Two globals, both bounded. httpGet fetches a URL under time and size limits,
+// Three globals, all bounded. httpGet fetches a URL under time and size limits,
 // so a routine reaching outside the periodic sweep still cannot hang the scanner
 // or exhaust its memory. netscan is a read-only view of the most recent
 // local-network sweep and performs no I/O at all — which is what turns scanning
 // a /24 from 254 separate executions, far beyond any per-routine budget, into a
-// set of string matches over data already collected.
+// set of string matches over data already collected. builtinTools lists the tools
+// shipped inside this proxy, so a scan rule can detect one.
 
 package toolscan
 
@@ -24,6 +25,7 @@ import (
 	"github.com/dop251/goja"
 
 	"tachyonik/tachyonikproxy/internal/netscan"
+	"tachyonik/tachyonikproxy/internal/tools"
 )
 
 // Bounds on the httpGet helper. A routine reaching outside the periodic sweep
@@ -34,6 +36,21 @@ var (
 	defaultHTTPBodyCap  = int64(1 << 20) // 1 MiB
 	defaultHTTPRedirect = false
 )
+
+// registerBuiltinTools installs builtinTools(): the tools shipped inside this
+// proxy, as [{ name, version }]. They have no binary to find with exec(), and
+// share the proxy's version. A proxy too old to have this function has none of
+// the tools that need it, so a routine checks `typeof builtinTools` first.
+func (s *Scanner) registerBuiltinTools(vm *goja.Runtime) {
+	vm.Set("builtinTools", func(goja.FunctionCall) goja.Value {
+		names := tools.BuiltinNames()
+		out := make([]interface{}, 0, len(names))
+		for _, name := range names {
+			out = append(out, map[string]interface{}{"name": name, "version": s.version})
+		}
+		return vm.ToValue(out)
+	})
+}
 
 // registerNetScan installs the `netscan` global: a read-only view of the most
 // recent local-network sweep.

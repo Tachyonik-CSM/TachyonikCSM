@@ -299,6 +299,7 @@ Tool detection is **driven from ToolManager**, not from a hard-coded list inside
    - `exec(cmd, args)` — runs a command and returns `{ output, exitCode }` (combined stdout/stderr; `exitCode = -1` if the command was not found).
    - `httpGet(url, options)` — a single bounded HTTPS/HTTP GET returning `{ status, body, error }`. Options: `headers`, `timeout` (ms, capped at 30 s), `skipTLS`. Redirects are not followed.
    - `netscan` — a read-only view of the periodic local-network sweep. See [Local Network Scan](#local-network-scan).
+   - `builtinTools()` — the tools shipped inside this proxy, as `[{ name, version }]`, where `version` is the proxy's own. They have no binary to find with `exec()`. A proxy too old to have the function has none of the tools that need it, so a routine checks `typeof builtinTools` first.
 4. The routine declares a global `rules` array; each rule has `name`, `description`, and a `detect()` function. The proxy iterates `rules`, calls `detect()`, and collects:
    - `null` / `undefined` → not detected.
    - object `{ version, path, description, host? }` → one detection. If `host` is omitted the proxy fills it with its own primary IPv4 address.
@@ -375,6 +376,7 @@ nothing above the proxy needs to know the difference.
 | `builtin:gmp-get-results` | Asks an OPENVAS SCAN appliance for the results of each scan task's latest report, over GMP. Reads existing reports; starts no scan. |
 | `builtin:gmp-get-scan-coverage` | Works out which hosts an OPENVAS SCAN appliance scans on a schedule, and how often, from its scan tasks, targets and schedules, over GMP. Returns a `target\|scan-interval` table. Reads the configuration; starts no scan. |
 | `builtin:insightvm-get-assets` | Asks a Rapid7 InsightVM Security Console for every asset its account may see, over the console's REST API (v3). Reads the console's inventory; scans nothing. See [Talking to an InsightVM Security Console](#talking-to-an-insightvm-security-console). |
+| `builtin:has-scan` | TachyonikHAS (Host Asset Scanner): finds alive hosts in a private network, for a customer with no security tool that can detect hosts. Unlike the others it sends traffic to the hosts itself. See [Finding hosts with TachyonikHAS](#finding-hosts-with-tachyonikhas). |
 
 Arguments of `gmp-get-hosts`, `gmp-get-results` and `gmp-get-scan-coverage`: `host` (required — the
 appliance), `port` (default `22`), `sshUser` (default `gmp`). Arguments of `insightvm-get-assets`:
@@ -444,6 +446,61 @@ The output file `openvas-scan-coverage-<appliance>-<UTC timestamp>.txt`
 `<target>|<days>` line per target, addresses in address order, then hostnames.
 A table without rows is returned too: nothing scanned on a schedule is an
 answer. `max_output_bytes` caps each of the two GMP answers.
+
+### Finding hosts with TachyonikHAS
+
+`builtin:has-scan` (`internal/hostscan`) answers one question quickly: which
+addresses in this network are alive. It reports no services and no hostnames.
+It is shipped with the proxy but treated as an ordinary tool: it has a catalogue
+entry with the capability "Host detection", a tool rule, and a scan rule, which
+finds it through the `builtinTools()` helper ([Tool Detection](#tool-detection)).
+
+**Argument:** `target` — an IPv4 address, a CIDR range, or a list of them
+separated by commas or spaces, the same argument a rule running Nmap takes. The
+rule's `allowed_chars` must cover it, e.g. `a-zA-Z0-9.:/,\- `. Refused with an
+error saying why: anything outside `10/8`, `172.16/12`, `192.168/16` and `127/8`
+(the same ranges as the [local network scan](#local-network-scan)), more than
+65536 addresses in one run, hostnames, and IPv6. One scan runs at a time per proxy.
+
+**How it scans.** The proxy normally has no raw-socket rights, so it uses what an
+unprivileged process has:
+
+| Step | Finds | Limits |
+|---|---|---|
+| ICMP echo, two rounds at up to 5000 packets per second | Hosts that answer ping; these skip the TCP step | Needs an ICMP socket: unprivileged on Linux (`net.ipv4.ping_group_range`) and macOS, or raw as root or administrator. Without one the step is skipped and the result says so. |
+| TCP connect to ports 443, 80, 22, 445 and 3389, 1 second, at most 1024 connections at once, stopping at the first answer | Hosts that accept or refuse a connection | Hosts that silently drop everything |
+| The neighbour table (`/proc/net/arp`, Linux only), read last | Hosts on the proxy's own subnet that dropped the probes but answered ARP, and the MAC address of every host found there | Own subnet only; an entry can briefly outlive its host |
+
+**How long it takes.** A silent address costs one 1-second connect. By calculation,
+the worst case with nothing answering is a few seconds for a `/24` and about six
+minutes for a `/16`. It stops at 90% of the rule's `timeout` and returns what it
+found, marked incomplete, so a rule covering a `/16` wants a `timeout` of about
+`600`, which is also as long as ToolManager waits for a tool.
+
+**The result** is a one-line summary, plus an output file
+`tachyonikhas-hosts-<UTC timestamp>.json` (`application/json`). ToolManager stores it
+as a source, and the platform's analysis and import rules turn it into assets:
+
+```json
+{
+  "tool": "TachyonikHAS",
+  "schemaVersion": 1,
+  "target": "192.168.178.0/24",
+  "startedAt": "2026-11-09T14:05:06Z",
+  "durationMs": 2140,
+  "addressesProbed": 254,
+  "complete": true,
+  "icmpUsed": true,
+  "warnings": [],
+  "hosts": [
+    { "ip": "192.168.178.1", "detectedBy": ["icmp", "neighbour"], "mac": "aa:bb:cc:dd:ee:01" }
+  ]
+}
+```
+
+`warnings` also carries a caution when nearly a whole range is known only from
+refused connections, since a firewall answering for absent addresses looks exactly
+like that. The scan cannot tell the two apart, so such hosts may not exist.
 
 ### Talking to an OPENVAS SCAN appliance
 

@@ -16,8 +16,8 @@
 // This file holds what every built-in shares: the dispatch, the secrets a call
 // carries, the argument helpers and the credential test's verdict. Each
 // built-in has a file of its own beside it (builtin_gmp.go,
-// builtin_insightvm.go) that adapts a protocol client package (internal/gmp,
-// internal/insightvm) to a tool.
+// builtin_insightvm.go, builtin_has.go) that adapts a package (internal/gmp,
+// internal/insightvm, internal/hostscan) to a tool.
 //
 // Built-ins are where credentials matter. A binary tool receives only its
 // rendered arguments; a built-in additionally receives the credential linked
@@ -29,6 +29,7 @@ package tools
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -66,6 +67,28 @@ func IsBuiltin(tool *config.ToolConfig) bool {
 // builtinFunc is the implementation of one built-in.
 type builtinFunc func(tool *config.ToolConfig, args map[string]interface{}, secrets Secrets) (*ToolResult, error)
 
+// builtins maps each built-in's command to its implementation.
+var builtins = map[string]builtinFunc{
+	builtinGMPGetHosts:        gmpGetHosts,
+	builtinGMPGetResults:      gmpGetResults,
+	builtinGMPGetScanCoverage: gmpGetScanCoverage,
+	builtinInsightVMGetAssets: insightvmGetAssets,
+	builtinHASScan:            hasScan,
+}
+
+// BuiltinNames lists the built-ins this proxy has, without the prefix and
+// sorted. A scan rule asks for it to tell whether a tool shipped with the proxy
+// is present, which a proxy from before that tool answers correctly by not
+// having it.
+func BuiltinNames() []string {
+	names := make([]string, 0, len(builtins))
+	for command := range builtins {
+		names = append(names, strings.TrimPrefix(command, BuiltinPrefix))
+	}
+	sort.Strings(names)
+	return names
+}
+
 // callBuiltin runs a built-in tool.
 //
 // Its arguments pass the same checks a binary tool's do — the schema's
@@ -74,17 +97,8 @@ type builtinFunc func(tool *config.ToolConfig, args map[string]interface{}, secr
 // allowlist is what the rule's author declared every argument must satisfy,
 // and a built-in's own parsing is no reason to skip it.
 func callBuiltin(tool *config.ToolConfig, args map[string]interface{}, secrets Secrets) (*ToolResult, error) {
-	var run builtinFunc
-	switch tool.Command {
-	case builtinGMPGetHosts:
-		run = gmpGetHosts
-	case builtinGMPGetResults:
-		run = gmpGetResults
-	case builtinGMPGetScanCoverage:
-		run = gmpGetScanCoverage
-	case builtinInsightVMGetAssets:
-		run = insightvmGetAssets
-	default:
+	run, ok := builtins[tool.Command]
+	if !ok {
 		return nil, fmt.Errorf("unknown built-in %q", strings.TrimPrefix(tool.Command, BuiltinPrefix))
 	}
 

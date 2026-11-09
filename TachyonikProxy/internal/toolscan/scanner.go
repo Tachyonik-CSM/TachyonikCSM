@@ -101,11 +101,19 @@ type NetScanProvider interface {
 type Scanner struct {
 	mu      sync.Mutex
 	netScan NetScanProvider
+	version string // the proxy's own, as reported by builtinTools()
 }
 
 // New creates a new Scanner with no local-network data.
 func New() *Scanner {
 	return &Scanner{}
+}
+
+// SetVersion records the proxy's version, which the tools shipped with it share.
+func (s *Scanner) SetVersion(version string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.version = version
 }
 
 // NewWithNetScan creates a Scanner whose routines can query the local-network
@@ -228,6 +236,7 @@ func (s *Scanner) executeRuleCode(code string) []ToolResult {
 	// pure lookups or bounded single requests — see jsbridge.go.
 	s.registerNetScan(vm)
 	registerHTTPGet(vm)
+	s.registerBuiltinTools(vm)
 
 	// Register which() helper — returns the path of a command or ""
 	vm.Set("which", func(call goja.FunctionCall) goja.Value {

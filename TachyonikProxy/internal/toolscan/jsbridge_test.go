@@ -256,3 +256,28 @@ func TestNetScan_DiscoveredHostIsPreserved(t *testing.T) {
 		t.Fatalf("unexpected error: %s", results[0].Error)
 	}
 }
+
+// A scan rule detects a tool shipped inside the proxy by asking for it, and
+// gets the proxy's version for it.
+func TestBuiltinToolsDetectsHAS(t *testing.T) {
+	s := New()
+	s.SetVersion("1.5.0")
+	results := s.Scan([]RoutineInput{{Name: "tachyonikhas", Code: `
+var rules = [{
+  name: "tachyonikhas",
+  description: "TachyonikHAS",
+  detect: function() {
+    if (typeof builtinTools !== "function") return null;
+    var all = builtinTools();
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].name === "has-scan") {
+        return { name: "tachyonikhas", version: all[i].version, path: "", description: "TachyonikHAS" };
+      }
+    }
+    return null;
+  }
+}];`}})
+	if len(results) != 1 || !results[0].Detected || results[0].Version != "1.5.0" {
+		t.Fatalf("results = %+v", results)
+	}
+}

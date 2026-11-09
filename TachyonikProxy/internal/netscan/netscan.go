@@ -322,6 +322,10 @@ func resolveNetwork(cidr, source string) (*net.IPNet, error) {
 	return ipNet, nil
 }
 
+// IsSweepable reports whether ip is in a range this proxy may probe. Everything
+// on the proxy that probes the network holds to the same ranges.
+func IsSweepable(ip net.IP) bool { return isSweepableIPv4(ip) }
+
 // isSweepableIPv4 reports whether ip belongs to a range this proxy may probe:
 // the RFC1918 private blocks, plus loopback. Everything else is somebody
 // else's network — a proxy that happens to hold a public address must never be

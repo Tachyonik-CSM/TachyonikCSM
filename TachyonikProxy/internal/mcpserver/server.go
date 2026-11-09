@@ -401,6 +401,7 @@ func (s *Server) handleToolsScan(req Request) *Response {
 	}
 
 	scanner := toolscan.NewWithNetScan(s.netScan)
+	scanner.SetVersion(s.version)
 	results := scanner.Scan(params.Routines)
 
 	detectedCount := 0

@@ -144,6 +144,8 @@ Per-call validation, in order:
 
 The combination of #3, #4, and #5 closes the classic argv-injection paths: no shell, every argument is allowlisted, and the command name is fixed in the tool definition (callers cannot supply an arbitrary `cmd`).
 
+**Active scanning.** The built-in `has-scan` (TachyonikHAS) sends ICMP echoes and TCP connection attempts from the proxy to the addresses in its `target` argument, so a call to it can be seen by, and alarm, intrusion detection on the network. It runs on the same request path as any tool, including one started from a chat. Its targets are limited in code, whatever the rule's schema says, to the private ranges of the local-network sweep and to 65536 addresses per run, and one scan runs at a time. It needs no additional privilege: it uses an unprivileged ICMP socket where the system grants one and otherwise does without ICMP, unless the proxy already runs as root or administrator, in which case it can open a raw socket. Nothing in the packaged service units was changed for it.
+
 ### 3.3 Configuration updates (`config/update`)
 
 ToolManager can push tool definitions and upstream MCP server entries via `config/update`. This is the highest-privilege MCP method in the API.
