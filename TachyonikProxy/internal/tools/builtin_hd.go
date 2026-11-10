@@ -38,9 +38,10 @@ const hdDefaultTimeout = 300 * time.Second
 // chat, would double the load on the network for an answer on its way anyway.
 var hdRunning sync.Mutex
 
-// hdDocument is the output file. schemaVersion moves when a field changes
-// meaning, since import rules are written against this shape.
-type hdDocument struct {
+// HDDocument is the result of a scan: the tool's output file, and what the
+// hd-scan subcommand prints with --json. schemaVersion moves when a field
+// changes meaning, since import rules are written against this shape.
+type HDDocument struct {
 	Tool            string          `json:"tool"`
 	SchemaVersion   int             `json:"schemaVersion"`
 	Target          string          `json:"target"`
@@ -59,8 +60,9 @@ func hdScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*T
 	if target == "" {
 		return &ToolResult{Content: `argument "target" is required: an IP address, a CIDR range, or a comma-separated list of them`, IsError: true}, nil
 	}
-	addrs, err := hostscan.ParseTargets(target)
-	if err != nil {
+	// Checked before taking the lock, so a refused target is reported as such
+	// even while another scan runs.
+	if _, err := hostscan.ParseTargets(target); err != nil {
 		return &ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
@@ -77,24 +79,15 @@ func hdScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*T
 	ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
 	defer cancel()
 
-	started := time.Now().UTC()
-	res := hostscan.Scan(ctx, addrs)
-
-	doc, err := json.MarshalIndent(hdDocument{
-		Tool:            "TachyonikHD",
-		SchemaVersion:   1,
-		Target:          target,
-		StartedAt:       started.Format(time.RFC3339),
-		DurationMs:      res.Duration.Milliseconds(),
-		AddressesProbed: res.Addresses,
-		Complete:        res.Complete,
-		ICMPUsed:        res.ICMPUsed,
-		Warnings:        nonNil(res.Warnings),
-		Hosts:           res.Hosts,
-	}, "", "  ")
+	result, err := RunHDScan(ctx, target)
 	if err != nil {
-		return nil, fmt.Errorf("encode the scan result: %w", err)
+		return &ToolResult{Content: err.Error(), IsError: true}, nil
 	}
+	doc, err := result.JSON()
+	if err != nil {
+		return nil, err
+	}
+	res, started := result, result.Started
 
 	limit := tool.MaxOutputBytes
 	if limit <= 0 {
@@ -109,11 +102,11 @@ func hdScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*T
 
 	filename := hdFilename(started)
 	logger.Infof("hd-scan: %d host(s) among %d address(es) in %s, complete=%v, icmp=%v, as %s",
-		len(res.Hosts), res.Addresses, res.Duration.Round(time.Millisecond), res.Complete, res.ICMPUsed, filename)
+		len(res.Hosts), res.AddressesProbed, res.Duration().Round(time.Millisecond), res.Complete, res.ICMPUsed, filename)
 
 	summary := fmt.Sprintf("Found %s among %s in %s, as %s.",
-		countOf(len(res.Hosts), "alive host"), countOf(res.Addresses, "address"),
-		res.Duration.Round(100*time.Millisecond), filename)
+		countOf(len(res.Hosts), "alive host"), countOf(res.AddressesProbed, "address"),
+		res.Duration().Round(100*time.Millisecond), filename)
 	for _, w := range res.Warnings {
 		summary += " " + w
 	}
@@ -124,6 +117,57 @@ func hdScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*T
 			MimeType: "application/json",
 			Data:     base64.StdEncoding.EncodeToString(doc),
 		}},
+	}, nil
+}
+
+// HDScan is a finished scan: the document, and when it started.
+type HDScan struct {
+	HDDocument
+	Started time.Time
+}
+
+// Duration is how long the scan took.
+func (s HDScan) Duration() time.Duration {
+	return time.Duration(s.DurationMs) * time.Millisecond
+}
+
+// JSON is the document as the tool writes it.
+func (s HDScan) JSON() ([]byte, error) {
+	doc, err := json.MarshalIndent(s.HDDocument, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode the scan result: %w", err)
+	}
+	return doc, nil
+}
+
+// RunHDScan scans target, which may be an address, a CIDR range or a
+// comma-separated list of them, within the limits hostscan.ParseTargets sets.
+// When ctx ends first it returns what was found by then, marked incomplete.
+//
+// This is the whole of TachyonikHD for both of its callers, the built-in tool
+// and the hd-scan subcommand, so the two cannot report a scan differently.
+func RunHDScan(ctx context.Context, target string) (HDScan, error) {
+	target = strings.TrimSpace(target)
+	addrs, err := hostscan.ParseTargets(target)
+	if err != nil {
+		return HDScan{}, err
+	}
+	started := time.Now().UTC()
+	res := hostscan.Scan(ctx, addrs)
+	return HDScan{
+		HDDocument: HDDocument{
+			Tool:            "TachyonikHD",
+			SchemaVersion:   1,
+			Target:          target,
+			StartedAt:       started.Format(time.RFC3339),
+			DurationMs:      res.Duration.Milliseconds(),
+			AddressesProbed: res.Addresses,
+			Complete:        res.Complete,
+			ICMPUsed:        res.ICMPUsed,
+			Warnings:        nonNil(res.Warnings),
+			Hosts:           res.Hosts,
+		},
+		Started: started,
 	}, nil
 }
 

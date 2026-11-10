@@ -16,7 +16,8 @@
 // The subcommands cover the rest of its life: enroll (and its listen variant)
 // pairs the proxy with an installation, reset-enrollment undoes that, scan and
 // netscan run a detection sweep or a local-network sweep from the command line,
-// and self-update replaces the binary in place.
+// hd-scan finds alive hosts with TachyonikHD, and self-update replaces the
+// binary in place.
 package main
 
 import (
@@ -78,6 +79,9 @@ func main() {
 			return
 		case "netscan":
 			runNetScan()
+			return
+		case "hd-scan":
+			runHDScan()
 			return
 		case "self-update":
 			runSelfUpdate()
@@ -870,6 +874,10 @@ func runHelp() {
 	fmt.Println("                       --network <cidr[,...]>    sweep these ranges instead of the configured ones")
 	fmt.Println("                       --ports <list>            comma-separated ports, e.g. 443,8443")
 	fmt.Println("                       --json                    full records including response bodies")
+	fmt.Println("  hd-scan            Find alive hosts with TachyonikHD (ICMP, TCP, neighbour table)")
+	fmt.Println("                       --target <ip|cidr[,...]>  private ranges only, at most a /16; default: the proxy's own network")
+	fmt.Println("                       --timeout <seconds>       stop after this long and print what was found (default 300)")
+	fmt.Println("                       --json                    the tool's JSON document, as the platform imports it")
 	fmt.Println("  self-update        Check (and optionally apply) an auto-update")
 	fmt.Println("                       --dry-run                  check only, no changes")
 	fmt.Println("                       --status                   print the local update history")

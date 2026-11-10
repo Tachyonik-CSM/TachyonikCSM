@@ -299,7 +299,7 @@ func (s scanner) scan(ctx context.Context, addrs []netip.Addr) Result {
 
 	res.Complete = ctx.Err() == nil
 	if !res.Complete {
-		res.Warnings = append(res.Warnings, "The scan ran out of time before covering every address, so hosts may be missing. Raise the tool rule's timeout or scan a smaller range.")
+		res.Warnings = append(res.Warnings, "The scan ran out of time before covering every address, so hosts may be missing. Allow it more time or scan a smaller range.")
 	}
 	res.Duration = time.Since(started)
 	return res

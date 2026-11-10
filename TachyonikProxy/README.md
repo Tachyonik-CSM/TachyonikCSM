@@ -276,6 +276,7 @@ The same binary handles operational subcommands. Flags may appear before or afte
 | `reset-enrollment [--force]`    | Delete on-disk certs and clear `tls.*`, `reverse_connect.*`, `connection_mode`, `proxy.name` |
 | `scan [--json]`                 | Run the local tool-detection scanner and print results                  |
 | `netscan [--network <cidr>] [--ports <list>] [--json]` | Sweep the local network over HTTPS and list what answered |
+| `hd-scan [--target <ip\|cidr[,...]>] [--timeout <seconds>] [--json]` | Find alive hosts with TachyonikHD; see [From the command line](#from-the-command-line) |
 | `self-update`                   | Check + apply an auto-update; rolls back automatically on health failure |
 | `self-update --dry-run`         | Check the auto-update manifest and report what an apply would do        |
 | `self-update --status`          | Print the local `update-state.json` summary                              |
@@ -460,7 +461,9 @@ separated by commas or spaces, the same argument a rule running Nmap takes. The
 rule's `allowed_chars` must cover it, e.g. `a-zA-Z0-9.:/,\- `. Refused with an
 error saying why: anything outside `10/8`, `172.16/12`, `192.168/16` and `127/8`
 (the same ranges as the [local network scan](#local-network-scan)), more than
-65536 addresses in one run, hostnames, and IPv6. One scan runs at a time per proxy.
+65536 addresses in one run, hostnames, and IPv6. One scan runs at a time per proxy
+process; the `hd-scan` subcommand runs in a process of its own, so it is not held
+back by a scan the platform started.
 
 **How it scans.** The proxy normally has no raw-socket rights, so it uses what an
 unprivileged process has:
@@ -501,6 +504,41 @@ as a source, and the platform's analysis and import rules turn it into assets:
 `warnings` also carries a caution when nearly a whole range is known only from
 refused connections, since a firewall answering for absent addresses looks exactly
 like that. The scan cannot tell the two apart, so such hosts may not exist.
+
+#### From the command line
+
+```bash
+tachyonikproxy hd-scan                                  # the proxy's own network
+tachyonikproxy hd-scan --target 192.168.10.0/24         # another range
+tachyonikproxy hd-scan --target 10.0.0.5,10.0.1.0/28    # several, comma-separated
+tachyonikproxy hd-scan --target 10.20.0.0/16 --timeout 600 --json > hosts.json
+```
+
+```
+Target 192.168.178.0/24 · 3 alive among 254 address(es) · 2.1s
+
+HOST           DETECTED BY     MAC
+192.168.178.1  icmp,neighbour  aa:bb:cc:dd:ee:01
+192.168.178.5  tcp,neighbour   aa:bb:cc:dd:ee:05
+192.168.178.9  icmp            -
+```
+
+The subcommand scans with the same code and within the same limits as the
+built-in tool. Without `--target` it scans the network the [local network
+scan](#local-network-scan) uses by default: `netscan.network`, or the `/24`
+around the proxy's primary address. Like `netscan` it needs no running daemon
+and no platform connection, and it writes nothing to disk.
+
+`--timeout` (default 300 seconds) ends the scan and prints what was found, as
+does Ctrl-C; the result is then marked incomplete. Progress and warnings go to
+stderr. `--json` prints exactly the document the tool returns, so the output can
+be uploaded as a source and the platform's analysis and import rules recognise
+it — useful for a network the platform cannot reach yet. A target that may not
+be scanned, or a bad flag, exits with status 1; a scan that ran, complete or not,
+with status 0.
+
+It needs no root. Without the right to an ICMP socket it scans by TCP only, and
+says so in a warning.
 
 ### Talking to an OPENVAS SCAN appliance
 
