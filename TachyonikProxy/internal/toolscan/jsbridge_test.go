@@ -259,19 +259,19 @@ func TestNetScan_DiscoveredHostIsPreserved(t *testing.T) {
 
 // A scan rule detects a tool shipped inside the proxy by asking for it, and
 // gets the proxy's version for it.
-func TestBuiltinToolsDetectsHAS(t *testing.T) {
+func TestBuiltinToolsDetectsHD(t *testing.T) {
 	s := New()
 	s.SetVersion("1.5.0")
-	results := s.Scan([]RoutineInput{{Name: "tachyonikhas", Code: `
+	results := s.Scan([]RoutineInput{{Name: "tachyonikhd", Code: `
 var rules = [{
-  name: "tachyonikhas",
-  description: "TachyonikHAS",
+  name: "tachyonikhd",
+  description: "TachyonikHD",
   detect: function() {
     if (typeof builtinTools !== "function") return null;
     var all = builtinTools();
     for (var i = 0; i < all.length; i++) {
-      if (all[i].name === "has-scan") {
-        return { name: "tachyonikhas", version: all[i].version, path: "", description: "TachyonikHAS" };
+      if (all[i].name === "hd-scan") {
+        return { name: "tachyonikhd", version: all[i].version, path: "", description: "TachyonikHD" };
       }
     }
     return null;

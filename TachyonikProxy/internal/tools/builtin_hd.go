@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// The built-in tool TachyonikHAS (Host Asset Scanner): finds alive hosts in a
+// The built-in tool TachyonikHD (Host Detection): finds alive hosts in a
 // private network (internal/hostscan), for a customer with no security tool that
 // has the capability "Host detection".
 //
@@ -10,7 +10,7 @@
 // for any tool with that capability works with this one. The hosts come back as
 // a JSON output file, which ToolManager stores as a source and the platform's
 // analysis and import rules turn into assets. The file says plainly that it comes
-// from TachyonikHAS and imitates no other tool's report.
+// from TachyonikHD and imitates no other tool's report.
 
 package tools
 
@@ -28,19 +28,19 @@ import (
 	"tachyonik/tachyonikproxy/internal/hostscan"
 )
 
-// builtinHASScan is the command naming the scan.
-const builtinHASScan = BuiltinPrefix + "has-scan"
+// builtinHDScan is the command naming the scan.
+const builtinHDScan = BuiltinPrefix + "hd-scan"
 
-// hasDefaultTimeout applies when the tool rule sets no timeout.
-const hasDefaultTimeout = 300 * time.Second
+// hdDefaultTimeout applies when the tool rule sets no timeout.
+const hdDefaultTimeout = 300 * time.Second
 
-// hasRunning allows one scan at a time: a second, started by another rule or a
+// hdRunning allows one scan at a time: a second, started by another rule or a
 // chat, would double the load on the network for an answer on its way anyway.
-var hasRunning sync.Mutex
+var hdRunning sync.Mutex
 
-// hasDocument is the output file. schemaVersion moves when a field changes
+// hdDocument is the output file. schemaVersion moves when a field changes
 // meaning, since import rules are written against this shape.
-type hasDocument struct {
+type hdDocument struct {
 	Tool            string          `json:"tool"`
 	SchemaVersion   int             `json:"schemaVersion"`
 	Target          string          `json:"target"`
@@ -53,7 +53,7 @@ type hasDocument struct {
 	Hosts           []hostscan.Host `json:"hosts"`
 }
 
-func hasScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*ToolResult, error) {
+func hdScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*ToolResult, error) {
 	target, _ := args["target"].(string)
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -64,15 +64,15 @@ func hasScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*
 		return &ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
-	if !hasRunning.TryLock() {
-		return &ToolResult{Content: "another TachyonikHAS scan is running on this proxy; try again when it has finished", IsError: true}, nil
+	if !hdRunning.TryLock() {
+		return &ToolResult{Content: "another TachyonikHD scan is running on this proxy; try again when it has finished", IsError: true}, nil
 	}
-	defer hasRunning.Unlock()
+	defer hdRunning.Unlock()
 
 	// Stops short of the rule's timeout, so what was found still gets back.
 	timeout := time.Duration(tool.Timeout) * time.Second
 	if timeout <= 0 {
-		timeout = hasDefaultTimeout
+		timeout = hdDefaultTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
 	defer cancel()
@@ -80,8 +80,8 @@ func hasScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*
 	started := time.Now().UTC()
 	res := hostscan.Scan(ctx, addrs)
 
-	doc, err := json.MarshalIndent(hasDocument{
-		Tool:            "TachyonikHAS",
+	doc, err := json.MarshalIndent(hdDocument{
+		Tool:            "TachyonikHD",
 		SchemaVersion:   1,
 		Target:          target,
 		StartedAt:       started.Format(time.RFC3339),
@@ -107,8 +107,8 @@ func hasScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*
 		}, nil
 	}
 
-	filename := hasFilename(started)
-	logger.Infof("has-scan: %d host(s) among %d address(es) in %s, complete=%v, icmp=%v, as %s",
+	filename := hdFilename(started)
+	logger.Infof("hd-scan: %d host(s) among %d address(es) in %s, complete=%v, icmp=%v, as %s",
 		len(res.Hosts), res.Addresses, res.Duration.Round(time.Millisecond), res.Complete, res.ICMPUsed, filename)
 
 	summary := fmt.Sprintf("Found %s among %s in %s, as %s.",
@@ -127,8 +127,8 @@ func hasScan(tool *config.ToolConfig, args map[string]interface{}, _ Secrets) (*
 	}, nil
 }
 
-func hasFilename(t time.Time) string {
-	return "tachyonikhas-hosts-" + t.UTC().Format("20060102T150405Z") + ".json"
+func hdFilename(t time.Time) string {
+	return "tachyonikhd-hosts-" + t.UTC().Format("20060102T150405Z") + ".json"
 }
 
 func nonNil(s []string) []string {

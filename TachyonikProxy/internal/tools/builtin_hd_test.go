@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Tests TachyonikHAS as a tool: reached like any other through the registry, with
+// Tests TachyonikHD as a tool: reached like any other through the registry, with
 // its arguments checked, and answering with the document the platform's analysis
 // and import rules read.
 
@@ -19,34 +19,34 @@ import (
 )
 
 // The rule as the catalogue has it.
-func hasTool() config.ToolConfig {
+func hdTool() config.ToolConfig {
 	return config.ToolConfig{
-		Name:         "tachyonikhas",
-		Command:      builtinHASScan,
+		Name:         "tachyonikhd",
+		Command:      builtinHDScan,
 		AllowedChars: `a-zA-Z0-9.:/,\- `,
 		Timeout:      30,
 		ArgsSchema:   `{"type":"object","properties":{"target":{"type":"string"}},"required":["target"]}`,
 	}
 }
 
-func callHAS(t *testing.T, target string) *ToolResult {
+func callHD(t *testing.T, target string) *ToolResult {
 	t.Helper()
-	reg := NewRegistry([]config.ToolConfig{hasTool()}, nil)
-	res, err := reg.CallTool("tachyonikhas", map[string]interface{}{"target": target}, Secrets{})
+	reg := NewRegistry([]config.ToolConfig{hdTool()}, nil)
+	res, err := reg.CallTool("tachyonikhd", map[string]interface{}{"target": target}, Secrets{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return res
 }
 
-func TestHASRefusesWhatItMayNotScan(t *testing.T) {
+func TestHDRefusesWhatItMayNotScan(t *testing.T) {
 	for target, want := range map[string]string{
 		"8.8.8.8":        "not a private",
 		"10.0.0.0/8":     "wider than",
 		"example.org":    "hostnames",
 		"192.168.1.1;ls": "disallowed", // the rule's character allowlist, before the built-in
 	} {
-		res := callHAS(t, target)
+		res := callHD(t, target)
 		if !res.IsError || !strings.Contains(res.Content, want) {
 			t.Errorf("%q: result = %+v, want an error saying %q", target, res, want)
 		}
@@ -56,9 +56,9 @@ func TestHASRefusesWhatItMayNotScan(t *testing.T) {
 	}
 }
 
-func TestHASRequiresATarget(t *testing.T) {
-	reg := NewRegistry([]config.ToolConfig{hasTool()}, nil)
-	res, err := reg.CallTool("tachyonikhas", map[string]interface{}{}, Secrets{})
+func TestHDRequiresATarget(t *testing.T) {
+	reg := NewRegistry([]config.ToolConfig{hdTool()}, nil)
+	res, err := reg.CallTool("tachyonikhd", map[string]interface{}{}, Secrets{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +69,8 @@ func TestHASRequiresATarget(t *testing.T) {
 
 // The whole way, on loopback: 127.0.0.1 answers one way or another (its echo, or
 // a refused connection on a closed port).
-func TestHASFindsAHostAndReportsItAsAFile(t *testing.T) {
-	res := callHAS(t, "127.0.0.1")
+func TestHDFindsAHostAndReportsItAsAFile(t *testing.T) {
+	res := callHD(t, "127.0.0.1")
 	if res.IsError {
 		t.Fatalf("result = %+v", res)
 	}
@@ -81,7 +81,7 @@ func TestHASFindsAHostAndReportsItAsAFile(t *testing.T) {
 		t.Fatalf("files = %d", len(res.OutputFiles))
 	}
 	f := res.OutputFiles[0]
-	if f.MimeType != "application/json" || !strings.HasPrefix(f.Filename, "tachyonikhas-hosts-") {
+	if f.MimeType != "application/json" || !strings.HasPrefix(f.Filename, "tachyonikhd-hosts-") {
 		t.Errorf("file = %s %s", f.Filename, f.MimeType)
 	}
 	raw, err := base64.StdEncoding.DecodeString(f.Data)
@@ -106,7 +106,7 @@ func TestHASFindsAHostAndReportsItAsAFile(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("%v in %s", err, raw)
 	}
-	if doc.Tool != "TachyonikHAS" || doc.SchemaVersion != 1 || doc.Target != "127.0.0.1" || doc.AddressesProbed != 1 {
+	if doc.Tool != "TachyonikHD" || doc.SchemaVersion != 1 || doc.Target != "127.0.0.1" || doc.AddressesProbed != 1 {
 		t.Errorf("document = %s", raw)
 	}
 	if doc.Complete == nil || !*doc.Complete || doc.Warnings == nil {
@@ -117,18 +117,18 @@ func TestHASFindsAHostAndReportsItAsAFile(t *testing.T) {
 	}
 }
 
-func TestHASRunsOneScanAtATime(t *testing.T) {
-	hasRunning.Lock()
-	defer hasRunning.Unlock()
-	res := callHAS(t, "127.0.0.1")
-	if !res.IsError || !strings.Contains(res.Content, "another TachyonikHAS scan") {
+func TestHDRunsOneScanAtATime(t *testing.T) {
+	hdRunning.Lock()
+	defer hdRunning.Unlock()
+	res := callHD(t, "127.0.0.1")
+	if !res.IsError || !strings.Contains(res.Content, "another TachyonikHD scan") {
 		t.Errorf("result = %+v", res)
 	}
 }
 
-func TestHASFilename(t *testing.T) {
-	got := hasFilename(time.Date(2026, 11, 9, 14, 5, 6, 0, time.UTC))
-	if got != "tachyonikhas-hosts-20261109T140506Z.json" {
+func TestHDFilename(t *testing.T) {
+	got := hdFilename(time.Date(2026, 11, 9, 14, 5, 6, 0, time.UTC))
+	if got != "tachyonikhd-hosts-20261109T140506Z.json" {
 		t.Errorf("filename = %q", got)
 	}
 }
@@ -137,7 +137,7 @@ func TestBuiltinNamesListTheScan(t *testing.T) {
 	names := BuiltinNames()
 	found := false
 	for _, n := range names {
-		found = found || n == "has-scan"
+		found = found || n == "hd-scan"
 		if strings.HasPrefix(n, BuiltinPrefix) {
 			t.Errorf("%q keeps its prefix", n)
 		}

@@ -376,7 +376,7 @@ nothing above the proxy needs to know the difference.
 | `builtin:gmp-get-results` | Asks an OPENVAS SCAN appliance for the results of each scan task's latest report, over GMP. Reads existing reports; starts no scan. |
 | `builtin:gmp-get-scan-coverage` | Works out which hosts an OPENVAS SCAN appliance scans on a schedule, and how often, from its scan tasks, targets and schedules, over GMP. Returns a `target\|scan-interval` table. Reads the configuration; starts no scan. |
 | `builtin:insightvm-get-assets` | Asks a Rapid7 InsightVM Security Console for every asset its account may see, over the console's REST API (v3). Reads the console's inventory; scans nothing. See [Talking to an InsightVM Security Console](#talking-to-an-insightvm-security-console). |
-| `builtin:has-scan` | TachyonikHAS (Host Asset Scanner): finds alive hosts in a private network, for a customer with no security tool that can detect hosts. Unlike the others it sends traffic to the hosts itself. See [Finding hosts with TachyonikHAS](#finding-hosts-with-tachyonikhas). |
+| `builtin:hd-scan` | TachyonikHD (Host Detection): finds alive hosts in a private network, for a customer with no security tool that can detect hosts. Unlike the others it sends traffic to the hosts itself. See [Finding hosts with TachyonikHD](#finding-hosts-with-tachyonikhd). |
 
 Arguments of `gmp-get-hosts`, `gmp-get-results` and `gmp-get-scan-coverage`: `host` (required — the
 appliance), `port` (default `22`), `sshUser` (default `gmp`). Arguments of `insightvm-get-assets`:
@@ -447,9 +447,9 @@ The output file `openvas-scan-coverage-<appliance>-<UTC timestamp>.txt`
 A table without rows is returned too: nothing scanned on a schedule is an
 answer. `max_output_bytes` caps each of the two GMP answers.
 
-### Finding hosts with TachyonikHAS
+### Finding hosts with TachyonikHD
 
-`builtin:has-scan` (`internal/hostscan`) answers one question quickly: which
+`builtin:hd-scan` (`internal/hostscan`) answers one question quickly: which
 addresses in this network are alive. It reports no services and no hostnames.
 It is shipped with the proxy but treated as an ordinary tool: it has a catalogue
 entry with the capability "Host detection", a tool rule, and a scan rule, which
@@ -478,12 +478,12 @@ found, marked incomplete, so a rule covering a `/16` wants a `timeout` of about
 `600`, which is also as long as ToolManager waits for a tool.
 
 **The result** is a one-line summary, plus an output file
-`tachyonikhas-hosts-<UTC timestamp>.json` (`application/json`). ToolManager stores it
+`tachyonikhd-hosts-<UTC timestamp>.json` (`application/json`). ToolManager stores it
 as a source, and the platform's analysis and import rules turn it into assets:
 
 ```json
 {
-  "tool": "TachyonikHAS",
+  "tool": "TachyonikHD",
   "schemaVersion": 1,
   "target": "192.168.178.0/24",
   "startedAt": "2026-11-09T14:05:06Z",

@@ -16,7 +16,7 @@
 // This file holds what every built-in shares: the dispatch, the secrets a call
 // carries, the argument helpers and the credential test's verdict. Each
 // built-in has a file of its own beside it (builtin_gmp.go,
-// builtin_insightvm.go, builtin_has.go) that adapts a package (internal/gmp,
+// builtin_insightvm.go, builtin_hd.go) that adapts a package (internal/gmp,
 // internal/insightvm, internal/hostscan) to a tool.
 //
 // Built-ins are where credentials matter. A binary tool receives only its
@@ -73,7 +73,7 @@ var builtins = map[string]builtinFunc{
 	builtinGMPGetResults:      gmpGetResults,
 	builtinGMPGetScanCoverage: gmpGetScanCoverage,
 	builtinInsightVMGetAssets: insightvmGetAssets,
-	builtinHASScan:            hasScan,
+	builtinHDScan:             hdScan,
 }
 
 // BuiltinNames lists the built-ins this proxy has, without the prefix and

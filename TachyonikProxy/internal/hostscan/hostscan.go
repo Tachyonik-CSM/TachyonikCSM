@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package hostscan finds which addresses in a private network are alive. It is
-// the scanner behind the built-in tool TachyonikHAS (Host Asset Scanner), for a
+// the scanner behind the built-in tool TachyonikHD (Host Detection), for a
 // customer who has no security tool that can detect hosts.
 //
 // Speed comes before depth, and the proxy normally runs without raw-socket
