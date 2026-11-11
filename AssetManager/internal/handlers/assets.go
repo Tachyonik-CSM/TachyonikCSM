@@ -251,10 +251,21 @@ func (h *Handler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	// Check host asset limit for Host type assets. Type was canonicalised
 	// above, so this is now an exact-match gate that pairs with the
 	// case-sensitive CountHostAssetsByUser query.
+	// Only a new host is limited: reporting an existing one again creates
+	// nothing, so neither a reached limit nor an outage of SystemManager may
+	// refuse it (AM-DATA-33, AM-DATA-44).
 	if req.Type == "Host" && userID != 0 {
-		if status, msg := h.hostAssetLimit("CreateAsset", userID, req.Name, sourceLabel, sourceID); status != 0 {
-			respondError(w, status, msg)
+		exists, err := h.db.AssetExists(userID, req.Name, req.Type)
+		if err != nil {
+			logger.Errorf("CreateAsset: %v", err)
+			respondError(w, http.StatusInternalServerError, "Failed to look up the asset")
 			return
+		}
+		if !exists {
+			if status, msg := h.hostAssetLimit("CreateAsset", userID, req.Name, sourceLabel, sourceID); status != 0 {
+				respondError(w, status, msg)
+				return
+			}
 		}
 	}
 
@@ -594,15 +605,21 @@ func parseTimestamp(v string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// limitsUnavailable is the answer when SystemManager cannot be asked for a
+// user's limits (AM-DATA-44).
+const limitsUnavailable = "Cannot check the limits: SystemManager is not reachable"
+
 // hostAssetLimit decides whether userID may get one more host asset: 0 when
 // it may, otherwise the status and message to refuse with. Both the user's own
 // cap and the appliance's licensed count are checked, and a refusal is
-// audited. op names the caller in the log.
+// audited. op names the caller in the log. When SystemManager cannot be asked
+// for the limit, the answer is 503: a limit that cannot be read cannot be kept
+// (AM-DATA-44).
 func (h *Handler) hostAssetLimit(op string, userID int64, name, sourceLabel string, sourceID int64) (int, string) {
 	user, err := h.systemManagerClient.GetUser(userID)
 	if err != nil {
 		logger.Errorf("%s: failed to get user %d for limit check: %v", op, userID, err)
-		return http.StatusInternalServerError, "Failed to verify user limits"
+		return http.StatusServiceUnavailable, limitsUnavailable
 	}
 
 	if user != nil {

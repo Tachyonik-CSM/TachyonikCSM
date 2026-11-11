@@ -139,7 +139,10 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 	if h.systemManagerClient != nil {
 		smUser, smErr := h.systemManagerClient.GetUser(userID)
 		if smErr != nil {
-			logger.Errorf("Failed to fetch user %d from SystemManager for limit check: %v", userID, smErr)
+			// A limit that cannot be read cannot be kept (AM-DATA-44).
+			logger.Errorf("Failed to fetch user %d from SystemManager for the vulnerability limit check: %v", userID, smErr)
+			respondError(w, http.StatusServiceUnavailable, limitsUnavailable)
+			return
 		} else if smUser != nil && smUser.MaxVulnerabilities > 0 {
 			currentCount, _ := h.db.CountVulnerabilitiesByUserWithFilter(userID, nil)
 			if currentCount >= smUser.MaxVulnerabilities {

@@ -82,12 +82,15 @@ func (h *Handler) ApplyScanCoverage(w http.ResponseWriter, r *http.Request) {
 
 	// The host asset limits apply to an asset made from a coverage table as
 	// to any other. Once refused, the rest of the table is refused too
-	// without asking again.
-	refused := false
+	// without asking again. Refused because SystemManager could not be asked,
+	// the table is answered with 503 rather than with its outcome, so the
+	// importer tries again (AM-DATA-44).
+	refused, unavailable := false, false
 	allow := func() bool {
 		if !refused && userID != 0 {
 			status, _ := h.hostAssetLimit("ApplyScanCoverage", userID, "", req.SourceLabel, sourceID)
 			refused = status != 0
+			unavailable = status == http.StatusServiceUnavailable
 		}
 		return !refused
 	}
@@ -118,6 +121,12 @@ func (h *Handler) ApplyScanCoverage(w http.ResponseWriter, r *http.Request) {
 	if len(out.Created) > 0 {
 		go h.recalculateOrganisationScore(userID)
 		h.emitTotalAssets(userID)
+	}
+	if unavailable {
+		// What was applied stays; applying the table again changes nothing
+		// more of it.
+		respondError(w, http.StatusServiceUnavailable, limitsUnavailable)
+		return
 	}
 	respondJSON(w, http.StatusOK, out)
 }

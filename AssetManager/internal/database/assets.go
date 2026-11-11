@@ -307,6 +307,20 @@ type CreateAssetResult struct {
 	SourceWasNew bool // true if the asset_source row was inserted this call
 }
 
+// AssetExists reports whether the user already has the asset CreateAsset would
+// update, keyed on (user_id, name, type): reporting it again creates nothing,
+// so no limit applies to it (AM-DATA-33).
+func (db *DB) AssetExists(userID int64, name, assetType string) (bool, error) {
+	if canonical, ok := CanonicalAssetType(assetType); ok {
+		assetType = canonical
+	}
+	var n int
+	if err := db.Get(&n, "SELECT COUNT(*) FROM assets WHERE user_id = ? AND name = ? AND type = ?", userID, name, assetType); err != nil {
+		return false, fmt.Errorf("failed to look up asset: %w", err)
+	}
+	return n > 0, nil
+}
+
 // CreateAsset upserts an asset keyed on (user_id, name, type) and links it to
 // the given source via the asset_source junction. Re-observing an existing
 // asset from an existing source bumps the junction's last_seen; re-observing

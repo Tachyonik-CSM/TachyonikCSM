@@ -605,6 +605,8 @@ A user's account must still be active: AssetManager asks SystemManager (`GET /ap
 
 Request bodies are limited to 1 MiB (32 MiB for `POST /api/assets/scan-coverage`); a larger declared body is refused with `413`.
 
+Creating records is limited by what SystemManager states for the owner: `maxHostAssets`, `maxVulnerabilities` and `maxDetections` (0 is no limit), and on an appliance also by the licensed number of host assets. A new record beyond its limit is refused with `403`. Reporting an existing host asset again creates nothing and is never refused for a limit. When SystemManager cannot be asked for the limits, a new host asset, vulnerability or detection is refused with `503` — a limit that cannot be read cannot be kept — and the caller tries again. When only the licence cannot be read (AIManager), creating goes ahead. See AM-DATA-33 to -35 and AM-DATA-44 in [spec/02-data-model-and-behaviour.md](spec/02-data-model-and-behaviour.md#8-limits).
+
 ### CORS
 
 The API supports Cross-Origin Resource Sharing (CORS) for configured origins.
@@ -833,7 +835,7 @@ Every link also has `modified_at` (migration v5): when an import last touched it
 
 A scan coverage table (such as the one TachyonikProxy's `gmp-get-scan-coverage` produces) says which targets a scanner scans on a schedule, and how often. SourceImporter sends it as a whole to `POST /api/assets/scan-coverage`, because a network covers whichever host assets fall inside it. Each entry is applied by its target:
 
-- **An address** (`10.0.0.5`): that host asset gets the coverage. When there is none it is created as a `Host` — subject to the host asset limits like any other — with the entry's verification date as its last seen.
+- **An address** (`10.0.0.5`): that host asset gets the coverage. When there is none it is created as a `Host` — subject to the host asset limits like any other — with the entry's verification date as its last seen. When SystemManager cannot be asked for the limit, the table is answered with `503` instead of its outcome; what was applied up to then stays, and applying the table again changes nothing more of it.
 - **A CIDR network or range** (`10.0.0.0/24`, `10.0.0.1-10.0.0.9`): every existing host asset of the user whose name is an address inside it. No assets are created.
 - **A hostname**: skipped, since host assets are named by address only.
 
