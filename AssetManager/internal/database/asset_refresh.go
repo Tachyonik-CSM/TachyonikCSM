@@ -36,6 +36,22 @@ import (
 	"time"
 )
 
+// Owned is a record's ID and its owner, which is whom a change to it is
+// announced to (AM-SEC-19).
+type Owned struct {
+	ID     int64 `db:"id"`
+	UserID int64 `db:"user_id"`
+}
+
+// IDs are the records' IDs, in order.
+func IDs(records []Owned) []int64 {
+	ids := make([]int64, len(records))
+	for i, r := range records {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
 // HostRef names the assets of one host of one user: what a vulnerability or a
 // detection refers to.
 type HostRef struct {
@@ -66,9 +82,9 @@ const (
 // assets table, with args) and returns the IDs of those whose severity, score
 // or last seen changed. modified_at moves only for those. last_scanned is
 // recomputed as well (it bumps modified_at itself where it changes).
-func (db *DB) refreshAssets(where string, args ...interface{}) ([]int64, error) {
-	var changed []int64
-	if err := db.Select(&changed, `SELECT id FROM assets WHERE (`+where+`)
+func (db *DB) refreshAssets(where string, args ...interface{}) ([]Owned, error) {
+	changed := []Owned{}
+	if err := db.Select(&changed, `SELECT id, user_id FROM assets WHERE (`+where+`)
 		AND (severity IS NOT `+refreshSeverity+`
 		  OR score IS NOT `+refreshScore+`
 		  OR last_seen IS NOT `+refreshLastSeen+`)`, args...); err != nil {
@@ -78,9 +94,9 @@ func (db *DB) refreshAssets(where string, args ...interface{}) ([]int64, error) 
 		placeholders := make([]string, len(changed))
 		updArgs := make([]interface{}, 0, len(changed)+1)
 		updArgs = append(updArgs, time.Now())
-		for i, id := range changed {
+		for i, a := range changed {
 			placeholders[i] = "?"
-			updArgs = append(updArgs, id)
+			updArgs = append(updArgs, a.ID)
 		}
 		if _, err := db.Exec(`UPDATE assets SET
 			severity = `+refreshSeverity+`,
@@ -98,9 +114,9 @@ func (db *DB) refreshAssets(where string, args ...interface{}) ([]int64, error) 
 }
 
 // RefreshAssetsByIDs recomputes the given assets; see refreshAssets.
-func (db *DB) RefreshAssetsByIDs(ids []int64) ([]int64, error) {
+func (db *DB) RefreshAssetsByIDs(ids []int64) ([]Owned, error) {
 	if len(ids) == 0 {
-		return []int64{}, nil
+		return []Owned{}, nil
 	}
 	placeholders := make([]string, len(ids))
 	args := make([]interface{}, len(ids))
@@ -114,8 +130,8 @@ func (db *DB) RefreshAssetsByIDs(ids []int64) ([]int64, error) {
 // RefreshAssetsForHosts recomputes the assets each ref names — every asset of
 // that user named like the host, as the findings are joined on — and returns
 // the IDs of those that changed.
-func (db *DB) RefreshAssetsForHosts(refs []HostRef) ([]int64, error) {
-	changed := []int64{}
+func (db *DB) RefreshAssetsForHosts(refs []HostRef) ([]Owned, error) {
+	changed := []Owned{}
 	seen := make(map[HostRef]bool, len(refs))
 	for _, ref := range refs {
 		if seen[ref] {
@@ -134,7 +150,7 @@ func (db *DB) RefreshAssetsForHosts(refs []HostRef) ([]int64, error) {
 // RefreshAllAssets recomputes every asset. Run at startup, so values left by
 // an older version — or by anything that changed the evidence without asking
 // for a refresh — are put right.
-func (db *DB) RefreshAllAssets() ([]int64, error) {
+func (db *DB) RefreshAllAssets() ([]Owned, error) {
 	return db.refreshAssets("1 = 1")
 }
 

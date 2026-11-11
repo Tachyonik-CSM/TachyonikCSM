@@ -388,7 +388,7 @@ curl -X POST \
 **Notes:**
 - For user requests, the `userId` is automatically extracted from the JWT token
 - For internal service requests, include `userId` in the request body
-- This endpoint broadcasts an `ASSET_CREATED` WebSocket message to all connected clients
+- This endpoint announces an `ASSET_CREATED` WebSocket message to the owner's workspace (see [Who receives which message](#who-receives-which-message))
 
 ---
 
@@ -442,7 +442,7 @@ curl -X DELETE \
 - For internal service requests, this validation is bypassed
 - For user requests, only assets belonging to the authenticated user are deleted
 - For internal service requests, assets for all users matching the `source` are deleted
-- This endpoint broadcasts an `ASSET_DELETED` WebSocket message for each deleted asset
+- This endpoint announces an `ASSET_DELETED` WebSocket message for each deleted asset, to that asset's owner's workspace
 - URL-encode the `source` parameter in curl commands (spaces become `%20`, colons become `%3A`)
 
 ---
@@ -590,7 +590,7 @@ curl -X POST \
 - Severity must be between 0 and 100 (inclusive)
 - To convert CVSS score to severity: `severity = CVSS * 100`
 - To convert severity to CVSS: `CVSS = severity / 100.0`
-- This endpoint broadcasts a `VULNERABILITY_CREATED` WebSocket message to all connected clients
+- This endpoint announces a `VULNERABILITY_CREATED` WebSocket message to the owner's workspace (see [Who receives which message](#who-receives-which-message))
 
 ---
 
@@ -679,6 +679,10 @@ Every change to a record is announced. A created record is sent whole; a change 
 ```json
 {"type": "ASSET_DELETED", "payload": {"id": 1}}
 ```
+
+#### Who receives which message
+
+Each message about a record goes to the connections of the users entitled to it — the record's owner and the members of the owner's shared workspace who are connected (on an appliance, every user) — and to every service connection, and to no other user's connection. This holds for id-only messages as well, and whether a user or a service made the change, e.g. when a source's records are deleted for all their owners. The workspace a connection sees is the one at connection time. See AM-SEC-19 in [spec/04-security-and-tenancy.md](spec/04-security-and-tenancy.md#5-the-websocket).
 
 #### From Client to Server
 

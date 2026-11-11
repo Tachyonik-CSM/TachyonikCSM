@@ -96,7 +96,7 @@ func (db *DB) DeleteDetectionsByIDs(ids []int64, userID int64) (deleted []int64,
 // DeleteDetectionsBySource deletes a source's detections — the user's, or
 // everyone's for userID 0 (an internal service request) — and returns their
 // IDs.
-func (db *DB) DeleteDetectionsBySource(sourceID int64, userID int64) ([]int64, error) {
+func (db *DB) DeleteDetectionsBySource(sourceID int64, userID int64) ([]Owned, error) {
 	where, args := sourceScope(sourceID, userID, nil)
 	return db.deleteFindingsWhere(detectionKind, where, args)
 }
@@ -104,13 +104,13 @@ func (db *DB) DeleteDetectionsBySource(sourceID int64, userID int64) ([]int64, e
 // DeleteStaleDetectionsBySource deletes a source's detections not modified
 // since modifiedBefore — what a re-import no longer produced — and returns
 // their IDs.
-func (db *DB) DeleteStaleDetectionsBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]int64, error) {
+func (db *DB) DeleteStaleDetectionsBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]Owned, error) {
 	where, args := sourceScope(sourceID, userID, &modifiedBefore)
 	return db.deleteFindingsWhere(detectionKind, where, args)
 }
 
 // ClearDetectionSourceBySource unlinks a source's detections from it, keeping
 // them, and returns their IDs.
-func (db *DB) ClearDetectionSourceBySource(sourceID int64, userID int64) ([]int64, error) {
+func (db *DB) ClearDetectionSourceBySource(sourceID int64, userID int64) ([]Owned, error) {
 	return db.clearFindingSource(detectionKind, sourceID, userID)
 }

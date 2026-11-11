@@ -80,12 +80,10 @@ func NewInternalClient(hub *Hub, conn *websocket.Conn) *Client {
 }
 
 // canSee reports whether this client may receive a message scoped to the
-// given owner user IDs. An empty owner set means "broadcast to all".
+// given owner user IDs. A message whose owner is not known reaches no user's
+// connection, only the services' (AM-SEC-19).
 func (c *Client) canSee(ownerUserIDs []int64) bool {
 	if c.all {
-		return true
-	}
-	if len(ownerUserIDs) == 0 {
 		return true
 	}
 	for _, id := range ownerUserIDs {

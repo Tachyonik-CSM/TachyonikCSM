@@ -24,10 +24,10 @@ type findingOps struct {
 	list        func(db *DB, userIDs []int64, f *Filter) (names []string, err error)
 	count       func(db *DB, userID int64, f *Filter) (int, error)
 	hosts       func(db *DB, ids []int64, userID int64) ([]string, error)
-	bySource    func(db *DB, sourceID int64, userID int64) ([]int64, error)
-	stale       func(db *DB, sourceID int64, userID int64, before time.Time) ([]int64, error)
+	bySource    func(db *DB, sourceID int64, userID int64) ([]Owned, error)
+	stale       func(db *DB, sourceID int64, userID int64, before time.Time) ([]Owned, error)
 	byIDs       func(db *DB, ids []int64, userID int64) ([]int64, []int64, error)
-	clearSource func(db *DB, sourceID int64, userID int64) ([]int64, error)
+	clearSource func(db *DB, sourceID int64, userID int64) ([]Owned, error)
 }
 
 var findingKinds = []findingOps{
@@ -159,12 +159,16 @@ func TestFindingsBehaveAlike(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				sameIDs(t, "user 7", ids, []int64{a, renamed})
+				sameIDs(t, "user 7", IDs(ids), []int64{a, renamed})
 				ids, err = k.bySource(db, 1, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
-				sameIDs(t, "everyone", ids, []int64{c})
+				sameIDs(t, "everyone", IDs(ids), []int64{c})
+				// AM-SEC-19: each comes with its owner, whom it is announced to.
+				if ids[0].UserID != 9 {
+					t.Errorf("owner of %d: %d, want 9", c, ids[0].UserID)
+				}
 				if ids, _ := k.bySource(db, 1, 0); ids == nil || len(ids) != 0 {
 					t.Errorf("nothing left: got %#v, want an empty slice", ids)
 				}
@@ -186,12 +190,12 @@ func TestFindingsBehaveAlike(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				sameIDs(t, "user 7", ids, []int64{old})
+				sameIDs(t, "user 7", IDs(ids), []int64{old})
 				ids, err = k.stale(db, 1, 0, before)
 				if err != nil {
 					t.Fatal(err)
 				}
-				sameIDs(t, "everyone", ids, []int64{oldOther})
+				sameIDs(t, "everyone", IDs(ids), []int64{oldOther})
 				if got := remaining(t, db, k); len(got) != 1 || got[0] != "new" {
 					t.Errorf("left: %v", got)
 				}
@@ -225,12 +229,12 @@ func TestFindingsBehaveAlike(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				sameIDs(t, "user 7", ids, []int64{a})
+				sameIDs(t, "user 7", IDs(ids), []int64{a})
 				ids, err = k.clearSource(db, 1, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
-				sameIDs(t, "everyone", ids, []int64{b})
+				sameIDs(t, "everyone", IDs(ids), []int64{b})
 				var cleared int
 				if err := db.Get(&cleared, `SELECT COUNT(*) FROM `+k.name+` WHERE source_id IS NULL AND source_label = ''`); err != nil || cleared != 2 {
 					t.Errorf("records without a source: %d %v", cleared, err)

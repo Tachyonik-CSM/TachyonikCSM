@@ -31,11 +31,10 @@ type Message struct {
 	Type    MessageType     `json:"type"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 
-	// OwnerUserIDs scopes delivery: the hub sends this message only to
-	// clients whose visible-user set intersects it. Empty means "deliver to
-	// all connected (authenticated) clients" — used for non-sensitive,
-	// id-only events (deletes/updates) and control frames. json:"-" so it
-	// never reaches the wire. (SECURITY: CRIT-3)
+	// OwnerUserIDs scopes delivery: the hub sends this message to the
+	// services and to the clients whose visible-user set intersects it.
+	// Empty reaches the services only (AM-SEC-19). json:"-" so it never
+	// reaches the wire. (SECURITY: CRIT-3)
 	OwnerUserIDs []int64 `json:"-"`
 }
 

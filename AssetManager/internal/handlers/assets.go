@@ -365,11 +365,8 @@ func (h *Handler) DeleteAssetsBySource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast deletion to WebSocket clients for each deleted asset
-	for _, assetID := range deletedIDs {
-		msg, _ := ws.NewMessage(ws.TypeAssetDeleted, ws.AssetDeletedPayload{ID: assetID})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each deletion to the owner's workspace and the services
+	h.announce(ws.TypeAssetDeleted, deletedIDs)
 	h.announceAssetsUpdated(refreshedIDs)
 
 	// Trigger organisation score recalculation for affected users
@@ -422,11 +419,8 @@ func (h *Handler) ClearAssetSourcesBySource(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Broadcast update to WebSocket clients for each updated asset
-	for _, assetID := range updatedIDs {
-		msg, _ := ws.NewMessage(ws.TypeAssetUpdated, ws.AssetUpdatedPayload{ID: assetID})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each change to the owner's workspace and the services
+	h.announce(ws.TypeAssetUpdated, updatedIDs)
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"updated": len(updatedIDs),
@@ -479,11 +473,8 @@ func (h *Handler) DeleteStaleAssetsBySource(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Broadcast deletion to WebSocket clients for each deleted asset
-	for _, assetID := range deletedIDs {
-		msg, _ := ws.NewMessage(ws.TypeAssetDeleted, ws.AssetDeletedPayload{ID: assetID})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each deletion to the owner's workspace and the services
+	h.announce(ws.TypeAssetDeleted, deletedIDs)
 	h.announceAssetsUpdated(refreshedIDs)
 
 	// Trigger organisation score recalculation for affected users

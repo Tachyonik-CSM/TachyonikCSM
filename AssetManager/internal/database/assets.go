@@ -531,8 +531,9 @@ func (db *DB) combineScanCoverage(assetIDs []int64) error {
 // DeleteAssetsBySource unlinks the given source from all assets it's attached
 // to, then deletes any asset that ends up with no sources left. If userID > 0,
 // the scope is restricted to that user; userID == 0 means "all users"
-// (internal service path). Returns the IDs of assets that were fully deleted.
-func (db *DB) DeleteAssetsBySource(sourceID int64, userID int64) ([]int64, []int64, error) {
+// (internal service path). Returns the assets fully deleted and those
+// recomputed, with their owners.
+func (db *DB) DeleteAssetsBySource(sourceID int64, userID int64) ([]Owned, []Owned, error) {
 	// Capture which assets will be touched so we can find the orphans afterward.
 	var candidateIDs []int64
 	var err error
@@ -553,7 +554,7 @@ func (db *DB) DeleteAssetsBySource(sourceID int64, userID int64) ([]int64, []int
 		return nil, nil, fmt.Errorf("failed to get asset candidates: %w", err)
 	}
 	if len(candidateIDs) == 0 {
-		return []int64{}, []int64{}, nil
+		return []Owned{}, []Owned{}, nil
 	}
 
 	// Drop the junction rows scoped to this source.
@@ -582,7 +583,7 @@ const linkUntouchedSince = "COALESCE(s.modified_at, s.created_at) < ?"
 // DeleteStaleAssetsBySource removes asset_source rows for this source that no
 // import has touched since modifiedBefore, then deletes orphan assets.
 // Used by SourceImporter re-import to clean up hosts the new scan didn't see.
-func (db *DB) DeleteStaleAssetsBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]int64, []int64, error) {
+func (db *DB) DeleteStaleAssetsBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]Owned, []Owned, error) {
 	var candidateIDs []int64
 	var err error
 	if userID == 0 {
@@ -602,7 +603,7 @@ func (db *DB) DeleteStaleAssetsBySource(sourceID int64, userID int64, modifiedBe
 		return nil, nil, fmt.Errorf("failed to get stale asset candidates: %w", err)
 	}
 	if len(candidateIDs) == 0 {
-		return []int64{}, []int64{}, nil
+		return []Owned{}, []Owned{}, nil
 	}
 
 	if userID == 0 {
@@ -625,16 +626,16 @@ func (db *DB) DeleteStaleAssetsBySource(sourceID int64, userID int64, modifiedBe
 
 // deleteOrphanAssets deletes any asset in `ids` that no longer has a matching
 // asset_source row, and recomputes the others from the sources they keep
-// (asset_refresh.go). Returns the IDs of the assets deleted and of those whose
-// values changed.
-func (db *DB) deleteOrphanAssets(ids []int64, userID int64) (deleted, refreshed []int64, err error) {
+// (asset_refresh.go). Returns the assets deleted and those whose values
+// changed, with their owners.
+func (db *DB) deleteOrphanAssets(ids []int64, userID int64) (deleted, refreshed []Owned, err error) {
 	deleted, err = db.deleteOrphans(ids, userID)
 	if err != nil {
 		return nil, nil, err
 	}
 	gone := make(map[int64]bool, len(deleted))
-	for _, id := range deleted {
-		gone[id] = true
+	for _, a := range deleted {
+		gone[a.ID] = true
 	}
 	survivors := make([]int64, 0, len(ids))
 	for _, id := range ids {
@@ -649,9 +650,9 @@ func (db *DB) deleteOrphanAssets(ids []int64, userID int64) (deleted, refreshed 
 	return deleted, refreshed, nil
 }
 
-func (db *DB) deleteOrphans(ids []int64, userID int64) ([]int64, error) {
+func (db *DB) deleteOrphans(ids []int64, userID int64) ([]Owned, error) {
 	if len(ids) == 0 {
-		return []int64{}, nil
+		return []Owned{}, nil
 	}
 	// The assets that keep other sources lose this one's scan coverage.
 	if err := db.combineScanCoverage(ids); err != nil {
@@ -666,7 +667,7 @@ func (db *DB) deleteOrphans(ids []int64, userID int64) ([]int64, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT a.id FROM assets a
+		SELECT a.id, a.user_id FROM assets a
 		WHERE a.id IN (%s)
 		  AND NOT EXISTS (SELECT 1 FROM asset_source s WHERE s.asset_id = a.id)
 	`, strings.Join(placeholders, ","))
@@ -676,42 +677,42 @@ func (db *DB) deleteOrphans(ids []int64, userID int64) ([]int64, error) {
 		args = append(args, userID)
 	}
 
-	var orphanIDs []int64
-	if err := db.Select(&orphanIDs, query+userScope, args...); err != nil {
+	orphans := []Owned{}
+	if err := db.Select(&orphans, query+userScope, args...); err != nil {
 		return nil, fmt.Errorf("failed to find orphan assets: %w", err)
 	}
-	if len(orphanIDs) == 0 {
-		return []int64{}, nil
+	if len(orphans) == 0 {
+		return orphans, nil
 	}
 
-	delPlaceholders := make([]string, len(orphanIDs))
-	delArgs := make([]interface{}, 0, len(orphanIDs))
-	for i, id := range orphanIDs {
+	delPlaceholders := make([]string, len(orphans))
+	delArgs := make([]interface{}, 0, len(orphans))
+	for i, a := range orphans {
 		delPlaceholders[i] = "?"
-		delArgs = append(delArgs, id)
+		delArgs = append(delArgs, a.ID)
 	}
 	if _, err := db.Exec("DELETE FROM assets WHERE id IN ("+strings.Join(delPlaceholders, ",")+")", delArgs...); err != nil {
 		return nil, fmt.Errorf("failed to delete orphan assets: %w", err)
 	}
-	return orphanIDs, nil
+	return orphans, nil
 }
 
 // ClearAssetSourceBySource unlinks the given source from all assets it's
 // attached to, WITHOUT deleting the assets themselves. Used when the user
 // wants to keep the asset records after the originating source is gone.
-// Returns the list of asset IDs whose link was removed.
-func (db *DB) ClearAssetSourceBySource(sourceID int64, userID int64) ([]int64, error) {
-	var assetIDs []int64
+// Returns the assets whose link was removed, with their owners.
+func (db *DB) ClearAssetSourceBySource(sourceID int64, userID int64) ([]Owned, error) {
+	cleared := []Owned{}
 	var err error
 	if userID == 0 {
-		err = db.Select(&assetIDs, `
-			SELECT a.id FROM assets a
+		err = db.Select(&cleared, `
+			SELECT a.id, a.user_id FROM assets a
 			INNER JOIN asset_source s ON s.asset_id = a.id
 			WHERE s.source_id = ?
 		`, sourceID)
 	} else {
-		err = db.Select(&assetIDs, `
-			SELECT a.id FROM assets a
+		err = db.Select(&cleared, `
+			SELECT a.id, a.user_id FROM assets a
 			INNER JOIN asset_source s ON s.asset_id = a.id
 			WHERE s.source_id = ? AND a.user_id = ?
 		`, sourceID, userID)
@@ -719,9 +720,10 @@ func (db *DB) ClearAssetSourceBySource(sourceID int64, userID int64) ([]int64, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to get asset IDs: %w", err)
 	}
-	if len(assetIDs) == 0 {
-		return []int64{}, nil
+	if len(cleared) == 0 {
+		return cleared, nil
 	}
+	assetIDs := IDs(cleared)
 
 	now := time.Now()
 	if userID == 0 {
@@ -755,5 +757,5 @@ func (db *DB) ClearAssetSourceBySource(sourceID int64, userID int64) ([]int64, e
 		return nil, fmt.Errorf("failed to bump modified_at: %w", err)
 	}
 
-	return assetIDs, nil
+	return cleared, nil
 }

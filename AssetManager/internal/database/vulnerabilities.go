@@ -97,16 +97,16 @@ func (db *DB) CreateVulnerability(name, host, port string, severity int, sourceI
 
 // DeleteVulnerabilitiesBySource deletes a source's vulnerabilities — the
 // user's, or everyone's for userID 0 (an internal service request) — and
-// returns their IDs.
-func (db *DB) DeleteVulnerabilitiesBySource(sourceID int64, userID int64) ([]int64, error) {
+// returns their IDs with their owners.
+func (db *DB) DeleteVulnerabilitiesBySource(sourceID int64, userID int64) ([]Owned, error) {
 	where, args := sourceScope(sourceID, userID, nil)
 	return db.deleteFindingsWhere(vulnerabilityKind, where, args)
 }
 
 // DeleteStaleVulnerabilitiesBySource deletes a source's vulnerabilities not
 // modified since modifiedBefore — what a re-import no longer produced — and
-// returns their IDs.
-func (db *DB) DeleteStaleVulnerabilitiesBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]int64, error) {
+// returns their IDs with their owners.
+func (db *DB) DeleteStaleVulnerabilitiesBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]Owned, error) {
 	where, args := sourceScope(sourceID, userID, &modifiedBefore)
 	return db.deleteFindingsWhere(vulnerabilityKind, where, args)
 }
@@ -119,6 +119,6 @@ func (db *DB) DeleteVulnerabilitiesByIDs(ids []int64, userID int64) (deleted []i
 
 // ClearVulnerabilitySourceBySource unlinks a source's vulnerabilities from it,
 // keeping them, and returns their IDs.
-func (db *DB) ClearVulnerabilitySourceBySource(sourceID int64, userID int64) ([]int64, error) {
+func (db *DB) ClearVulnerabilitySourceBySource(sourceID int64, userID int64) ([]Owned, error) {
 	return db.clearFindingSource(vulnerabilityKind, sourceID, userID)
 }

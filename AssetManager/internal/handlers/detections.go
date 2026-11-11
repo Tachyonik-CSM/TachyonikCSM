@@ -227,11 +227,8 @@ func (h *Handler) DeleteDetectionsBySource(w http.ResponseWriter, r *http.Reques
 
 	h.refreshHosts(affectedHosts)
 
-	// Broadcast deletion to WebSocket clients
-	for _, id := range deletedIDs {
-		msg, _ := ws.NewMessage(ws.TypeDetectionDeleted, map[string]int64{"id": id})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each deletion to the owner's workspace and the services
+	h.announce(ws.TypeDetectionDeleted, deletedIDs)
 
 	logger.Infof("Deleted %d detections for source: %s", len(deletedIDs), source)
 
@@ -246,7 +243,7 @@ func (h *Handler) DeleteDetectionsBySource(w http.ResponseWriter, r *http.Reques
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"deleted": len(deletedIDs),
-		"ids":     deletedIDs,
+		"ids":     database.IDs(deletedIDs),
 	})
 }
 
@@ -280,17 +277,14 @@ func (h *Handler) ClearDetectionSourcesBySource(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Broadcast update to WebSocket clients
-	for _, id := range updatedIDs {
-		msg, _ := ws.NewMessage(ws.TypeDetectionUpdated, map[string]int64{"id": id})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each change to the owner's workspace and the services
+	h.announce(ws.TypeDetectionUpdated, updatedIDs)
 
 	logger.Infof("Cleared source for %d detections for source: %s", len(updatedIDs), source)
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"updated": len(updatedIDs),
-		"ids":     updatedIDs,
+		"ids":     database.IDs(updatedIDs),
 	})
 }
 
@@ -332,11 +326,8 @@ func (h *Handler) DeleteStaleDetectionsBySource(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Broadcast deletion to WebSocket clients
-	for _, id := range deletedIDs {
-		msg, _ := ws.NewMessage(ws.TypeDetectionDeleted, map[string]int64{"id": id})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each deletion to the owner's workspace and the services
+	h.announce(ws.TypeDetectionDeleted, deletedIDs)
 
 	if len(deletedIDs) > 0 {
 		h.refreshHosts(affectedHosts)

@@ -31,10 +31,20 @@ func (h *Handler) refreshHosts(refs []database.HostRef) {
 
 // announceAssetsUpdated tells the WebUI that these assets changed, so an open
 // list shows the new values without a reload.
-func (h *Handler) announceAssetsUpdated(ids []int64) {
-	for _, id := range ids {
-		msg, _ := ws.NewMessage(ws.TypeAssetUpdated, ws.AssetUpdatedPayload{ID: id})
-		h.hub.Broadcast(msg)
+func (h *Handler) announceAssetsUpdated(assets []database.Owned) {
+	h.announce(ws.TypeAssetUpdated, assets)
+}
+
+// announce sends one id-only message per record, each to the connections of
+// its owner's workspace and to the services, never to another tenant's
+// (AM-SEC-19).
+func (h *Handler) announce(t ws.MessageType, records []database.Owned) {
+	for _, r := range records {
+		msg, err := ws.NewMessage(t, map[string]int64{"id": r.ID})
+		if err != nil {
+			continue
+		}
+		h.hub.BroadcastScoped(msg, []int64{r.UserID})
 	}
 }
 

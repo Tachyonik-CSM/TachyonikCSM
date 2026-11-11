@@ -234,11 +234,8 @@ func (h *Handler) DeleteVulnerabilitiesBySource(w http.ResponseWriter, r *http.R
 
 	h.refreshHosts(affectedHosts)
 
-	// Broadcast deletion to WebSocket clients
-	for _, id := range deletedIDs {
-		msg, _ := ws.NewMessage(ws.TypeVulnerabilityDeleted, map[string]int64{"id": id})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each deletion to the owner's workspace and the services
+	h.announce(ws.TypeVulnerabilityDeleted, deletedIDs)
 
 	logger.Infof("Deleted %d vulnerabilities for source: %s", len(deletedIDs), source)
 
@@ -252,7 +249,7 @@ func (h *Handler) DeleteVulnerabilitiesBySource(w http.ResponseWriter, r *http.R
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"deleted": len(deletedIDs),
-		"ids":     deletedIDs,
+		"ids":     database.IDs(deletedIDs),
 	})
 }
 
@@ -286,17 +283,14 @@ func (h *Handler) ClearVulnerabilitySourcesBySource(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Broadcast update to WebSocket clients
-	for _, id := range updatedIDs {
-		msg, _ := ws.NewMessage(ws.TypeVulnerabilityUpdated, map[string]int64{"id": id})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each change to the owner's workspace and the services
+	h.announce(ws.TypeVulnerabilityUpdated, updatedIDs)
 
 	logger.Infof("Cleared source for %d vulnerabilities for source: %s", len(updatedIDs), source)
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"updated": len(updatedIDs),
-		"ids":     updatedIDs,
+		"ids":     database.IDs(updatedIDs),
 	})
 }
 
@@ -338,11 +332,8 @@ func (h *Handler) DeleteStaleVulnerabilitiesBySource(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Broadcast deletion to WebSocket clients
-	for _, id := range deletedIDs {
-		msg, _ := ws.NewMessage(ws.TypeVulnerabilityDeleted, map[string]int64{"id": id})
-		h.hub.Broadcast(msg)
-	}
+	// Announce each deletion to the owner's workspace and the services
+	h.announce(ws.TypeVulnerabilityDeleted, deletedIDs)
 
 	// A host's findings moved its score, and each owner's count changed.
 	if len(deletedIDs) > 0 {

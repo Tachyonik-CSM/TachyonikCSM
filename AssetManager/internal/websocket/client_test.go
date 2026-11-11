@@ -69,3 +69,28 @@ func TestReadLimit(t *testing.T) {
 		t.Fatal("connection neither answered nor closed after an oversized message")
 	}
 }
+
+// AM-SEC-19: a user's connection receives what its workspace owns — its own
+// records and its colleagues' — and nothing of another tenant's, nor a
+// message whose owner is not known. A service receives everything.
+func TestCanSeeIsScopedToTheWorkspace(t *testing.T) {
+	user := NewClient(nil, nil, 7, []int64{7, 8})
+	service := NewInternalClient(nil, nil)
+	for _, c := range []struct {
+		owners        []int64
+		user, service bool
+	}{
+		{[]int64{7}, true, true},
+		{[]int64{8}, true, true},
+		{[]int64{9}, false, true},
+		{[]int64{9, 8}, true, true},
+		{nil, false, true},
+	} {
+		if got := user.canSee(c.owners); got != c.user {
+			t.Errorf("user connection, owners %v: %v, want %v", c.owners, got, c.user)
+		}
+		if got := service.canSee(c.owners); got != c.service {
+			t.Errorf("service connection, owners %v: %v, want %v", c.owners, got, c.service)
+		}
+	}
+}

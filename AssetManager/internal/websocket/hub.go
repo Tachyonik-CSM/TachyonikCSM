@@ -65,7 +65,8 @@ func (h *Hub) Run() {
 			}
 
 			// Deliver only to clients permitted to see this message's owner
-			// set (tenant isolation). An empty owner set fans out to all.
+			// set (tenant isolation, AM-SEC-19). An empty owner set reaches
+			// the services only.
 			h.mu.RLock()
 			for client := range h.clients {
 				if !client.canSee(message.OwnerUserIDs) {
@@ -94,17 +95,12 @@ func (h *Hub) Unregister(client *Client) {
 	h.unregister <- client
 }
 
-// Broadcast sends a message to all connected clients. Use this only for
-// non-sensitive, id-only events (deletes/updates) and control frames; events
-// carrying full records must use BroadcastScoped to enforce tenant isolation.
-func (h *Hub) Broadcast(message *Message) {
-	h.broadcast <- message
-}
-
-// BroadcastScoped sends a message only to clients whose visible-user set
-// includes one of ownerUserIDs. Used for events whose payload contains a
-// tenant's data (e.g. a created vulnerability/detection/asset). A nil/empty
-// ownerUserIDs would fan out to everyone, so callers must pass a real owner.
+// BroadcastScoped sends a message to the services and to the user clients
+// whose visible-user set includes one of ownerUserIDs: the owner's, and those
+// of the owner's workspace members who are connected (AM-SEC-19). Every
+// announcement about a record goes this way, an id-only one too, since even
+// an id tells another tenant that a record exists. With no owner given, it
+// reaches the services only.
 func (h *Hub) BroadcastScoped(message *Message, ownerUserIDs []int64) {
 	message.OwnerUserIDs = ownerUserIDs
 	h.broadcast <- message

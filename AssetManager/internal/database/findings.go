@@ -114,14 +114,14 @@ func sourceScope(sourceID int64, userID int64, modifiedBefore *time.Time) (strin
 }
 
 // deleteFindingsWhere deletes the findings matching where and returns their
-// IDs — an empty slice, never nil, when there were none.
-func (db *DB) deleteFindingsWhere(k findingKind, where string, args []interface{}) ([]int64, error) {
-	var ids []int64
-	if err := db.Select(&ids, "SELECT id FROM "+k.table+" WHERE "+where, args...); err != nil {
+// IDs with their owners — an empty slice, never nil, when there were none.
+func (db *DB) deleteFindingsWhere(k findingKind, where string, args []interface{}) ([]Owned, error) {
+	ids := []Owned{}
+	if err := db.Select(&ids, "SELECT id, user_id FROM "+k.table+" WHERE "+where, args...); err != nil {
 		return nil, fmt.Errorf("failed to get %s IDs: %w", k.noun, err)
 	}
 	if len(ids) == 0 {
-		return []int64{}, nil
+		return ids, nil
 	}
 	if _, err := db.Exec("DELETE FROM "+k.table+" WHERE "+where, args...); err != nil {
 		return nil, fmt.Errorf("failed to delete %s: %w", k.table, err)
@@ -130,15 +130,15 @@ func (db *DB) deleteFindingsWhere(k findingKind, where string, args []interface{
 }
 
 // clearFindingSource unlinks the findings matching the source scope from their
-// source, keeping the records, and returns their IDs.
-func (db *DB) clearFindingSource(k findingKind, sourceID int64, userID int64) ([]int64, error) {
+// source, keeping the records, and returns their IDs with their owners.
+func (db *DB) clearFindingSource(k findingKind, sourceID int64, userID int64) ([]Owned, error) {
 	where, args := sourceScope(sourceID, userID, nil)
-	var ids []int64
-	if err := db.Select(&ids, "SELECT id FROM "+k.table+" WHERE "+where, args...); err != nil {
+	ids := []Owned{}
+	if err := db.Select(&ids, "SELECT id, user_id FROM "+k.table+" WHERE "+where, args...); err != nil {
 		return nil, fmt.Errorf("failed to get %s IDs: %w", k.noun, err)
 	}
 	if len(ids) == 0 {
-		return []int64{}, nil
+		return ids, nil
 	}
 	if _, err := db.Exec("UPDATE "+k.table+" SET source_id = NULL, source_label = '', modified_at = ? WHERE "+where, append([]interface{}{time.Now()}, args...)...); err != nil {
 		return nil, fmt.Errorf("failed to clear %s sources: %w", k.noun, err)
