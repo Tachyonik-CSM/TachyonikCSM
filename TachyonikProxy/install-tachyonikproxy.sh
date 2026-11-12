@@ -15,7 +15,7 @@ set -eu
 
 # ─── Constants ──────────────────────────────────────────────────────
 
-INSTALLER_VERSION="1.6.3"
+INSTALLER_VERSION="1.6.4"
 DOWNLOAD_BASE="https://tachyonik.com/download/proxy"
 BINARY_NAME="tachyonikproxy"
 
@@ -122,9 +122,19 @@ can_elevate() {
 # ca.crt under <config-dir>/certs/ — both online enrollment and `enroll --listen`
 # write this file via PersistEnrollment, so its presence is a reliable
 # enrolled-marker without parsing YAML in shell.
+#
+# The system-wide certs/ directory is 0700 and owned by the service user, so
+# a caller who is not root cannot see into it: `curl … | bash` run as a sudoer
+# found no ca.crt and showed a fresh install's "Next steps" on an upgrade. Ask
+# sudo then, without a prompt — system-wide mode is only chosen when sudo
+# works without one (can_elevate).
 is_proxy_enrolled() {
     _config_dir="$1"
-    [ -f "${_config_dir}/certs/ca.crt" ]
+    [ -f "${_config_dir}/certs/ca.crt" ] && return 0
+    if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+        sudo -n test -f "${_config_dir}/certs/ca.crt" 2>/dev/null && return 0
+    fi
+    return 1
 }
 
 # Print the bare version token reported by `<binary> version`. The binary
@@ -708,6 +718,25 @@ print_success_system() {
     printf '\n'
 }
 
+# What the service needs after an upgrade on Linux, from its state now. The
+# .deb / .rpm post-install script has already restarted a running service on
+# the new binary (packaging/scripts/postinstall.sh), so telling the operator
+# to restart it only made them wonder what was left to do. A tar.gz install
+# swaps the binary without restarting.
+print_upgrade_service_hint_linux() {
+    if ! command -v systemctl >/dev/null 2>&1; then
+        printf '  Restart TachyonikProxy to pick up the new binary.\n'
+    elif ! systemctl is-active --quiet tachyonikproxy.service; then
+        printf '  The service is not running. Start it:\n'
+        printf '    sudo systemctl start tachyonikproxy\n'
+    elif [ "${PKG_METHOD:-tar}" = "tar" ]; then
+        printf '  Restart the service to pick up the new binary:\n'
+        printf '    sudo systemctl restart tachyonikproxy\n'
+    else
+        printf '  The service is already running the new version. Nothing else to do.\n'
+    fi
+}
+
 print_success_upgrade_system() {
     _os="$1"
     printf '\n'
@@ -719,8 +748,7 @@ print_success_upgrade_system() {
     printf '  is NOT required.\n'
     printf '\n'
     if [ "$_os" = "linux" ]; then
-        printf '  Restart the service to pick up the new binary:\n'
-        printf '    sudo systemctl restart tachyonikproxy\n'
+        print_upgrade_service_hint_linux
     elif [ "$_os" = "darwin" ]; then
         printf '  Restart the service to pick up the new binary:\n'
         printf '    sudo launchctl unload %s\n' "$LAUNCHD_PLIST"

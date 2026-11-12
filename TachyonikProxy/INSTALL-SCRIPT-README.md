@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # install-tachyonikproxy.sh
 
-Version: 1.6.3
+Version: 1.6.4
 
 Cross-platform installer for TachyonikProxy on Linux and macOS.
 
@@ -33,7 +33,7 @@ curl -fsSL https://tachyonik.com/install-tachyonikproxy.sh | bash
 8. **Sets up updates — differently per install method.**
    - **tar.gz route** (macOS, and Linux where no package manager is detected): bootstraps the auto-update layout (`/opt/tachyonik/proxy/<version>/` with `current` symlink) and enables the auto-update timer (`tachyonikproxy-update.timer` on Linux, `com.tachyonik.tachyonikproxy-update` LaunchDaemon on macOS), so signed updates are applied automatically with rollback on health failure.
    - **.deb / .rpm route**: neither. Those installs belong to dpkg/rpm — the built-in updater would write over files they track, leaving the package database describing a version that is no longer on disk, and the next package upgrade would undo it. The package ships a marker at `/usr/share/tachyonik/tachyonikproxy/package-managed`; `tachyonikproxy self-update` sees it, explains the situation and exits without changing anything. **Re-running this installer is the upgrade path** — it fetches the current `…-latest-…` package.
-9. **Prints next steps** covering both enrollment modes (online and reverse) — or, on an upgrade where the proxy is already enrolled, prints a service-restart hint instead and asks whether the operator wants to re-enroll anyway (default: no). The success banner also reports the version that was placed on disk: `Installed version: X.Y.Z` on a fresh install, or `Upgraded from A.B.C to X.Y.Z` on an upgrade (`unknown` in place of the prior version when the existing binary refused to report it).
+9. **Prints next steps** covering both enrollment modes (online and reverse) — or, on an upgrade where the proxy is already enrolled, says what the service still needs instead and asks whether the operator wants to re-enroll anyway (default: no). The success banner also reports the version that was placed on disk: `Installed version: X.Y.Z` on a fresh install, or `Upgraded from A.B.C to X.Y.Z` on an upgrade (`unknown` in place of the prior version when the existing binary refused to report it).
 
 ## Upgrades
 
@@ -41,9 +41,12 @@ Re-running the script on a host that already has `tachyonikproxy` is treated as 
 
 - The binary is replaced via the same install path that produced the original install (`.deb` / `.rpm` / `.tar.gz`).
 - The active configuration at `/etc/tachyonik/tachyonikproxy/config.yaml` (system) or `~/.config/tachyonik/tachyonikproxy/config.yaml` (user-space) is **preserved** — every install path uses an `[ ! -f config.yaml ]` guard before copying the default template. The `certs/` subdirectory written by `enroll` is never touched.
-- If the script detects an existing enrollment (`<config-dir>/certs/ca.crt` is present), the post-install message:
+- If the script detects an existing enrollment (`<config-dir>/certs/ca.crt` is present — checked with `sudo -n` when the script does not run as root, since the system `certs/` directory is readable by the service user only), the post-install message:
   - confirms the enrollment is preserved and re-enrollment is **not** required,
-  - shows the service-restart command for the platform (a binary swap on a running service does not auto-restart),
+  - says what the service still needs, from its state after the upgrade:
+    - `.deb` / `.rpm` with the service running: nothing — the package's post-install script has already restarted it on the new version;
+    - `.tar.gz` with the service running: the restart command, since a binary swap does not restart it (on macOS always the `launchctl` commands);
+    - service not running: the start command,
   - asks `Re-enroll anyway? [y/N]` and, on yes, prints the enrollment commands without running them.
 
 ## Enrollment modes
