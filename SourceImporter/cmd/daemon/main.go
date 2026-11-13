@@ -107,7 +107,13 @@ func main() {
 	}
 
 	// Load configuration
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		// Before logging is set up: standard error reaches journalctl and
+		// docker logs. Running on defaults instead would be worse.
+		fmt.Fprintf(os.Stderr, "SourceImporter cannot start: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Setup logging based on configuration
 	logFile, err := setupLogging(cfg)

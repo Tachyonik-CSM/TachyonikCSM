@@ -13,7 +13,12 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"log"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -105,7 +110,13 @@ type FileConfig struct {
 }
 
 // Load loads configuration with priority: env vars > config.yaml > defaults
-func Load() *Config {
+//
+// It refuses a configuration it cannot use: a file that exists but cannot
+// be read or parsed, or a key it does not know (a misspelt key would leave
+// its setting at the default without a word). Running on defaults the
+// operator did not mean is worse than not starting. A missing file is fine:
+// the defaults and the environment run a local development setup.
+func Load() (*Config, error) {
 	// 1. Set built-in defaults
 	cfg := &Config{
 		ResourceManager: ResourceManagerConfig{
@@ -145,11 +156,18 @@ func Load() *Config {
 	// 2. Parse config.yaml
 	var fileCfg *FileConfig
 	configPath := getEnv("SOURCEIMPORTER_CONFIG", "./config.yaml")
-	if fileData, err := os.ReadFile(configPath); err == nil {
+	fileData, err := os.ReadFile(configPath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		log.Printf("No configuration file at %s; using the defaults and the environment", configPath)
+	case err != nil:
+		return nil, fmt.Errorf("configuration file %s cannot be read: %w", configPath, err)
+	default:
 		var fc FileConfig
-		if err := yaml.Unmarshal(fileData, &fc); err == nil {
-			fileCfg = &fc
+		if err := decodeStrict(fileData, &fc); err != nil {
+			return nil, fmt.Errorf("configuration file %s cannot be used: %w", configPath, err)
 		}
+		fileCfg = &fc
 	}
 
 	// 3. Apply config.yaml on top of defaults
@@ -160,7 +178,7 @@ func Load() *Config {
 	// 4. Apply env var overrides on top (overrides everything)
 	applyEnvOverrides(cfg)
 
-	return cfg
+	return cfg, nil
 }
 
 // applyFileConfig applies non-zero values from the parsed config.yaml onto cfg.
@@ -266,4 +284,15 @@ func parseInt(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
+}
+
+// decodeStrict parses YAML into out, refusing a key out does not have. An
+// empty file is an empty configuration.
+func decodeStrict(data []byte, out interface{}) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
