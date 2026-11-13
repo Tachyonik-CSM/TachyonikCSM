@@ -152,6 +152,14 @@ checksum; those move when a rule moves and are unrelated to the module version.
 
 ## Configuration
 
+**An unusable configuration stops the service.** A configuration file that
+exists but cannot be read or parsed, or that contains a key ActionGenerator does not
+know (a misspelling, which would otherwise leave its setting at the default
+without a word), stops it at startup with `ActionGenerator cannot start: <reason>`
+on standard error and exit code 1 — visible in `journalctl` and `docker
+logs`. Without a configuration file it runs on the defaults and the
+environment, and logs that no file was found.
+
 ### Configuration File
 
 Default configuration file: `./config.yaml`, overridable with

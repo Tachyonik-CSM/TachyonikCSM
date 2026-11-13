@@ -18,7 +18,7 @@ import "testing"
 // config.yaml.example honest as settings are added.
 func TestExampleConfigParses(t *testing.T) {
 	t.Setenv("ACTIONGENERATOR_CONFIG", "../../config.yaml.example")
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	if cfg.AI.TimeoutSeconds != 300 {
 		t.Errorf("ai.timeout_seconds = %d, want 300", cfg.AI.TimeoutSeconds)
@@ -55,7 +55,7 @@ func TestExampleConfigParses(t *testing.T) {
 func TestEnvOverridesBeatDefaults(t *testing.T) {
 	t.Setenv("ACTIONGENERATOR_CONFIG", "/nonexistent/config.yaml")
 
-	cfg := Load()
+	cfg := mustLoad(t)
 	// The ports, not just one of them: ActionManager and SystemManager sit next
 	// to each other in the struct literal and were once transposed there, which
 	// only shows in a deployment that configures neither.
@@ -86,7 +86,7 @@ func TestEnvOverridesBeatDefaults(t *testing.T) {
 	t.Setenv("AIMANAGER_INTERNAL_SERVICE_KEY", "ai-key")
 	t.Setenv("ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS", "30")
 
-	cfg = Load()
+	cfg = mustLoad(t)
 	if cfg.AssetManager.URL != "http://assets.example:9000" || cfg.AssetManager.InternalServiceKey != "from-env" {
 		t.Errorf("assetmanager from env = %+v", cfg.AssetManager)
 	}
@@ -103,12 +103,12 @@ func TestEnvOverridesBeatDefaults(t *testing.T) {
 func TestJSExecBudgetCanBeDisabled(t *testing.T) {
 	t.Setenv("ACTIONGENERATOR_CONFIG", "/nonexistent/config.yaml")
 	t.Setenv("ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS", "0")
-	if got := Load().AI.JSExecTimeoutSeconds; got != 0 {
+	if got := mustLoad(t).AI.JSExecTimeoutSeconds; got != 0 {
 		t.Errorf("budget = %d with an explicit 0, want the guard disabled", got)
 	}
 
 	t.Setenv("ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS", "not-a-number")
-	if got := Load().AI.JSExecTimeoutSeconds; got != 5 {
+	if got := mustLoad(t).AI.JSExecTimeoutSeconds; got != 5 {
 		t.Errorf("budget = %d for an unparseable value, want the default 5", got)
 	}
 }

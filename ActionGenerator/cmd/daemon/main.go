@@ -115,7 +115,13 @@ func main() {
 		}
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		// Before logging is set up: standard error reaches journalctl and
+		// docker logs. Running on defaults instead would be worse.
+		fmt.Fprintf(os.Stderr, "ActionGenerator cannot start: %v\n", err)
+		os.Exit(1)
+	}
 
 	logFile, err := setupLogging(cfg)
 	if err != nil {
