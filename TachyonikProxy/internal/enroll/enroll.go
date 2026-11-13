@@ -101,7 +101,10 @@ func Run(opts Options) error {
 	// Check if already enrolled. Load from the path enrollment will write
 	// to — a --config override must not be checked (and later merged)
 	// against a different file picked up by auto-detection.
-	cfg := config.LoadFrom(opts.ConfigPath)
+	cfg, err := config.LoadFrom(opts.ConfigPath)
+	if err != nil {
+		return err
+	}
 	if cfg.TLS.CACert != "" && cfg.TLS.ServerCert != "" {
 		fmt.Println("Warning: This proxy is already enrolled (TLS is configured).")
 		fmt.Print("Re-enroll? [y/N] ")

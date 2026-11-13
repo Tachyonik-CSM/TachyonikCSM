@@ -114,7 +114,7 @@ func TestLoadFrom_SetsBaseDirAndReadsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := LoadFrom(path)
+	cfg := mustLoadFrom(t, path)
 	if cfg.Proxy.Name != "from-file" {
 		t.Errorf("expected file values to load, got name %q", cfg.Proxy.Name)
 	}
@@ -126,7 +126,7 @@ func TestLoadFrom_SetsBaseDirAndReadsFile(t *testing.T) {
 	}
 
 	// Missing file: defaults, but baseDir still tracks the target path.
-	cfg = LoadFrom(filepath.Join(dir, "sub", "config.yaml"))
+	cfg = mustLoadFrom(t, filepath.Join(dir, "sub", "config.yaml"))
 	if cfg.Proxy.Name != "tachyonikproxy" {
 		t.Errorf("expected defaults for missing file, got name %q", cfg.Proxy.Name)
 	}
@@ -141,7 +141,7 @@ func TestSaveConfig_CreatesDirectoryAndOmitsBaseDir(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tachyonik", "tachyonikproxy", "config.yaml")
 
-	cfg := LoadFrom(path)
+	cfg := mustLoadFrom(t, path)
 	if err := SaveConfig(cfg, path); err != nil {
 		t.Fatalf("SaveConfig into fresh directory: %v", err)
 	}

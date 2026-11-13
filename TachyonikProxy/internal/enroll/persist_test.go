@@ -30,7 +30,7 @@ func TestPersistEnrollment_RelativePathsAndLogDefault(t *testing.T) {
 	configPath := filepath.Join(dir, "config.yaml")
 	certDir := filepath.Join(dir, "certs")
 
-	cfg := config.LoadFrom(configPath) // file doesn't exist yet → fresh enroll
+	cfg := mustLoadFrom(t, configPath) // file doesn't exist yet → fresh enroll
 	resp := &Response{
 		ProxyName:      "My Proxy",
 		ConnectionMode: "outbound",
@@ -81,7 +81,7 @@ func TestPersistEnrollment_ExternalCertDirAndExistingLogKept(t *testing.T) {
 	}
 	externalCerts := filepath.Join(t.TempDir(), "elsewhere")
 
-	cfg := config.LoadFrom(configPath)
+	cfg := mustLoadFrom(t, configPath)
 	resp := &Response{
 		ProxyName:      "My Proxy",
 		ConnectionMode: "inbound",

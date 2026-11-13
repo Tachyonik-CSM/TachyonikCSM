@@ -17,8 +17,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-
-	"tachyonik/tachyonikproxy/internal/config"
 )
 
 // ownerOf reads a path's uid/gid for assertions.
@@ -105,7 +103,7 @@ func TestPersistEnrollmentGivesEverythingToTheServiceAccount(t *testing.T) {
 	configPath := filepath.Join(dir, "config.yaml")
 	certDir := filepath.Join(dir, "certs")
 
-	cfg := config.LoadFrom(configPath)
+	cfg := mustLoadFrom(t, configPath)
 	// Inbound: client.crt / client.key are the pair the reverse-connect dialer
 	// failed to open in the field report.
 	resp := &Response{
@@ -171,7 +169,7 @@ func TestPersistEnrollmentRepairsARootOwnedConfigFile(t *testing.T) {
 	// config.yaml deliberately left root-owned, as an earlier broken
 	// enrollment would have left it.
 
-	cfg := config.LoadFrom(configPath)
+	cfg := mustLoadFrom(t, configPath)
 	resp := &Response{ProxyName: "p", ConnectionMode: "outbound", CACert: "CA", ServerCert: "CRT", ServerKey: "KEY"}
 	if _, err := PersistEnrollment(cfg, resp, filepath.Join(dir, "certs"), configPath, "h"); err != nil {
 		t.Fatalf("PersistEnrollment: %v", err)

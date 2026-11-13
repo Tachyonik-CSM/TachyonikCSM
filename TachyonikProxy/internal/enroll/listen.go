@@ -129,7 +129,10 @@ type ipAttempts struct {
 func RunListen(opts ListenOptions) error {
 	// Load from the path enrollment will write to — a --config override
 	// must not be checked against a different auto-detected file.
-	cfg := config.LoadFrom(opts.ConfigPath)
+	cfg, err := config.LoadFrom(opts.ConfigPath)
+	if err != nil {
+		return err
+	}
 
 	if !opts.Force && cfg.TLS.CACert != "" && cfg.TLS.ServerCert != "" {
 		fmt.Println("Warning: This proxy is already enrolled (TLS is configured).")

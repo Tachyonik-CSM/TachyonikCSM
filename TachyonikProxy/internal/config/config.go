@@ -15,11 +15,16 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -49,7 +54,26 @@ type Config struct {
 	// directory and a config+certs bundle can be moved as a unit.
 	// Unexported: yaml.Marshal skips it, so SaveConfig never persists it.
 	baseDir string
+
+	// unknownKeys are the keys of the file this binary does not know, as
+	// "line N: field x not found …". Reported, not refused: the proxy
+	// rewrites its own file (enrollment, config/update), so a newer version
+	// can save a key that an older one, after a self-update rollback or a
+	// pinned downgrade, reads — and a proxy that refuses to start at a
+	// customer site cannot be fixed from TachyonikCSM.
+	unknownKeys []string
 }
+
+// UnknownKeys lists the keys of the loaded file this binary does not know.
+func (c *Config) UnknownKeys() []string {
+	return c.unknownKeys
+}
+
+// Connection modes.
+const (
+	ConnectionOutbound = "outbound"
+	ConnectionInbound  = "inbound"
+)
 
 // AbsPath resolves a path from the config file against the config file's
 // own directory. Absolute paths and empty strings pass through untouched;
@@ -213,7 +237,8 @@ type MCPServerConfig struct {
 	APIKey      string `yaml:"api_key" json:"apiKey,omitempty"`
 }
 
-func Load() *Config {
+// Load loads the configuration from the resolved path; see LoadFrom.
+func Load() (*Config, error) {
 	return LoadFrom(GetConfigPath())
 }
 
@@ -222,7 +247,13 @@ func Load() *Config {
 // Load does. The file not existing is not an error — the returned Config
 // carries the defaults and remembers the path's directory as its baseDir,
 // so a subsequent SaveConfig lands in the right place.
-func LoadFrom(configPath string) *Config {
+//
+// It refuses a configuration it cannot use: a file that exists but cannot be
+// read or parsed, and a connection_mode other than outbound or inbound (the
+// case does not matter). Running on defaults instead would start a proxy
+// with neither its certificates nor its pairing. A key it does not know is
+// only reported (UnknownKeys), see there.
+func LoadFrom(configPath string) (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
 			Port: "9100",
@@ -263,12 +294,19 @@ func LoadFrom(configPath string) *Config {
 		cfg.baseDir = abs
 	}
 
-	if fileData, err := os.ReadFile(configPath); err == nil {
+	fileData, readErr := os.ReadFile(configPath)
+	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+		return nil, fmt.Errorf("configuration file %s cannot be read: %w", configPath, readErr)
+	}
+	if readErr == nil {
 		if err := yaml.Unmarshal(fileData, cfg); err != nil {
-			log.Printf("Warning: Failed to parse config file: %v", err)
-		} else {
-			log.Printf("Loaded configuration from: %s", configPath)
+			return nil, fmt.Errorf("configuration file %s cannot be used: %w", configPath, err)
 		}
+		cfg.unknownKeys = unknownKeys(fileData)
+		for _, k := range cfg.unknownKeys {
+			log.Printf("Warning: %s: unknown setting ignored (%s)", configPath, k)
+		}
+		log.Printf("Loaded configuration from: %s", configPath)
 	} else {
 		log.Printf("No configuration file at %s — using defaults", configPath)
 		// No config yet (fresh install / pre-enrollment): aim the log at
@@ -292,7 +330,36 @@ func LoadFrom(configPath string) *Config {
 		cfg.Log.Level = level
 	}
 
-	return cfg
+	// The connection mode decides which certificates the proxy needs and
+	// whether it dials or listens; anything else used to be read as outbound.
+	mode := strings.ToLower(strings.TrimSpace(cfg.ConnectionMode))
+	if mode != "" && mode != ConnectionOutbound && mode != ConnectionInbound {
+		return nil, fmt.Errorf("connection_mode in %s is %q; it must be %q or %q", configPath, cfg.ConnectionMode, ConnectionOutbound, ConnectionInbound)
+	}
+	cfg.ConnectionMode = mode
+
+	return cfg, nil
+}
+
+// unknownKeys decodes data strictly and returns the "field not found" errors:
+// the keys this binary does not know. Other problems were already refused by
+// the lenient decode.
+func unknownKeys(data []byte) []string {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	var probe Config
+	err := dec.Decode(&probe)
+	var te *yaml.TypeError
+	if err == nil || errors.Is(err, io.EOF) || !errors.As(err, &te) {
+		return nil
+	}
+	var out []string
+	for _, e := range te.Errors {
+		if strings.Contains(e, "not found in type") {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // SaveConfig writes the current configuration to the config file via an

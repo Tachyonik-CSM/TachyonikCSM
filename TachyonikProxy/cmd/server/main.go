@@ -109,13 +109,31 @@ func main() {
 	platformMain()
 }
 
+// mustLoadConfig stops the process when the configuration cannot be used: a
+// file that cannot be read or parsed, or an unknown connection_mode. Written
+// before logging is set up, to standard error, which systemd, launchd and the
+// Windows service manager keep. A proxy running on defaults instead would
+// have neither its certificates nor its pairing.
+func mustLoadConfig(cfg *config.Config, err error) *config.Config {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "TachyonikProxy cannot start: %v\n", err)
+		os.Exit(1)
+	}
+	return cfg
+}
+
 // runServer contains the core server logic, called from platformMain().
 func runServer() {
-	cfg := config.Load()
+	cfg := mustLoadConfig(config.Load())
 
 	logFile := setupLogging(cfg)
 	if logFile != nil {
 		defer logFile.Close()
+	}
+	// Kept running for a key it does not know (see config.UnknownKeys), but
+	// said in the proxy's own log, where an operator looks.
+	for _, k := range cfg.UnknownKeys() {
+		logger.Warnf("Configuration: unknown setting ignored (%s)", k)
 	}
 
 	logger.Infof("Starting Tachyonik TachyonikProxy '%s' (version %s)", cfg.Proxy.Name, version)
@@ -523,7 +541,7 @@ func runResetEnrollment() {
 
 	// Load from the same path we will save back to — a --config override
 	// must not clear one file based on another file's content.
-	cfg := config.LoadFrom(configPath)
+	cfg := mustLoadConfig(config.LoadFrom(configPath))
 	certDir := ""
 	// Derive cert dir from any configured cert path so we can clean up stray
 	// files. Relative paths resolve against the config file's directory.
@@ -653,7 +671,7 @@ func runNetScan() {
 		}
 	}
 
-	cfg := config.Load()
+	cfg := mustLoadConfig(config.Load())
 
 	// --network and --ports override the configured sweep for this invocation
 	// only, on the same reasoning that lets this command ignore
@@ -947,7 +965,7 @@ func runSelfUpdate() {
 		os.Exit(0)
 	}
 
-	cfg := config.Load()
+	cfg := mustLoadConfig(config.Load())
 
 	paths, pathsErr := selfupdate.ResolveInstallPaths()
 

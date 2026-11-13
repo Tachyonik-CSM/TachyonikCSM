@@ -93,7 +93,7 @@ func runHDScan() {
 		os.Exit(1)
 	}
 	if opts.target == "" {
-		network, err := ownNetwork(config.Load())
+		network, err := ownNetwork(mustLoadConfig(config.Load()))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "hd-scan: %v; name the range with --target\n", err)
 			os.Exit(1)

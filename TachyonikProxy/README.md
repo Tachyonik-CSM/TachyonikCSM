@@ -214,6 +214,32 @@ Environment variables override configuration file values:
 2. Configuration file
 3. Default values (lowest priority)
 
+### A configuration the proxy cannot use
+
+The proxy (and every subcommand that reads the configuration: `enroll`,
+`reset-enrollment`, `scan`, `hd-scan`, `self-update`) stops with exit code 1 and
+`TachyonikProxy cannot start: <reason>` on standard error — which systemd,
+launchd and the Windows service manager keep — when:
+
+- the configuration file exists but cannot be read (for example its
+  permissions);
+- it cannot be parsed, or a value has the wrong kind (a word where a number
+  belongs), with the line;
+- `connection_mode` is neither `outbound` nor `inbound` (the case does not
+  matter; unset means outbound).
+
+Running on the defaults instead would start a proxy without its certificates
+and pairing. A missing file is still a fresh install: the defaults apply until
+enrollment writes it.
+
+**A key the proxy does not know is reported, not refused:** a warning
+`unknown setting ignored (line N: field x not found …)` at startup and in the
+proxy log, and the proxy keeps running. The proxy rewrites its own file
+(enrollment, a remote configuration update), so a newer version can save a key
+that an older version reads after a self-update rollback or a pinned
+downgrade — and a proxy that does not start at a customer's site cannot be
+fixed from TachyonikCSM.
+
 ## Operation
 
 ### Starting the Server
