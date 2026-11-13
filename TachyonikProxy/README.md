@@ -649,6 +649,20 @@ is a verdict a UI can act on: signed in, key not yet confirmed (with its
 fingerprint), key changed, or credential refused. `keyKind` says whether the
 fingerprint is an SSH host key (`ssh`) or a TLS certificate (`tls`).
 
+### `web/certificate`
+
+An MCP method used by the *Read certificate* button in a tool's settings in
+TachyonikCSM. It takes the `url` of the tool's web interface (`https` only),
+completes a TLS handshake with it and reports the certificate presented: its
+`fingerprint` (`SHA256:AB:CD:…`, as a browser's certificate viewer shows it),
+subject, issuer, names and validity, and whether it names the address, is
+self-signed or has expired. No request is sent, nothing is logged in to, and no
+credential is involved. The user confirms the fingerprint once; when they later
+open the web interface from TachyonikCSM, it shows the fingerprint their
+browser has to show, so a different system at the same address is recognised.
+A proxy older than this method answers "Method not found", which TachyonikCSM
+reports as "update the proxy".
+
 ## Local Network Scan
 
 Some tools are recognised not by a binary on this host but by a web interface on

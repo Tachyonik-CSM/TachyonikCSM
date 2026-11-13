@@ -11,6 +11,7 @@
 package mcpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -23,6 +24,7 @@ import (
 	"tachyonik/tachyonikproxy/internal/platforminfo"
 	"tachyonik/tachyonikproxy/internal/tools"
 	"tachyonik/tachyonikproxy/internal/toolscan"
+	"tachyonik/tachyonikproxy/internal/webcert"
 )
 
 // JSON-RPC 2.0 types
@@ -272,6 +274,8 @@ func (s *Server) HandleRequest(raw []byte) *Response {
 		return s.handleToolsScan(req)
 	case "credential/test":
 		return s.handleCredentialTest(req)
+	case "web/certificate":
+		return s.handleWebCertificate(req)
 	case "config/get":
 		return s.handleConfigGet(req)
 	case "config/update":
@@ -386,6 +390,24 @@ func (s *Server) handleCredentialTest(req Request) *Response {
 			Message: fmt.Sprintf("credential testing is not available for protocol %q", params.Protocol),
 		})
 	}
+}
+
+// WebCertificateParams is what web/certificate takes: the https address of a
+// tool's web interface.
+type WebCertificateParams struct {
+	URL string `json:"url"`
+}
+
+// handleWebCertificate answers web/certificate with the TLS certificate the
+// address presents, so the user can confirm it and compare it with what their
+// browser shows. Only a handshake: no request, no credential. Always a result;
+// an unreachable address is a result that says so.
+func (s *Server) handleWebCertificate(req Request) *Response {
+	var params WebCertificateParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return errResp(req.ID, codeInvalidParams, "Invalid params")
+	}
+	return okResp(req.ID, webcert.Read(context.Background(), params.URL))
 }
 
 type ToolsScanParams struct {
