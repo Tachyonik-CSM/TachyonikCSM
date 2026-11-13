@@ -77,7 +77,7 @@ func TestExampleLoads(t *testing.T) {
 		"SYSTEMMANAGER_INTERNAL_SERVICE_KEY", "AIMANAGER_URL", "AIMANAGER_INTERNAL_SERVICE_KEY"} {
 		t.Setenv("ASSETMANAGER_"+v, "")
 	}
-	cfg := Load()
+	cfg := mustLoad(t)
 	key := "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 	for name, c := range map[string]struct{ got, want interface{} }{
 		"server.port":          {cfg.Server.Port, "8081"},

@@ -17,7 +17,7 @@ import (
 func TestInstanceModeDefaultsAppliance(t *testing.T) {
 	t.Setenv("ASSETMANAGER_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
 	t.Setenv("ASSETMANAGER_INSTANCE_MODE", "")
-	if cfg := Load(); cfg.Instance.Mode != ModeAppliance {
+	if cfg := mustLoad(t); cfg.Instance.Mode != ModeAppliance {
 		t.Errorf("default instance.mode = %q, want %q", cfg.Instance.Mode, ModeAppliance)
 	}
 }
@@ -30,7 +30,7 @@ func TestInstanceModeFromFile(t *testing.T) {
 	}
 	t.Setenv("ASSETMANAGER_CONFIG", path)
 	t.Setenv("ASSETMANAGER_INSTANCE_MODE", "")
-	if cfg := Load(); cfg.Instance.Mode != ModeSaaS {
+	if cfg := mustLoad(t); cfg.Instance.Mode != ModeSaaS {
 		t.Errorf("instance.mode = %q, want %q", cfg.Instance.Mode, ModeSaaS)
 	}
 }
@@ -43,7 +43,7 @@ func TestInstanceModeEnvOverride(t *testing.T) {
 	}
 	t.Setenv("ASSETMANAGER_CONFIG", path)
 	t.Setenv("ASSETMANAGER_INSTANCE_MODE", "saas")
-	if cfg := Load(); cfg.Instance.Mode != ModeSaaS {
+	if cfg := mustLoad(t); cfg.Instance.Mode != ModeSaaS {
 		t.Errorf("env-overridden instance.mode = %q, want %q", cfg.Instance.Mode, ModeSaaS)
 	}
 }

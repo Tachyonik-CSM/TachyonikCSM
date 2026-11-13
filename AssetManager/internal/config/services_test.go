@@ -20,7 +20,7 @@ func TestServiceEndpoints(t *testing.T) {
 	t.Setenv("ASSETMANAGER_CONFIG", path)
 
 	// Defaults, with no file.
-	cfg := Load()
+	cfg := mustLoad(t)
 	if cfg.ResourceManager.URL != "http://localhost:8080" || cfg.SystemManager.URL != "http://localhost:8083" || cfg.AIManager.URL != "" {
 		t.Errorf("defaults: %+v %+v %+v", cfg.ResourceManager, cfg.SystemManager, cfg.AIManager)
 	}
@@ -39,7 +39,7 @@ aimanager:
 	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg = Load()
+	cfg = mustLoad(t)
 	for name, got := range map[string][2]string{
 		"resource": {cfg.ResourceManager.URL, cfg.ResourceManager.InternalServiceKey},
 		"system":   {cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey},
@@ -61,7 +61,7 @@ aimanager:
 	t.Setenv("ASSETMANAGER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY", "sm-env-key")
 	t.Setenv("ASSETMANAGER_AIMANAGER_URL", "http://ai-env")
 	t.Setenv("ASSETMANAGER_AIMANAGER_INTERNAL_SERVICE_KEY", "ai-env-key")
-	cfg = Load()
+	cfg = mustLoad(t)
 	if cfg.ResourceManager != (ServiceConfig{"http://rm-env", "rm-env-key"}) ||
 		cfg.SystemManager != (ServiceConfig{"http://sm-env", "sm-env-key"}) ||
 		cfg.AIManager != (ServiceConfig{"http://ai-env", "ai-env-key"}) {

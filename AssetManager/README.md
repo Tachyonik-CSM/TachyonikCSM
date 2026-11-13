@@ -90,6 +90,8 @@ which moves with every migration.
 
 Default configuration file: `./config.yaml` (override with `ASSETMANAGER_CONFIG`). Priority, highest first: environment variables, `config.yaml`, built-in defaults.
 
+**An unusable configuration stops AssetManager at startup** (AM-OPS-03, AM-OPS-16) instead of running it on defaults: a file that exists but cannot be read or parsed, a setting it does not know (a misspelt key, named with its line), or an instance mode other than `appliance` or `saas` (any case), from the file or `ASSETMANAGER_INSTANCE_MODE`. The reason goes to standard error (`journalctl`, `docker logs`) and the exit code is 1. Without a file, the defaults and the environment apply.
+
 `config.yaml.example` lists every option with its default and environment variable; copy it to `config.yaml` and adjust. A test keeps it complete (`internal/config/example_test.go`). In outline:
 
 ```yaml
@@ -158,7 +160,7 @@ outage never blocks asset creation. Leave `aimanager.url` empty on the SaaS
 ```
 
 The server will:
-1. Load configuration from `config.yaml` and environment variables
+1. Load configuration from `config.yaml` and environment variables; stop with an error if it cannot be used
 2. Initialize logging
 3. Connect to the SQLite database (creating it if it doesn't exist)
 4. Run database migrations

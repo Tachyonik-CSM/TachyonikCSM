@@ -11,10 +11,15 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -124,9 +129,16 @@ type FileConfig struct {
 	} `yaml:"instance"`
 }
 
-// Load loads configuration from config file and environment variables
-// Priority: Environment Variables > Config File > Defaults
-func Load() *Config {
+// Load loads configuration from config file and environment variables.
+// Priority: Environment Variables > Config File > Defaults.
+//
+// It refuses a configuration it cannot use (AM-OPS-03, AM-OPS-16): a file
+// that exists but cannot be read or parsed, a key it does not know, or an
+// instance mode other than appliance or saas. Running on defaults instead —
+// the placeholder token secret, appliance mode, a developer's database path —
+// is worse than not starting. A missing file is fine: the defaults and the
+// environment run a local development setup (AM-OPS-01).
+func Load() (*Config, error) {
 	// Set defaults
 	cfg := &Config{
 		Server: ServerConfig{
@@ -164,9 +176,19 @@ func Load() *Config {
 
 	// Try to load from config file
 	configPath := getEnv("ASSETMANAGER_CONFIG", "./config.yaml")
-	if fileData, err := os.ReadFile(configPath); err == nil {
+	fileData, err := os.ReadFile(configPath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		log.Printf("No configuration file at %s; using the defaults and the environment", configPath)
+	case err != nil:
+		return nil, fmt.Errorf("configuration file %s cannot be read: %w", configPath, err)
+	}
+	if err == nil {
 		var fileCfg FileConfig
-		if err := yaml.Unmarshal(fileData, &fileCfg); err == nil {
+		if err := decodeStrict(fileData, &fileCfg); err != nil {
+			return nil, fmt.Errorf("configuration file %s cannot be used: %w", configPath, err)
+		}
+		{
 			// Apply config file values
 			if fileCfg.Server.Port != 0 {
 				cfg.Server.Port = strconv.Itoa(fileCfg.Server.Port)
@@ -214,14 +236,14 @@ func Load() *Config {
 				cfg.Instance.Mode = fileCfg.Instance.Mode
 			}
 			log.Printf("Loaded configuration from: %s", configPath)
-		} else {
-			log.Printf("Warning: Failed to parse config file: %v", err)
 		}
 	}
 
 	// Environment variables override config file and defaults
+	modeFrom := "instance.mode in " + configPath
 	if mode := os.Getenv("ASSETMANAGER_INSTANCE_MODE"); mode != "" {
 		cfg.Instance.Mode = mode
+		modeFrom = "ASSETMANAGER_INSTANCE_MODE"
 	}
 	if port := os.Getenv("ASSETMANAGER_PORT"); port != "" {
 		cfg.Server.Port = port
@@ -267,7 +289,27 @@ func Load() *Config {
 		}
 	}
 
-	return cfg
+	// The mode decides tenancy and the limits, so anything but the two values
+	// stops the service; the case does not matter.
+	mode := strings.ToLower(strings.TrimSpace(cfg.Instance.Mode))
+	if mode != ModeAppliance && mode != ModeSaaS {
+		return nil, fmt.Errorf("%s is %q; it must be %q or %q", modeFrom, cfg.Instance.Mode, ModeAppliance, ModeSaaS)
+	}
+	cfg.Instance.Mode = mode
+
+	return cfg, nil
+}
+
+// decodeStrict parses YAML into out, refusing a key out does not have: a
+// misspelt key would otherwise leave its setting at the default without a
+// word. An empty file is an empty configuration.
+func decodeStrict(data []byte, out interface{}) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {
