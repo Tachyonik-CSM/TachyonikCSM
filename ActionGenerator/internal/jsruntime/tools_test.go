@@ -72,3 +72,29 @@ func TestToolsAreNeverNull(t *testing.T) {
 		t.Errorf("tools = %#v, want an empty list", m["tools"])
 	}
 }
+
+// A tool used without a credential by the user's choice reaches the rules with
+// credentialType "", so the missing-credential test of rule 24's routine does
+// not count it — the routine itself needs no change.
+func TestADeclinedCredentialIsNotMissing(t *testing.T) {
+	e := New(5 * time.Second)
+	if err := e.LoadFromString(missingCredentialRoutine); err != nil {
+		t.Fatal(err)
+	}
+	declined := RuleContext{Tools: []map[string]interface{}{
+		ToolToMap(15, "Greenbone", 1, "Office proxy", "10.0.0.9", "", false, true),
+	}}
+	actions, err := e.EvaluateRules(declined, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 0 {
+		t.Errorf("a declined tool raised %d action(s), want none", len(actions))
+	}
+	missing := RuleContext{Tools: []map[string]interface{}{
+		ToolToMap(16, "Greenbone", 1, "Office proxy", "10.0.0.9", "username-password", false, false),
+	}}
+	if actions, _ := e.EvaluateRules(missing, false); len(actions) != 1 {
+		t.Errorf("a tool missing its credential raised %d action(s), want 1", len(actions))
+	}
+}

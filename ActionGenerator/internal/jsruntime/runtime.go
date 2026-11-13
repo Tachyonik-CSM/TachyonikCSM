@@ -220,15 +220,21 @@ func ProxyToMap(id int64, name, status, connectionMode, version string, lastSeen
 // cannot be used for want of a credential is therefore
 // credentialType !== "" && !hasCredential — the same test as the Tools view's
 // "Credential missing".
-func ToolToMap(id int64, name string, proxyID int64, proxyName, host, credentialType string, hasCredential bool) map[string]interface{} {
+//
+// credentialDeclined is the user's choice to use the installation without a
+// credential. The caller then passes credentialType "": this installation
+// needs nothing, so a rule about missing credentials leaves it alone without
+// having to know about the choice.
+func ToolToMap(id int64, name string, proxyID int64, proxyName, host, credentialType string, hasCredential, credentialDeclined bool) map[string]interface{} {
 	return map[string]interface{}{
-		"id":             id,
-		"name":           name,
-		"proxyId":        proxyID,
-		"proxyName":      proxyName,
-		"host":           host,
-		"credentialType": credentialType,
-		"hasCredential":  hasCredential,
+		"id":                 id,
+		"name":               name,
+		"proxyId":            proxyID,
+		"proxyName":          proxyName,
+		"host":               host,
+		"credentialType":     credentialType,
+		"hasCredential":      hasCredential,
+		"credentialDeclined": credentialDeclined,
 	}
 }
 
@@ -1181,16 +1187,21 @@ func MockScenarios() []MockScenario {
 		{},
 		{},
 		{
-			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false),
-			ToolToMap(12, "Greenbone", 1, "Office proxy", "10.0.0.5", "username-password", true),
+			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false, false),
+			ToolToMap(12, "Greenbone", 1, "Office proxy", "10.0.0.5", "username-password", true, false),
 		},
 		{
-			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false),
-			ToolToMap(13, "Greenbone", 2, "Branch proxy", "10.1.0.5", "username-password", false),
+			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false, false),
+			ToolToMap(13, "Greenbone", 2, "Branch proxy", "10.1.0.5", "username-password", false, false),
 		},
 		{},
-		{ToolToMap(14, "Greenbone", 4, "Datacenter proxy", "10.2.0.5", "username-password", false)},
-		{ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false)},
+		{ToolToMap(14, "Greenbone", 4, "Datacenter proxy", "10.2.0.5", "username-password", false, false)},
+		// A Greenbone the user chose to use without a credential: it needs
+		// nothing here, so it is not missing one.
+		{
+			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false, false),
+			ToolToMap(15, "Greenbone", 1, "Office proxy", "10.0.0.9", "", false, true),
+		},
 	}
 	if len(mockTools) != len(mockContexts) {
 		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d tool lists", len(mockContexts), len(mockTools)))

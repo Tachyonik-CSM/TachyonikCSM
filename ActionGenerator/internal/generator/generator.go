@@ -941,8 +941,13 @@ func (g *Generator) addTools(ctx *jsruntime.RuleContext, tools []resourcemanager
 		if name == "" {
 			name = fmt.Sprintf("#%d", t.ID)
 		}
+		// Used without a credential by the user's choice: this installation
+		// needs none, so "credential missing" rules do not count it.
+		if t.CredentialDeclined {
+			credentialType = ""
+		}
 		ctx.Tools = append(ctx.Tools, jsruntime.ToolToMap(t.ID, name, t.ProxyID, proxyNames[t.ProxyID],
-			t.Host, credentialType, t.CredentialID != nil))
+			t.Host, credentialType, t.CredentialID != nil, t.CredentialDeclined))
 	}
 }
 

@@ -62,6 +62,9 @@ type Tool struct {
 	// CredentialID is the linked credential, or nil. Whether one is needed is
 	// a property of the tool's kind (AIManager's credentialType).
 	CredentialID *int64 `json:"credentialId"`
+	// CredentialDeclined: the user uses this installation without a
+	// credential, by choice. It is then not missing one.
+	CredentialDeclined bool `json:"credentialDeclined"`
 }
 
 // Proxy is one of a user's TachyonikProxy installations, with only the fields

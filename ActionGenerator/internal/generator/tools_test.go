@@ -43,23 +43,27 @@ func TestToolsCarryTheirCredentialState(t *testing.T) {
 		{ID: 11, ProxyID: 5, ToolID: &one, Host: "10.0.0.6", CredentialID: &cred},
 		{ID: 12, ProxyID: 5, ToolID: &two},
 		{ID: 13, ProxyID: 5, Command: "masscan"},
+		// Used without a credential by choice: needs nothing here.
+		{ID: 14, ProxyID: 5, ToolID: &one, Host: "10.0.0.7", CredentialDeclined: true},
 	})
 
-	if len(ctx.Tools) != 4 {
-		t.Fatalf("got %d tools, want 4", len(ctx.Tools))
+	if len(ctx.Tools) != 5 {
+		t.Fatalf("got %d tools, want 5", len(ctx.Tools))
 	}
 	want := []struct {
 		name, credentialType string
 		hasCredential        bool
+		declined             bool
 	}{
-		{"Greenbone", "username-password", false},
-		{"Greenbone", "username-password", true},
-		{"Nmap", "", false},
-		{"masscan", "", false},
+		{"Greenbone", "username-password", false, false},
+		{"Greenbone", "username-password", true, false},
+		{"Nmap", "", false, false},
+		{"masscan", "", false, false},
+		{"Greenbone", "", false, true},
 	}
 	for i, w := range want {
 		got := ctx.Tools[i]
-		if got["name"] != w.name || got["credentialType"] != w.credentialType || got["hasCredential"] != w.hasCredential {
+		if got["name"] != w.name || got["credentialType"] != w.credentialType || got["hasCredential"] != w.hasCredential || got["credentialDeclined"] != w.declined {
 			t.Errorf("tool %d = %v, want %+v", i, got, w)
 		}
 		if got["proxyName"] != "Office proxy" {
