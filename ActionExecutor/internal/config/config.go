@@ -15,6 +15,12 @@
 package config
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -135,7 +141,13 @@ type FileConfig struct {
 }
 
 // Load loads configuration with priority: env vars > config.yaml > defaults
-func Load() *Config {
+//
+// It refuses a configuration it cannot use: a file that exists but cannot
+// be read or parsed, or a key it does not know (a misspelt key would leave
+// its setting at the default without a word). Running on defaults the
+// operator did not mean is worse than not starting. A missing file is fine:
+// the defaults and the environment run a local development setup.
+func Load() (*Config, error) {
 	cfg := &Config{
 		AssetManager: AssetManagerConfig{
 			URL: "http://localhost:8081",
@@ -174,11 +186,18 @@ func Load() *Config {
 
 	var fileCfg *FileConfig
 	configPath := getEnv("ACTIONEXECUTOR_CONFIG", "./config.yaml")
-	if fileData, err := os.ReadFile(configPath); err == nil {
+	fileData, err := os.ReadFile(configPath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		log.Printf("No configuration file at %s; using the defaults and the environment", configPath)
+	case err != nil:
+		return nil, fmt.Errorf("configuration file %s cannot be read: %w", configPath, err)
+	default:
 		var fc FileConfig
-		if err := yaml.Unmarshal(fileData, &fc); err == nil {
-			fileCfg = &fc
+		if err := decodeStrict(fileData, &fc); err != nil {
+			return nil, fmt.Errorf("configuration file %s cannot be used: %w", configPath, err)
 		}
+		fileCfg = &fc
 	}
 
 	if fileCfg != nil {
@@ -187,7 +206,7 @@ func Load() *Config {
 
 	applyEnvOverrides(cfg)
 
-	return cfg
+	return cfg, nil
 }
 
 func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
@@ -322,4 +341,15 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// decodeStrict parses YAML into out, refusing a key out does not have. An
+// empty file is an empty configuration.
+func decodeStrict(data []byte, out interface{}) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }

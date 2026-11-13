@@ -135,6 +135,14 @@ wrote it and its checksum.
 
 ## Configuration
 
+**An unusable configuration stops the service.** A configuration file that
+exists but cannot be read or parsed, or that contains a key ActionExecutor does not
+know (a misspelling, which would otherwise leave its setting at the default
+without a word), stops it at startup with `ActionExecutor cannot start: <reason>`
+on standard error and exit code 1 — visible in `journalctl` and `docker
+logs`. Without a configuration file it runs on the defaults and the
+environment, and logs that no file was found.
+
 Copy `config.yaml.example` to `config.yaml` and set the keys and secrets. Every
 option, its default and its environment variable is listed there.
 
