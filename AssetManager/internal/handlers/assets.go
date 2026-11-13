@@ -90,9 +90,9 @@ func (h *Handler) ListAssets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filter, err := filterParam(r)
+	filter, err := filterParam(r, database.CheckAssetFilter)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid filter parameter")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -370,7 +370,7 @@ func (h *Handler) DeleteAssetsBySource(w http.ResponseWriter, r *http.Request) {
 
 	// Delete assets
 	// Those that keep other sources are recomputed from them.
-	deletedIDs, refreshedIDs, err := h.db.DeleteAssetsBySource(sourceID, userID)
+	deletedIDs, keptIDs, err := h.db.DeleteAssetsBySource(sourceID, userID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to delete assets")
 		return
@@ -378,20 +378,18 @@ func (h *Handler) DeleteAssetsBySource(w http.ResponseWriter, r *http.Request) {
 
 	// Announce each deletion to the owner's workspace and the services
 	h.announce(ws.TypeAssetDeleted, deletedIDs)
-	h.announceAssetsUpdated(refreshedIDs)
+	h.announceAssetsUpdated(keptIDs)
 
 	// Trigger organisation score recalculation for affected users
-	if len(deletedIDs) > 0 || len(refreshedIDs) > 0 {
+	if len(deletedIDs) > 0 || len(keptIDs) > 0 {
 		for _, uid := range affectedUserIDs {
 			go h.recalculateOrganisationScore(uid)
 			h.emitTotalAssets(uid)
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted": len(deletedIDs),
-		"message": fmt.Sprintf("Deleted %d asset(s)", len(deletedIDs)),
-	})
+	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), database.IDs(keptIDs), nil).
+		withMessage(fmt.Sprintf("Deleted %d asset(s)", len(deletedIDs))))
 }
 
 // ClearAssetSourcesBySource clears the source field for all assets associated with a source
@@ -433,10 +431,8 @@ func (h *Handler) ClearAssetSourcesBySource(w http.ResponseWriter, r *http.Reque
 	// Announce each change to the owner's workspace and the services
 	h.announce(ws.TypeAssetUpdated, updatedIDs)
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"updated": len(updatedIDs),
-		"message": fmt.Sprintf("Cleared source for %d asset(s)", len(updatedIDs)),
-	})
+	respondJSON(w, http.StatusOK, changeResult(nil, database.IDs(updatedIDs), nil).
+		withMessage(fmt.Sprintf("Cleared source for %d asset(s)", len(updatedIDs))))
 }
 
 // DeleteStaleAssetsBySource deletes assets associated with a source that were modified before a given timestamp
@@ -478,7 +474,7 @@ func (h *Handler) DeleteStaleAssetsBySource(w http.ResponseWriter, r *http.Reque
 
 	// Internal service request - delete for all users
 	// Those that keep other sources are recomputed from them.
-	deletedIDs, refreshedIDs, err := h.db.DeleteStaleAssetsBySource(sourceID, 0, modifiedBefore)
+	deletedIDs, keptIDs, err := h.db.DeleteStaleAssetsBySource(sourceID, 0, modifiedBefore)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to delete stale assets")
 		return
@@ -486,20 +482,18 @@ func (h *Handler) DeleteStaleAssetsBySource(w http.ResponseWriter, r *http.Reque
 
 	// Announce each deletion to the owner's workspace and the services
 	h.announce(ws.TypeAssetDeleted, deletedIDs)
-	h.announceAssetsUpdated(refreshedIDs)
+	h.announceAssetsUpdated(keptIDs)
 
 	// Trigger organisation score recalculation for affected users
-	if len(deletedIDs) > 0 || len(refreshedIDs) > 0 {
+	if len(deletedIDs) > 0 || len(keptIDs) > 0 {
 		for _, uid := range affectedUserIDs {
 			go h.recalculateOrganisationScore(uid)
 			h.emitTotalAssets(uid)
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted": len(deletedIDs),
-		"message": fmt.Sprintf("Deleted %d stale asset(s)", len(deletedIDs)),
-	})
+	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), database.IDs(keptIDs), nil).
+		withMessage(fmt.Sprintf("Deleted %d stale asset(s)", len(deletedIDs))))
 }
 
 // DeleteAssetsByIDsRequest represents the request to delete assets by IDs
@@ -561,11 +555,8 @@ func (h *Handler) DeleteAssetsByIDs(w http.ResponseWriter, r *http.Request) {
 		h.emitTotalAssets(userID)
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted": len(deleted),
-		"skipped": len(skipped),
-		"message": fmt.Sprintf("Deleted %d asset(s), skipped %d (source not empty)", len(deleted), len(skipped)),
-	})
+	respondJSON(w, http.StatusOK, changeResult(deleted, nil, skipped).
+		withMessage(fmt.Sprintf("Deleted %d asset(s), skipped %d (source not empty)", len(deleted), len(skipped))))
 }
 
 // respondJSON writes a JSON response
@@ -580,15 +571,20 @@ func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, ErrorResponse{Error: message})
 }
 
-// filterParam reads a list's filter from ?filter=, a JSON database.Filter;
-// nil when there is none.
-func filterParam(r *http.Request) (*database.Filter, error) {
+// filterParam reads a list's filter from ?filter=, a JSON database.Filter,
+// and checks every rule with check; nil when there is none. The error is the
+// message to refuse the request with (400, AM-API-05): a rule that cannot be
+// read is refused, never left out.
+func filterParam(r *http.Request, check func(*database.Filter) error) (*database.Filter, error) {
 	raw := r.URL.Query().Get("filter")
 	if raw == "" {
 		return nil, nil
 	}
 	var f database.Filter
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		return nil, fmt.Errorf("Invalid filter parameter: not a JSON filter")
+	}
+	if err := check(&f); err != nil {
 		return nil, err
 	}
 	return &f, nil

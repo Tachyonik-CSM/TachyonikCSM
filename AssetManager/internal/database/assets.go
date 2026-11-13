@@ -190,7 +190,10 @@ func (db *DB) GetAssetsByUsersWithFilter(userIDs []int64, filter *AssetFilter) (
 	clause, args := buildUserIDsClause(userIDs)
 	query := "SELECT " + assetColumns + " FROM assets WHERE " + clause
 
-	filterSQL, filterArgs := buildAssetFilterSQL(filter, userIDs)
+	filterSQL, filterArgs, ferr := buildAssetFilterSQL(filter, userIDs)
+	if ferr != nil {
+		return nil, ferr
+	}
 	if filterSQL != "" {
 		query += " AND (" + filterSQL + ")"
 		args = append(args, filterArgs...)
@@ -223,7 +226,10 @@ func (db *DB) CountAssetsByUsersWithFilter(userIDs []int64, filter *AssetFilter)
 	clause, args := buildUserIDsClause(userIDs)
 	query := "SELECT COUNT(*) FROM assets WHERE " + clause
 
-	filterSQL, filterArgs := buildAssetFilterSQL(filter, userIDs)
+	filterSQL, filterArgs, ferr := buildAssetFilterSQL(filter, userIDs)
+	if ferr != nil {
+		return 0, ferr
+	}
 	if filterSQL != "" {
 		query += " AND (" + filterSQL + ")"
 		args = append(args, filterArgs...)
@@ -640,9 +646,9 @@ func (db *DB) DeleteStaleAssetsBySource(sourceID int64, userID int64, modifiedBe
 
 // deleteOrphanAssets deletes any asset in `ids` that no longer has a matching
 // asset_source row, and recomputes the others from the sources they keep
-// (asset_refresh.go). Returns the assets deleted and those whose values
-// changed, with their owners.
-func (db *DB) deleteOrphanAssets(ids []int64, userID int64) (deleted, refreshed []Owned, err error) {
+// (asset_refresh.go). Returns the assets deleted and the assets kept — every
+// one that lost the link and still has another — with their owners.
+func (db *DB) deleteOrphanAssets(ids []int64, userID int64) (deleted, kept []Owned, err error) {
 	deleted, err = db.deleteOrphans(ids, userID)
 	if err != nil {
 		return nil, nil, err
@@ -657,11 +663,35 @@ func (db *DB) deleteOrphanAssets(ids []int64, userID int64) (deleted, refreshed 
 			survivors = append(survivors, id)
 		}
 	}
-	refreshed, err = db.RefreshAssetsByIDs(survivors)
+	if _, err = db.RefreshAssetsByIDs(survivors); err != nil {
+		return nil, nil, err
+	}
+	// Every survivor changed — it lost a link — not only those whose derived
+	// values moved: the asset's sources are part of the record, and both the
+	// answer (AM-API-13) and the announcement (AM-API-09) must name it.
+	kept, err = db.ownersOf(survivors)
 	if err != nil {
 		return nil, nil, err
 	}
-	return deleted, refreshed, nil
+	return deleted, kept, nil
+}
+
+// ownersOf returns the assets with these ids, with their owners, in id order.
+func (db *DB) ownersOf(ids []int64) ([]Owned, error) {
+	if len(ids) == 0 {
+		return []Owned{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	out := []Owned{}
+	if err := db.Select(&out, "SELECT id, user_id FROM assets WHERE id IN ("+strings.Join(placeholders, ",")+") ORDER BY id", args...); err != nil {
+		return nil, fmt.Errorf("failed to read the kept assets: %w", err)
+	}
+	return out, nil
 }
 
 func (db *DB) deleteOrphans(ids []int64, userID int64) ([]Owned, error) {

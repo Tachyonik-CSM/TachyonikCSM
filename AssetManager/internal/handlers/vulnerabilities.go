@@ -53,9 +53,9 @@ func (h *Handler) ListVulnerabilities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter, err := filterParam(r)
+	filter, err := filterParam(r, database.CheckVulnerabilityFilter)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid filter parameter")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -250,10 +250,7 @@ func (h *Handler) DeleteVulnerabilitiesBySource(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted": len(deletedIDs),
-		"ids":     database.IDs(deletedIDs),
-	})
+	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).withLegacyIDs(database.IDs(deletedIDs)))
 }
 
 // ClearVulnerabilitySourcesBySource clears the source field for all vulnerabilities associated with a source
@@ -291,10 +288,7 @@ func (h *Handler) ClearVulnerabilitySourcesBySource(w http.ResponseWriter, r *ht
 
 	logger.Infof("Cleared source for %d vulnerabilities for source: %s", len(updatedIDs), source)
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"updated": len(updatedIDs),
-		"ids":     database.IDs(updatedIDs),
-	})
+	respondJSON(w, http.StatusOK, changeResult(nil, database.IDs(updatedIDs), nil).withLegacyIDs(database.IDs(updatedIDs)))
 }
 
 // DeleteStaleVulnerabilitiesBySource deletes vulnerabilities associated with a source that were modified before a given timestamp
@@ -349,10 +343,8 @@ func (h *Handler) DeleteStaleVulnerabilitiesBySource(w http.ResponseWriter, r *h
 
 	logger.Infof("Deleted %d stale vulnerabilities for source: %s", len(deletedIDs), source)
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted": len(deletedIDs),
-		"message": fmt.Sprintf("Deleted %d stale vulnerability(ies)", len(deletedIDs)),
-	})
+	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).
+		withMessage(fmt.Sprintf("Deleted %d stale vulnerability(ies)", len(deletedIDs))))
 }
 
 // DeleteVulnerabilitiesByIDsRequest represents the request to delete vulnerabilities by IDs
@@ -412,10 +404,5 @@ func (h *Handler) DeleteVulnerabilitiesByIDs(w http.ResponseWriter, r *http.Requ
 		h.emitTotalVulnerabilities(userID)
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted":    len(deleted),
-		"skipped":    len(skipped),
-		"deletedIds": deleted,
-		"skippedIds": skipped,
-	})
+	respondJSON(w, http.StatusOK, changeResult(deleted, nil, skipped))
 }

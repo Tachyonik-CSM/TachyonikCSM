@@ -238,7 +238,24 @@ A vulnerability or detection names the source it came from as an asset does: `so
 
 For one release, a create request that has neither still has its older `source` string `"filename (ID: N)"` read instead; the first such request of each kind is logged with a warning, so a deployment can tell whether anything still sends it. The fallback is removed in the next release.
 
+**A filter rule that cannot be read is refused**, not left out: an unknown
+column, an operator the column does not take, or a value it cannot read (a
+number where one is needed) is answered with `400` and the rule and the
+reason, e.g. `{"error": "Filter rule 2: \"severity\" needs a number, not \"high\""}`.
+Leaving the rule out used to list more than was asked for (AM-API-05).
+
 The `by-source` and `stale` endpoints are called with the source reference `?source=filename (ID: N)` and find a source's findings by the id in it — so a renamed file still finds its own. A reference without `(ID: N)` is refused with `400`. Deleting by ID removes only findings that no source owns: no `sourceId` and no `sourceLabel`.
+
+**Every deletion and unlinking answers alike** (AM-API-13), whatever the kind
+(assets, vulnerabilities, detections) and the way (by id, by source,
+unlinking a source, stale): `deleted`/`deletedIds` for the records that are
+gone, `updated`/`updatedIds` for those that remain but changed (lost the
+source, or an asset another source still reports, recomputed), and
+`skipped`/`skippedIds` for those named by id that were not deleted (a source
+still reports them, or they are not the caller's own). Every pair is always
+present, `0` and `[]` when it does not apply, so a client can update its
+lists from the ids. The earlier fields — `message`, and `ids` on the finding
+by-source answers — are still sent for one release and then removed.
 
 #### List Assets
 
@@ -409,13 +426,20 @@ Authorization: Bearer <JWT_TOKEN>
 ```json
 {
   "deleted": 3,
+  "deletedIds": [40, 41, 42],
+  "updated": 1,
+  "updatedIds": [17],
+  "skipped": 0,
+  "skippedIds": [],
   "message": "Deleted 3 asset(s)"
 }
 ```
 
-**Response Fields:**
-- `deleted`: Number of assets deleted (integer)
-- `message`: Confirmation message (string)
+**Response Fields** (the same for every deletion and unlinking, see below):
+- `deleted`, `deletedIds`: the assets that are gone
+- `updated`, `updatedIds`: the assets that remain because another source still reports them, recomputed without this one
+- `skipped`, `skippedIds`: always empty here
+- `message`: deprecated, sent for one release more
 
 **Status Codes:**
 - `200 OK`: Assets successfully deleted

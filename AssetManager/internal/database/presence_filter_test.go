@@ -66,8 +66,8 @@ func TestPresenceOperators(t *testing.T) {
 	}
 
 	// An operator without a value on a column that does not offer it is
-	// ignored, as any rule it cannot read is.
-	if n := count(AssetFilterRule{Column: "score", Operator: "is not set"}); n != 3 {
-		t.Errorf("score is not set: %d assets, want the rule ignored (3)", n)
+	// refused, as any rule that cannot be read is (AM-API-05).
+	if err := CheckAssetFilter(&AssetFilter{Rules: []AssetFilterRule{{Column: "score", Operator: "is not set"}}}); err == nil {
+		t.Error("score is not set: accepted, want it refused")
 	}
 }

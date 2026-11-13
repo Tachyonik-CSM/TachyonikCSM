@@ -52,9 +52,9 @@ func (h *Handler) ListDetections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter, err := filterParam(r)
+	filter, err := filterParam(r, database.CheckDetectionFilter)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid filter parameter")
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -244,10 +244,7 @@ func (h *Handler) DeleteDetectionsBySource(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted": len(deletedIDs),
-		"ids":     database.IDs(deletedIDs),
-	})
+	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).withLegacyIDs(database.IDs(deletedIDs)))
 }
 
 // ClearDetectionSourcesBySource clears the source field for all detections associated with a source
@@ -285,10 +282,7 @@ func (h *Handler) ClearDetectionSourcesBySource(w http.ResponseWriter, r *http.R
 
 	logger.Infof("Cleared source for %d detections for source: %s", len(updatedIDs), source)
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"updated": len(updatedIDs),
-		"ids":     database.IDs(updatedIDs),
-	})
+	respondJSON(w, http.StatusOK, changeResult(nil, database.IDs(updatedIDs), nil).withLegacyIDs(database.IDs(updatedIDs)))
 }
 
 // DeleteStaleDetectionsBySource deletes detections associated with a source that were modified before a given timestamp
@@ -342,10 +336,8 @@ func (h *Handler) DeleteStaleDetectionsBySource(w http.ResponseWriter, r *http.R
 
 	logger.Infof("Deleted %d stale detections for source: %s", len(deletedIDs), source)
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted": len(deletedIDs),
-		"message": fmt.Sprintf("Deleted %d stale detection(s)", len(deletedIDs)),
-	})
+	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).
+		withMessage(fmt.Sprintf("Deleted %d stale detection(s)", len(deletedIDs))))
 }
 
 // DeleteDetectionsByIDsRequest represents the request to delete detections by IDs
@@ -400,10 +392,5 @@ func (h *Handler) DeleteDetectionsByIDs(w http.ResponseWriter, r *http.Request) 
 		h.emitTotalDetections(userID)
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"deleted":    len(deleted),
-		"skipped":    len(skipped),
-		"deletedIds": deleted,
-		"skippedIds": skipped,
-	})
+	respondJSON(w, http.StatusOK, changeResult(deleted, nil, skipped))
 }

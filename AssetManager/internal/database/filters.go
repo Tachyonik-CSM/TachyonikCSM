@@ -49,17 +49,35 @@ type (
 	DetectionFilter     = Filter
 )
 
-// buildFilterSQL joins the conditions ruleSQL gives for the filter's rules. A
-// rule it cannot read (an unknown column or operator, an unparsable value)
-// gives no condition and is left out; with none left there is no condition.
-func buildFilterSQL(filter *Filter, ruleSQL func(FilterRule) (string, []interface{})) (string, []interface{}) {
+// FilterError says why a filter cannot be read: which rule, and what is wrong
+// with it. The lists refuse such a filter with 400 (AM-API-05) rather than
+// leaving the rule out, which would list more than was asked for.
+type FilterError struct {
+	Rule    int // 1-based
+	Problem string
+}
+
+func (e *FilterError) Error() string {
+	return fmt.Sprintf("Filter rule %d: %s", e.Rule, e.Problem)
+}
+
+// ruleBuilder gives a rule's condition, or why the rule cannot be read.
+type ruleBuilder func(FilterRule) (cond string, args []interface{}, problem string)
+
+// buildFilterSQL joins the conditions of the filter's rules, or returns the
+// first rule that cannot be read.
+func buildFilterSQL(filter *Filter, ruleSQL ruleBuilder) (string, []interface{}, error) {
 	if filter == nil {
-		return "", nil
+		return "", nil, nil
 	}
 	var conditions []string
 	var args []interface{}
-	for _, rule := range filter.Rules {
-		if cond, condArgs := ruleSQL(rule); cond != "" {
+	for i, rule := range filter.Rules {
+		cond, condArgs, problem := ruleSQL(rule)
+		if problem != "" {
+			return "", nil, &FilterError{Rule: i + 1, Problem: problem}
+		}
+		if cond != "" {
 			conditions = append(conditions, cond)
 			args = append(args, condArgs...)
 		}
@@ -68,18 +86,73 @@ func buildFilterSQL(filter *Filter, ruleSQL func(FilterRule) (string, []interfac
 	if filter.MatchAll {
 		joiner = " AND "
 	}
-	return strings.Join(conditions, joiner), args
+	return strings.Join(conditions, joiner), args, nil
+}
+
+var (
+	numericOperators = []string{">", "<", ">=", "<=", "="}
+	textOperators    = []string{"contains", "does not contain"}
+	presenceOps      = []string{"is set", "is not set"}
+
+	assetColumns_ = []string{"name", "type", "severity", "score", "lastSeenDays", "lastScannedDays",
+		"coverageVerifiedDays", "scanCoverageIntervalDays", "detections"}
+	vulnerabilityColumns = []string{"severity", "name", "host"}
+	detectionColumns     = []string{"name", "host"}
+)
+
+func unknownColumn(column string, columns []string) string {
+	return fmt.Sprintf("unknown column %q; columns: %s", column, strings.Join(columns, ", "))
+}
+
+func unknownOperator(column, operator string, operators []string) string {
+	return fmt.Sprintf("%q takes %s, not %q", column, strings.Join(operators, ", "), operator)
+}
+
+func notANumber(column, value string) string {
+	return fmt.Sprintf("%q needs a number, not %q", column, value)
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // textRuleSQL is a "contains" / "does not contain" rule on a text column.
-func textRuleSQL(column string, rule FilterRule) (string, []interface{}) {
+func textRuleSQL(column string, rule FilterRule, extra ...string) (string, []interface{}, string) {
 	switch rule.Operator {
 	case "contains":
-		return column + " LIKE ?", []interface{}{"%" + rule.Value + "%"}
+		return column + " LIKE ?", []interface{}{"%" + rule.Value + "%"}, ""
 	case "does not contain":
-		return column + " NOT LIKE ?", []interface{}{"%" + rule.Value + "%"}
+		return column + " NOT LIKE ?", []interface{}{"%" + rule.Value + "%"}, ""
 	}
-	return "", nil
+	return "", nil, unknownOperator(rule.Column, rule.Operator, append(append([]string{}, textOperators...), extra...))
+}
+
+// numericRuleSQL is a comparison rule whose value must be a number; format
+// gets the operator.
+func numericRuleSQL(rule FilterRule, format string, integer bool, extraOps ...string) (string, []interface{}, string) {
+	if !contains(numericOperators, rule.Operator) {
+		return "", nil, unknownOperator(rule.Column, rule.Operator, append(append([]string{}, numericOperators...), extraOps...))
+	}
+	var value interface{}
+	if integer {
+		n, err := strconv.ParseInt(strings.TrimSpace(rule.Value), 10, 64)
+		if err != nil {
+			return "", nil, fmt.Sprintf("%q needs a whole number, not %q", rule.Column, rule.Value)
+		}
+		value = n
+	} else {
+		f, err := strconv.ParseFloat(strings.TrimSpace(rule.Value), 64)
+		if err != nil {
+			return "", nil, notANumber(rule.Column, rule.Value)
+		}
+		value = f
+	}
+	return fmt.Sprintf(format, rule.Operator), []interface{}{value}, ""
 }
 
 // presenceSQL is the condition of an "is set" or "is not set" rule, which
@@ -100,143 +173,109 @@ func presenceSQL(expr, operator string) (cond string, ok bool) {
 // buildAssetFilterSQL constructs the SQL WHERE clause for the asset filter.
 // userIDs are the users whose assets are listed: a rule that looks at
 // detections looks at theirs, as the statistics do (GetAssetStatsByUsers).
-func buildAssetFilterSQL(filter *AssetFilter, userIDs []int64) (string, []interface{}) {
-	return buildFilterSQL(filter, func(rule FilterRule) (string, []interface{}) {
+func buildAssetFilterSQL(filter *AssetFilter, userIDs []int64) (string, []interface{}, error) {
+	return buildFilterSQL(filter, func(rule FilterRule) (string, []interface{}, string) {
 		return buildAssetRuleSQL(rule, userIDs)
 	})
 }
 
-// buildAssetRuleSQL constructs the SQL for a single asset filter rule
-func buildAssetRuleSQL(rule AssetFilterRule, userIDs []int64) (string, []interface{}) {
+// CheckAssetFilter returns why an asset filter cannot be read, or nil.
+func CheckAssetFilter(filter *AssetFilter) error {
+	_, _, err := buildAssetFilterSQL(filter, []int64{0})
+	return err
+}
+
+// CheckVulnerabilityFilter returns why a vulnerability filter cannot be read, or nil.
+func CheckVulnerabilityFilter(filter *VulnerabilityFilter) error {
+	_, _, err := buildFilterSQL(filter, buildVulnerabilityRuleSQL)
+	return err
+}
+
+// CheckDetectionFilter returns why a detection filter cannot be read, or nil.
+func CheckDetectionFilter(filter *DetectionFilter) error {
+	_, _, err := buildFilterSQL(filter, buildDetectionRuleSQL)
+	return err
+}
+
+// buildAssetRuleSQL constructs the SQL for a single asset filter rule.
+func buildAssetRuleSQL(rule AssetFilterRule, userIDs []int64) (string, []interface{}, string) {
 	switch rule.Column {
 	case "detections":
 		// How many detections name the asset's host, among the listed users'
 		// — the correlation the statistics use to tell No Threat (severity 0,
 		// detections) from Unmanaged (severity 0, none): "> 0" and "= 0".
-		count, err := strconv.ParseInt(rule.Value, 10, 64)
-		if err != nil || len(userIDs) == 0 {
-			return "", nil
+		clause, args := buildUserIDsClause(userIDs)
+		clause = strings.Replace(clause, "user_id", "d.user_id", 1)
+		cond, vargs, problem := numericRuleSQL(rule,
+			"(SELECT COUNT(*) FROM detections d WHERE d.host = assets.name AND "+clause+") %s ?", true)
+		if problem != "" {
+			return "", nil, problem
 		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			clause, args := buildUserIDsClause(userIDs)
-			clause = strings.Replace(clause, "user_id", "d.user_id", 1)
-			return fmt.Sprintf("(SELECT COUNT(*) FROM detections d WHERE d.host = assets.name AND %s) %s ?", clause, rule.Operator),
-				append(args, count)
-		}
+		return cond, append(args, vargs...), ""
 	case "severity":
-		// Severity comparisons - value is expected to be 0.0-10.0, database stores 0-100
-		severityValue, err := strconv.ParseFloat(rule.Value, 64)
-		if err != nil {
-			return "", nil // Invalid severity value, skip this rule
-		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			return fmt.Sprintf("(severity / 10.0) %s ?", rule.Operator), []interface{}{severityValue}
-		}
+		// The filter speaks 0.0–10.0; the column stores 0–100.
+		return numericRuleSQL(rule, "(severity / 10.0) %s ?", false)
 	case "score":
-		// Score comparisons - value is expected to be 0-10000
-		scoreValue, err := strconv.ParseInt(rule.Value, 10, 64)
-		if err != nil {
-			return "", nil // Invalid score value, skip this rule
-		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			return fmt.Sprintf("score %s ?", rule.Operator), []interface{}{scoreValue}
-		}
+		// 0–10000.
+		return numericRuleSQL(rule, "score %s ?", true)
 	case "name":
 		return textRuleSQL("name", rule)
 	case "type":
 		// Types are a fixed set (Host, …), so a type can also be matched exactly.
 		if rule.Operator == "=" {
-			return "type = ? COLLATE NOCASE", []interface{}{rule.Value}
+			return "type = ? COLLATE NOCASE", []interface{}{rule.Value}, ""
 		}
-		return textRuleSQL("type", rule)
+		return textRuleSQL("type", rule, "=")
 	case "lastSeenDays":
 		// How many days ago the asset was last seen, fractions included, so
 		// "<= 30" and "> 30" split the assets without overlap. A last_seen
 		// that cannot be read counts as seen very long ago, as in the
 		// statistics' age buckets (hostAgeBuckets).
-		days, err := strconv.ParseFloat(rule.Value, 64)
-		if err != nil {
-			return "", nil
-		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			return fmt.Sprintf("COALESCE(julianday('now') - julianday(last_seen), 1e9) %s ?", rule.Operator), []interface{}{days}
-		}
+		return numericRuleSQL(rule, "COALESCE(julianday('now') - julianday(last_seen), 1e9) %s ?", false)
 	case "lastScannedDays":
 		// As lastSeenDays, on last_scanned. An asset never scanned (NULL)
 		// counts as scanned very long ago.
 		if cond, ok := presenceSQL("julianday(last_scanned)", rule.Operator); ok {
-			return cond, nil
+			return cond, nil, ""
 		}
-		days, err := strconv.ParseFloat(rule.Value, 64)
-		if err != nil {
-			return "", nil
-		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			return fmt.Sprintf("COALESCE(julianday('now') - julianday(last_scanned), 1e9) %s ?", rule.Operator), []interface{}{days}
-		}
+		return numericRuleSQL(rule, "COALESCE(julianday('now') - julianday(last_scanned), 1e9) %s ?", false, presenceOps...)
 	case "coverageVerifiedDays":
 		// As lastSeenDays, on the last scan coverage verification. Never
 		// verified counts as verified very long ago.
 		if cond, ok := presenceSQL("julianday(last_scan_coverage_verification)", rule.Operator); ok {
-			return cond, nil
+			return cond, nil, ""
 		}
-		days, err := strconv.ParseFloat(rule.Value, 64)
-		if err != nil {
-			return "", nil
-		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			return fmt.Sprintf("COALESCE(julianday('now') - julianday(last_scan_coverage_verification), 1e9) %s ?", rule.Operator), []interface{}{days}
-		}
+		return numericRuleSQL(rule, "COALESCE(julianday('now') - julianday(last_scan_coverage_verification), 1e9) %s ?", false, presenceOps...)
 	case "scanCoverageIntervalDays":
 		// An asset without an interval — in no scheduled scan — counts as
 		// scanned at a very long interval, as never scanned does for
 		// lastScannedDays; "> 99999" is the unmonitored ones, as is "is not set".
 		if cond, ok := presenceSQL("scan_coverage_interval_days", rule.Operator); ok {
-			return cond, nil
+			return cond, nil, ""
 		}
-		days, err := strconv.ParseFloat(rule.Value, 64)
-		if err != nil {
-			return "", nil
-		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			return fmt.Sprintf("COALESCE(scan_coverage_interval_days, 1e9) %s ?", rule.Operator), []interface{}{days}
-		}
+		return numericRuleSQL(rule, "COALESCE(scan_coverage_interval_days, 1e9) %s ?", false, presenceOps...)
 	}
-	return "", nil
+	return "", nil, unknownColumn(rule.Column, assetColumns_)
 }
 
 // buildVulnerabilityRuleSQL constructs the SQL for a single vulnerability
 // filter rule.
-func buildVulnerabilityRuleSQL(rule FilterRule) (string, []interface{}) {
+func buildVulnerabilityRuleSQL(rule FilterRule) (string, []interface{}, string) {
 	switch rule.Column {
 	case "severity":
 		// The filter speaks 0.0–10.0; the column stores 0–100.
-		severityValue, err := strconv.ParseFloat(rule.Value, 64)
-		if err != nil {
-			return "", nil
-		}
-		switch rule.Operator {
-		case ">", "<", ">=", "<=", "=":
-			return fmt.Sprintf("(severity / 10.0) %s ?", rule.Operator), []interface{}{severityValue}
-		}
+		return numericRuleSQL(rule, "(severity / 10.0) %s ?", false)
 	case "name", "host":
 		return textRuleSQL(rule.Column, rule)
 	}
-	return "", nil
+	return "", nil, unknownColumn(rule.Column, vulnerabilityColumns)
 }
 
 // buildDetectionRuleSQL constructs the SQL for a single detection filter rule.
-func buildDetectionRuleSQL(rule FilterRule) (string, []interface{}) {
+func buildDetectionRuleSQL(rule FilterRule) (string, []interface{}, string) {
 	switch rule.Column {
 	case "name", "host":
 		return textRuleSQL(rule.Column, rule)
 	}
-	return "", nil
+	return "", nil, unknownColumn(rule.Column, detectionColumns)
 }

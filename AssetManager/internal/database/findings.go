@@ -24,7 +24,7 @@ type findingKind struct {
 	noun    string // the singular in error messages
 	columns string // the columns a list selects, in the struct's order
 	order   string
-	ruleSQL func(FilterRule) (string, []interface{})
+	ruleSQL ruleBuilder
 }
 
 var (
@@ -45,20 +45,27 @@ var (
 )
 
 // filteredWhere is the WHERE clause of a list or count of the users' findings
-// matching the filter.
-func (k findingKind) filteredWhere(userIDs []int64, filter *Filter) (string, []interface{}) {
+// matching the filter, or why the filter cannot be read (*FilterError).
+func (k findingKind) filteredWhere(userIDs []int64, filter *Filter) (string, []interface{}, error) {
 	where, args := buildUserIDsClause(userIDs)
-	if filterSQL, filterArgs := buildFilterSQL(filter, k.ruleSQL); filterSQL != "" {
+	filterSQL, filterArgs, err := buildFilterSQL(filter, k.ruleSQL)
+	if err != nil {
+		return "", nil, err
+	}
+	if filterSQL != "" {
 		where += " AND (" + filterSQL + ")"
 		args = append(args, filterArgs...)
 	}
-	return where, args
+	return where, args, nil
 }
 
 // listFindings selects into dest (a pointer to a slice of the kind's struct)
 // the users' findings matching the filter, in the kind's order.
 func (db *DB) listFindings(k findingKind, dest interface{}, userIDs []int64, filter *Filter) error {
-	where, args := k.filteredWhere(userIDs, filter)
+	where, args, err := k.filteredWhere(userIDs, filter)
+	if err != nil {
+		return err
+	}
 	if err := db.Select(dest, "SELECT "+k.columns+" FROM "+k.table+" WHERE "+where+" ORDER BY "+k.order, args...); err != nil {
 		return fmt.Errorf("failed to get %s: %w", k.table, err)
 	}
@@ -67,7 +74,10 @@ func (db *DB) listFindings(k findingKind, dest interface{}, userIDs []int64, fil
 
 // countFindings counts the users' findings matching the filter.
 func (db *DB) countFindings(k findingKind, userIDs []int64, filter *Filter) (int, error) {
-	where, args := k.filteredWhere(userIDs, filter)
+	where, args, err := k.filteredWhere(userIDs, filter)
+	if err != nil {
+		return 0, err
+	}
 	var count int
 	if err := db.Get(&count, "SELECT COUNT(*) FROM "+k.table+" WHERE "+where, args...); err != nil {
 		return 0, fmt.Errorf("failed to count %s: %w", k.table, err)
