@@ -212,8 +212,11 @@ func (h *Handler) SetupRoutes() http.Handler {
 	// Liveness and readiness probes (no auth — for orchestrator).
 	r.HandleFunc("/health", h.handleHealth).Methods("GET", "OPTIONS")
 	r.HandleFunc("/ready", h.handleReady).Methods("GET", "OPTIONS")
-	// Prometheus scrape endpoint. No auth — lock down at the network layer.
-	r.Handle("/metrics", MetricsHandler()).Methods("GET")
+	// Prometheus scrape endpoint: the internal service key (Prometheus, other
+	// services) or any session, anonymous included (AM-OPS-17). The metrics
+	// show which endpoints are called how often; that is not for anyone who
+	// can reach the port.
+	r.Handle("/metrics", AuthMiddleware(h.config, h.accounts)(MetricsHandler())).Methods("GET")
 
 	// API routes - require authentication
 	api := r.PathPrefix("/api").Subrouter()

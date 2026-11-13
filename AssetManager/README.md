@@ -197,6 +197,19 @@ Log format includes:
 - Source file and line number
 - Message
 
+### Health and metrics
+
+- `GET /health` answers 200 while the process runs; `GET /ready` answers 503
+  until startup has finished, then 200. Both are open: the container's health
+  check and Compose's start order ask them without a key.
+- `GET /metrics` (Prometheus format: requests by method, route template and
+  status, durations, requests in flight) answers only an authenticated
+  caller: a service with `X-Internal-Service-Key`, or a user with a session,
+  an anonymous one included, checked as for the API. Otherwise 401, or 403
+  for a deactivated account (AM-OPS-17). The observability stack's Prometheus
+  sends the service key from `$TACHYONIKCSM_CONFIG_DIR/prometheus-service-key`
+  (see `deployment/observability/prometheus/prometheus.yml`).
+
 ## REST API
 
 ### Base URL
