@@ -14,6 +14,7 @@
 package aimanager
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -157,6 +158,23 @@ type Routine struct {
 	Log         string `json:"log"`
 	CreatedAt   string `json:"createdAt"`
 	UpdatedAt   string `json:"updatedAt"`
+	// What a bridge routine was generated against (PA-RT-04): the API
+	// catalogue's fingerprint, and the operations it calls as a JSON array.
+	// Empty for a context routine.
+	APIFingerprint string `json:"apiFingerprint"`
+	APIOperations  string `json:"apiOperations"`
+}
+
+// Operations decodes APIOperations; nil when there are none.
+func (r *Routine) Operations() []string {
+	if r.APIOperations == "" {
+		return nil
+	}
+	var ops []string
+	if json.Unmarshal([]byte(r.APIOperations), &ops) != nil {
+		return nil
+	}
+	return ops
 }
 
 // CreateRoutineRequest is the payload for creating a routine
@@ -170,6 +188,33 @@ type CreateRoutineRequest struct {
 	GeneratedAt string `json:"generatedAt"`
 	Status      string `json:"status"` // "passed" or "failed"
 	Log         string `json:"log"`
+	// For a bridge routine (PA-RT-04).
+	APIFingerprint string   `json:"apiFingerprint,omitempty"`
+	APIOperations  []string `json:"apiOperations,omitempty"`
+}
+
+// APIDocument is one module's document in the platform API catalogue.
+type APIDocument struct {
+	Module   string `json:"module"`
+	Version  string `json:"version"`
+	SHA256   string `json:"sha256"`
+	Document string `json:"document"`
+}
+
+// APICatalogue is the platform API catalogue as AIManager serves it.
+type APICatalogue struct {
+	Documents   []APIDocument `json:"documents"`
+	Fingerprint string        `json:"fingerprint"`
+}
+
+// GetAPICatalogue reads the platform API catalogue: every registered
+// manager's API document (docs/specs/01-platform-api-catalogue.md, §4).
+func (c *Client) GetAPICatalogue() (*APICatalogue, error) {
+	var out APICatalogue
+	if err := c.rc.JSON("GET", "/api/internal/api-catalogue", nil, &out, http.StatusOK); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // CreateRoutine stores a generated routine. Answers 201, not 200.

@@ -31,6 +31,7 @@ const (
 	typeActionRuleDeleted             = "ACTION_RULE_DELETED"
 	typeActionRuleEvaluationRequested = "ACTION_RULE_EVALUATION_REQUESTED"
 	typeFeedImported                  = "FEED_IMPORTED"
+	typeAPICatalogueUpdated           = "API_CATALOGUE_UPDATED"
 )
 
 // rulePayload extracts the rule ID from the WebSocket payload
@@ -70,6 +71,8 @@ type Watcher struct {
 	onRuleChange          func(event RuleChangeEvent)
 	onEvaluationRequested func(event EvaluationRequestEvent)
 	onFeedImported        func()
+	onCatalogueUpdated    func()
+	onOther               func(messageType string)
 
 	ws *wswatcher.Watcher
 	db *wswatcher.Debouncer
@@ -102,6 +105,20 @@ func (w *Watcher) SetFeedImportedHandler(handler func()) {
 	w.onFeedImported = handler
 }
 
+// SetCatalogueUpdatedHandler sets the callback fired when AIManager
+// announces a change to the platform API catalogue (PA-RT-08). It runs in its
+// own goroutine, like the feed import's.
+func (w *Watcher) SetCatalogueUpdatedHandler(handler func()) {
+	w.onCatalogueUpdated = handler
+}
+
+// SetOtherMessageHandler sets the callback for every other AIManager message:
+// the tool catalogue's, for instance, which may invalidate what a bridge
+// routine reads (PA-RT-07).
+func (w *Watcher) SetOtherMessageHandler(handler func(messageType string)) {
+	w.onOther = handler
+}
+
 // Start opens the connection and begins dispatching.
 func (w *Watcher) Start() {
 	w.db = wswatcher.NewDebouncer(w.debounceFor, "actionrulewatcher")
@@ -130,6 +147,15 @@ func (w *Watcher) dispatch(msg wswatcher.Message) {
 		if w.onFeedImported != nil {
 			logger.Info("FEED_IMPORTED received, triggering full reload")
 			go w.onFeedImported()
+		}
+	case typeAPICatalogueUpdated:
+		if w.onCatalogueUpdated != nil {
+			logger.Info("API_CATALOGUE_UPDATED received, reloading the API catalogue")
+			go w.onCatalogueUpdated()
+		}
+	default:
+		if w.onOther != nil {
+			w.onOther(msg.Type)
 		}
 	}
 }

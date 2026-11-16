@@ -31,9 +31,11 @@ type Config struct {
 	ResourceManager ServiceConfig
 	ActionManager   ServiceConfig
 	AIManager       ServiceConfig
-	AI              AIConfig
-	Heartbeat       HeartbeatConfig
-	Log             LogConfig
+	// ToolManager answers capabilities.get for bridge routines.
+	ToolManager ServiceConfig
+	AI          AIConfig
+	Heartbeat   HeartbeatConfig
+	Log         LogConfig
 }
 
 // ServiceConfig is how this daemon reaches one of the platform's services.
@@ -82,6 +84,7 @@ type FileConfig struct {
 	SystemManager   FileServiceConfig `yaml:"systemmanager"`
 	ResourceManager FileServiceConfig `yaml:"resourcemanager"`
 	ActionManager   FileServiceConfig `yaml:"actionmanager"`
+	ToolManager     FileServiceConfig `yaml:"toolmanager"`
 	AIManager       FileServiceConfig `yaml:"ai_manager"`
 	AI              struct {
 		TimeoutSeconds       int `yaml:"timeout_seconds"`
@@ -113,6 +116,7 @@ func Load() (*Config, error) {
 		ResourceManager: ServiceConfig{URL: "http://localhost:8080"},
 		ActionManager:   ServiceConfig{URL: "http://localhost:8082"},
 		AIManager:       ServiceConfig{URL: "http://localhost:8085"},
+		ToolManager:     ServiceConfig{URL: "http://localhost:8086"},
 		AI: AIConfig{
 			TimeoutSeconds:       300,
 			JSExecTimeoutSeconds: 5,
@@ -167,6 +171,7 @@ func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
 		{&cfg.ResourceManager, fileCfg.ResourceManager},
 		{&cfg.ActionManager, fileCfg.ActionManager},
 		{&cfg.AIManager, fileCfg.AIManager},
+		{&cfg.ToolManager, fileCfg.ToolManager},
 	} {
 		if svc.src.URL != "" {
 			svc.dst.URL = svc.src.URL
@@ -210,6 +215,7 @@ func applyEnvOverrides(cfg *Config) {
 		{&cfg.ResourceManager, "RESOURCEMANAGER_URL", "RESOURCEMANAGER_INTERNAL_SERVICE_KEY"},
 		{&cfg.ActionManager, "ACTIONMANAGER_URL", "ACTIONMANAGER_INTERNAL_SERVICE_KEY"},
 		{&cfg.AIManager, "ACTIONGENERATOR_AI_MANAGER_URL", "AIMANAGER_INTERNAL_SERVICE_KEY"},
+		{&cfg.ToolManager, "TOOLMANAGER_URL", "TOOLMANAGER_INTERNAL_SERVICE_KEY"},
 	} {
 		if url := os.Getenv(svc.urlEnv); url != "" {
 			svc.dst.URL = url

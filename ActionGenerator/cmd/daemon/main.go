@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"tachyonik/actiongenerator/internal/aigenerator"
 	"tachyonik/actiongenerator/internal/aimanager"
 	"tachyonik/actiongenerator/internal/assetmanager"
+	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/codegen"
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/actiongenerator/internal/generator"
@@ -38,6 +40,7 @@ import (
 	"tachyonik/actiongenerator/internal/watcher"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aimwatcher"
+	"tachyonik/lib/apibridge"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
 )
@@ -187,6 +190,33 @@ func runDaemon(cfg *config.Config) {
 		logger.Info("No AI configured — rule evaluation works, but code generation is disabled")
 	}
 
+	// The platform API catalogue, and the bridge built from it, for bridge
+	// routines (docs/specs/01-platform-api-catalogue.md). Loaded before the
+	// rules, so a bridge routine is checked against it as it is loaded.
+	apiCatalogue := newAPICatalogue(cfg)
+	loadAPICatalogue := func() {
+		cat, err := aiMgrClient.GetAPICatalogue()
+		if err != nil {
+			logger.Warnf("The platform API catalogue cannot be read yet, bridge routines do not run until it can: %v", err)
+			return
+		}
+		if err := apiCatalogue.Load(cat); err != nil {
+			logger.Warnf("API catalogue: %v", err)
+		}
+		logger.Infof("API catalogue loaded: %d documents, fingerprint %.12s", len(cat.Documents), cat.Fingerprint)
+	}
+	loadAPICatalogue()
+	aiGen.SetCatalogue(apiCatalogue)
+	gen.SetCatalogue(apiCatalogue)
+
+	// The message types an active bridge routine's answers depend on
+	// (PA-RT-07), recomputed whenever the rules or the catalogue change and
+	// read by every watcher on every message.
+	var triggers atomic.Value
+	triggers.Store(map[string]bool{})
+	refreshTriggers := func() { triggers.Store(aiGen.Triggers()) }
+	extraTrigger := func(messageType string) bool { return triggers.Load().(map[string]bool)[messageType] }
+
 	// Load rules with per-rule active routines (does not require AI)
 	if err := aiGen.LoadRules(); err != nil {
 		logger.Errorf("Failed to load action rules: %v", err)
@@ -194,6 +224,11 @@ func runDaemon(cfg *config.Config) {
 		gen.SetExecutors(aiGen.Executors())
 		gen.SetOnDemandRules(aiGen.OnDemandRules())
 	}
+	refreshTriggers()
+
+	// The callback every change watcher shares: debounced, and never two
+	// passes at once.
+	onChange := newDebouncedProcessor(gen)
 
 	// Shared module-settings refresh — used by both the
 	// MODULE_AI_SETTING_UPDATED watcher and the FEED_IMPORTED reload
@@ -238,6 +273,7 @@ func runDaemon(cfg *config.Config) {
 		// Update executor map on generator and re-process rules
 		gen.SetExecutors(aiGen.Executors())
 		gen.SetOnDemandRules(aiGen.OnDemandRules())
+		refreshTriggers()
 		logger.Info("Re-processing rules after regeneration...")
 		if err := gen.ProcessRules(); err != nil {
 			logger.Errorf("Error processing rules after regeneration: %v", err)
@@ -266,9 +302,32 @@ func runDaemon(cfg *config.Config) {
 				gen.SetExecutors(aiGen.Executors())
 				gen.SetOnDemandRules(aiGen.OnDemandRules())
 			}
+			refreshTriggers()
 			refreshModuleSettings()
 			if err := gen.ProcessRules(); err != nil {
 				logger.Errorf("Error processing rules after feed import: %v", err)
+			}
+		})
+		// A changed catalogue rebuilds the bridge and re-checks the active
+		// routines against it (PA-RT-06, -08).
+		arw.SetCatalogueUpdatedHandler(func() {
+			loadAPICatalogue()
+			if err := aiGen.LoadRules(); err != nil {
+				logger.Errorf("Failed to reload action rules after the API catalogue changed: %v", err)
+			} else {
+				gen.SetExecutors(aiGen.Executors())
+				gen.SetOnDemandRules(aiGen.OnDemandRules())
+			}
+			refreshTriggers()
+			if err := gen.ProcessRules(); err != nil {
+				logger.Errorf("Error processing rules after the API catalogue changed: %v", err)
+			}
+		})
+		// AIManager's own messages that invalidate a bridge routine's answers —
+		// the tool catalogue's, for instance.
+		arw.SetOtherMessageHandler(func(messageType string) {
+			if extraTrigger(messageType) {
+				onChange()
 			}
 		})
 		arw.Start()
@@ -282,14 +341,13 @@ func runDaemon(cfg *config.Config) {
 		logger.Errorf("Error processing rules: %v", err)
 	}
 
-	onChange := newDebouncedProcessor(gen)
-
 	// Start WebSocket watcher for AssetManager events
 	w, err := watcher.New(cfg.AssetManager.URL, cfg.AssetManager.InternalServiceKey, onChange)
 	if err != nil {
 		logger.Fatalf("Failed to create watcher: %v", err)
 	}
 	defer w.Close()
+	w.SetExtraTriggers(extraTrigger)
 
 	w.Start()
 	logger.Info("AssetManager WebSocket watcher started")
@@ -311,6 +369,7 @@ func runDaemon(cfg *config.Config) {
 		logger.Errorf("Failed to create SystemManager watcher: %v", err)
 	} else {
 		defer sw.Close()
+		sw.SetExtraTriggers(extraTrigger)
 		sw.Start()
 		logger.Info("SystemManager WebSocket watcher started")
 	}
@@ -325,8 +384,24 @@ func runDaemon(cfg *config.Config) {
 		logger.Errorf("Failed to create ResourceManager watcher: %v", err)
 	} else {
 		defer rw.Close()
+		rw.SetExtraTriggers(extraTrigger)
 		rw.Start()
 		logger.Info("ResourceManager WebSocket watcher started")
+	}
+
+	// ActionManager's messages matter only to bridge routines that read the
+	// actions (actions.list): it has no fixed triggers, only those the
+	// catalogue names. ActionGenerator's own creating and withdrawing is
+	// announced there too; the pass that follows finds nothing to change.
+	aw, err := watcher.NewFor("ActionManager", cfg.ActionManager.URL,
+		cfg.ActionManager.InternalServiceKey, nil, onChange)
+	if err != nil {
+		logger.Errorf("Failed to create ActionManager watcher: %v", err)
+	} else {
+		defer aw.Close()
+		aw.SetExtraTriggers(extraTrigger)
+		aw.Start()
+		logger.Info("ActionManager WebSocket watcher started")
 	}
 
 	// Start liveness heartbeat to SystemManager.
@@ -338,6 +413,27 @@ func runDaemon(cfg *config.Config) {
 	}, logger.Errorf)
 
 	waitForShutdown()
+}
+
+// newAPICatalogue makes the holder of the platform API catalogue, with where
+// this daemon reaches each manager. A bridge call is bounded by the shorter
+// of 3 seconds and the routine's own execution budget (PA-BR-10).
+func newAPICatalogue(cfg *config.Config) *catalogue.Holder {
+	callTimeout := 3 * time.Second
+	if js := time.Duration(cfg.AI.JSExecTimeoutSeconds) * time.Second; js > 0 && js < callTimeout {
+		callTimeout = js
+	}
+	ep := func(s config.ServiceConfig) catalogue.Endpoint {
+		return catalogue.Endpoint{BaseURL: s.URL, ServiceKey: s.InternalServiceKey}
+	}
+	return catalogue.New(map[string]catalogue.Endpoint{
+		"assetmanager":    ep(cfg.AssetManager),
+		"systemmanager":   ep(cfg.SystemManager),
+		"resourcemanager": ep(cfg.ResourceManager),
+		"actionmanager":   ep(cfg.ActionManager),
+		"aimanager":       ep(cfg.AIManager),
+		"toolmanager":     ep(cfg.ToolManager),
+	}, apibridge.Options{CallTimeout: callTimeout})
 }
 
 // logConfiguration reports what the daemon is about to run with. Kept whole and
@@ -352,6 +448,7 @@ func logConfiguration(cfg *config.Config) {
 	logger.Infof("  SystemManager URL: %s", cfg.SystemManager.URL)
 	logger.Infof("  ResourceManager URL: %s", cfg.ResourceManager.URL)
 	logger.Infof("  ActionManager URL: %s", cfg.ActionManager.URL)
+	logger.Infof("  ToolManager URL: %s", cfg.ToolManager.URL)
 	logger.Infof("  Log File: %s", cfg.Log.FilePath)
 	logger.Infof("  Log to Console: %v", cfg.Log.ToConsole)
 	logger.Infof("  Log to File: %v", cfg.Log.ToFile)

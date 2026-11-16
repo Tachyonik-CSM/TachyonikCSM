@@ -24,9 +24,11 @@ import (
 	"tachyonik/actiongenerator/internal/actionmanager"
 	"tachyonik/actiongenerator/internal/aimanager"
 	"tachyonik/actiongenerator/internal/assetmanager"
+	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/jsruntime"
 	"tachyonik/actiongenerator/internal/resourcemanager"
 	"tachyonik/actiongenerator/internal/systemmanager"
+	"tachyonik/lib/apibridge"
 	"tachyonik/lib/logger"
 )
 
@@ -65,6 +67,55 @@ type Generator struct {
 	// Guarded by executorMu, which already covers the rule set it belongs to.
 	onDemandRules map[int64]bool
 	executorMu    sync.RWMutex
+	// catalogue holds the API bridge bridge routines read through; nil runs
+	// context routines only.
+	catalogue *catalogue.Holder
+}
+
+// SetCatalogue gives the generator the API bridge for bridge routines.
+func (g *Generator) SetCatalogue(c *catalogue.Holder) { g.catalogue = c }
+
+// newPass starts one evaluation pass of the API bridge, or nil without one.
+// One pass per evaluation pass: a user's answers are fetched once and shared
+// by every rule (PA-BR-05).
+func (g *Generator) newPass() *apibridge.Pass {
+	if g.catalogue == nil {
+		return nil
+	}
+	if b, _ := g.catalogue.Bridge(); b != nil {
+		return b.NewPass()
+	}
+	return nil
+}
+
+// evaluate runs one routine for one user: a bridge routine through the pass,
+// a context routine against the context ctx builds on first use. unknown is
+// true when the outcome could not be decided, in which case nothing is
+// created or withdrawn for the rule (PA-RT-03).
+func (g *Generator) evaluate(executor *jsruntime.JSRuleExecutor, pass *apibridge.Pass, userID int64,
+	ctx func() jsruntime.RuleContext, force bool) (actions []actionmanager.CreateActionRequest, unknown bool, err error) {
+	if executor.IsBridge() {
+		if pass == nil {
+			logger.Warnf("A bridge routine cannot be evaluated for user %d: the platform API catalogue is not loaded", userID)
+			return nil, true, nil
+		}
+		return executor.EvaluateBridge(pass, userID, force)
+	}
+	actions, err = executor.EvaluateRules(ctx(), force)
+	return actions, false, err
+}
+
+// lazyContext builds a context at most once, when a context routine asks for
+// it: a pass of only bridge routines builds none.
+func lazyContext(build func() jsruntime.RuleContext) func() jsruntime.RuleContext {
+	var ctx *jsruntime.RuleContext
+	return func() jsruntime.RuleContext {
+		if ctx == nil {
+			c := build()
+			ctx = &c
+		}
+		return *ctx
+	}
 }
 
 // New creates a new Generator instance
@@ -233,11 +284,15 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 		return 0, fmt.Errorf("failed to get user %d: %w", userID, err)
 	}
 
-	ctx := g.buildJSRuleContext(user)
+	ctx := lazyContext(func() jsruntime.RuleContext { return g.buildJSRuleContext(user) })
 
-	actions, err := executor.EvaluateRules(ctx, force)
+	actions, unknown, err := g.evaluate(executor, g.newPass(), userID, ctx, force)
 	if err != nil {
 		return 0, fmt.Errorf("error evaluating rule %d for user %d: %w", ruleID, userID, err)
+	}
+	if unknown {
+		logger.Infof("Rule %d could not be decided for user %d; its actions are left as they are", ruleID, userID)
+		return 0, nil
 	}
 
 	logger.Infof("Rule %d produced %d candidate actions for user %d (force=%v)", ruleID, len(actions), userID, force)
@@ -296,15 +351,20 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 // processJSRules evaluates JS rules from all executors for all users
 func (g *Generator) processJSRules(users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor) (int, error) {
 	actionsCreated := 0
+	pass := g.newPass()
 
-	for _, user := range users {
-		ctx := g.buildJSRuleContext(&user)
+	for i := range users {
+		user := users[i]
+		ctx := lazyContext(func() jsruntime.RuleContext { return g.buildJSRuleContext(&user) })
 
 		// Evaluate each per-rule executor
 		for ruleID, executor := range executors {
-			actions, err := executor.EvaluateRules(ctx, false)
+			actions, unknown, err := g.evaluate(executor, pass, user.ID, ctx, false)
 			if err != nil {
 				logger.Errorf("Error evaluating JS rules for user %d (rule executor %d): %v", user.ID, ruleID, err)
+				continue
+			}
+			if unknown {
 				continue
 			}
 
@@ -381,13 +441,20 @@ func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors
 		return 0, fmt.Errorf("primary user %d not found among users", primaryID)
 	}
 
-	ctx := g.buildSharedContext(users, primary)
+	// A context routine sees the merged context; a bridge routine is
+	// evaluated for the primary owner, and the managers answer with the
+	// workspace's data (PA-BR-07).
+	ctx := lazyContext(func() jsruntime.RuleContext { return g.buildSharedContext(users, primary) })
+	pass := g.newPass()
 	actionsCreated := 0
 
 	for ruleID, executor := range executors {
-		actions, err := executor.EvaluateRules(ctx, false)
+		actions, unknown, err := g.evaluate(executor, pass, primaryID, ctx, false)
 		if err != nil {
 			logger.Errorf("Error evaluating shared JS rule %d: %v", ruleID, err)
+			continue
+		}
+		if unknown {
 			continue
 		}
 

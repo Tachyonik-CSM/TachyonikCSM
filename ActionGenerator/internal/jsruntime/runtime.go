@@ -491,6 +491,13 @@ type JSRuleExecutor struct {
 	// validation does not reject the `return false` the system prompt tells the
 	// model to write for it. See SetOnDemand.
 	onDemand bool
+	// contract is 2 for a bridge routine (it reads through the platform API
+	// bridge), 1 for a context routine. See bridge.go.
+	contract int
+	// operations are the bridge operations a bridge routine was recorded as
+	// calling when it was generated (PA-RT-04); what its triggers are derived
+	// from (PA-RT-07).
+	operations []string
 }
 
 // New creates a new JSRuleExecutor. execTimeout bounds a single JS execution:
@@ -562,15 +569,17 @@ func runGuarded(vm *goja.Runtime, timeout time.Duration, fn func() (goja.Value, 
 
 // LoadFromString parses JavaScript code and extracts the rules array
 func (e *JSRuleExecutor) LoadFromString(code string) error {
-	_, loaded, err := e.instantiate(code)
+	vm, loaded, err := e.instantiate(code)
 	if err != nil {
 		return err
 	}
+	contract := routineContract(vm)
 
 	// Atomically swap rules
 	e.mu.Lock()
 	e.code = code
 	e.rules = loaded
+	e.contract = contract
 	e.mu.Unlock()
 
 	logger.Infof("Loaded %d JS rules", len(loaded))
@@ -779,72 +788,80 @@ func (e *JSRuleExecutor) EvaluateRules(ctx RuleContext, force bool) ([]actionman
 			}
 		}
 
-		// Call createAction function, and read its result, inside one budget:
-		// Export runs whatever getters the returned object defines.
-		var actionObj interface{}
-		_, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
-			actionResult, aerr := rule.actionFn(goja.Undefined(), ctxVal)
-			if aerr != nil {
-				return nil, aerr
-			}
-			actionObj = actionResult.Export()
-			return nil, nil
-		})
+		action, err := e.raise(vm, rule, ctxVal)
 		if err != nil {
-			logger.Errorf("JS rule '%s' createAction error: %v", rule.name, err)
+			logger.Errorf("JS rule '%s': %v", rule.name, err)
 			continue
 		}
-
-		actionMap, ok := actionObj.(map[string]interface{})
-		if !ok {
-			logger.Errorf("JS rule '%s' createAction did not return an object", rule.name)
-			continue
-		}
-
-		logger.Debugf("JS rule '%s' createAction returned: %+v", rule.name, actionMap)
-
-		action := actionmanager.CreateActionRequest{
-			Title:       jsmap.String(actionMap, "title"),
-			Type:        jsmap.String(actionMap, "type"),
-			Description: jsmap.String(actionMap, "description"),
-			Status:      jsmap.String(actionMap, "status"),
-			Priority:    jsmap.Int(actionMap, "priority"),
-			AssignedTo:  jsmap.String(actionMap, "assignedTo"),
-			IssuedBy:    jsmap.String(actionMap, "issuedBy"),
-			Trigger:     jsmap.String(actionMap, "trigger"),
-		}
-
-		// Which of the rule's options do not apply to this user. Evaluated
-		// here because this is where the context lives; an option whose
-		// condition throws is left visible, since hiding a step the user needs
-		// is worse than offering one they do not.
-		if hidden := e.hiddenOptions(vm, rule, ctxVal); hidden != nil {
-			action.HiddenOptions = &hidden
-		}
-
-		if action.Status == "" {
-			action.Status = "New"
-		}
-		if action.IssuedBy == "" {
-			action.IssuedBy = "ActionGenerator"
-		}
-		if action.AssignedTo == "" {
-			action.AssignedTo = "User"
-		}
-
-		// What comes back is whatever the model wrote, reaching a database and
-		// then every screen that lists actions. Nothing downstream constrains
-		// it: ActionManager checks that title, type and status are non-empty
-		// and nothing about what they contain.
-		if err := validateAction(&action, rule.name); err != nil {
-			logger.Errorf("JS rule '%s' produced an invalid action, skipping it: %v", rule.name, err)
-			continue
-		}
-
-		actions = append(actions, action)
+		actions = append(actions, *action)
 	}
 
 	return actions, nil
+}
+
+// raise runs a rule's createAction and its option conditions against the
+// argument check() was given — the ctx, or a bridge routine's api — and turns
+// the result into a checked action request (AG-IF-11 to -14).
+func (e *JSRuleExecutor) raise(vm *goja.Runtime, rule jsRule, arg goja.Value) (*actionmanager.CreateActionRequest, error) {
+	// Call createAction function, and read its result, inside one budget:
+	// Export runs whatever getters the returned object defines.
+	var actionObj interface{}
+	_, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
+		actionResult, aerr := rule.actionFn(goja.Undefined(), arg)
+		if aerr != nil {
+			return nil, aerr
+		}
+		actionObj = actionResult.Export()
+		return nil, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("createAction error: %w", err)
+	}
+
+	actionMap, ok := actionObj.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("createAction did not return an object")
+	}
+
+	logger.Debugf("JS rule '%s' createAction returned: %+v", rule.name, actionMap)
+
+	action := actionmanager.CreateActionRequest{
+		Title:       jsmap.String(actionMap, "title"),
+		Type:        jsmap.String(actionMap, "type"),
+		Description: jsmap.String(actionMap, "description"),
+		Status:      jsmap.String(actionMap, "status"),
+		Priority:    jsmap.Int(actionMap, "priority"),
+		AssignedTo:  jsmap.String(actionMap, "assignedTo"),
+		IssuedBy:    jsmap.String(actionMap, "issuedBy"),
+		Trigger:     jsmap.String(actionMap, "trigger"),
+	}
+
+	// Which of the rule's options do not apply to this user. Evaluated
+	// here because this is where the context lives; an option whose
+	// condition throws is left visible, since hiding a step the user needs
+	// is worse than offering one they do not.
+	if hidden := e.hiddenOptions(vm, rule, arg); hidden != nil {
+		action.HiddenOptions = &hidden
+	}
+
+	if action.Status == "" {
+		action.Status = "New"
+	}
+	if action.IssuedBy == "" {
+		action.IssuedBy = "ActionGenerator"
+	}
+	if action.AssignedTo == "" {
+		action.AssignedTo = "User"
+	}
+
+	// What comes back is whatever the model wrote, reaching a database and
+	// then every screen that lists actions. Nothing downstream constrains
+	// it: ActionManager checks that title, type and status are non-empty
+	// and nothing about what they contain.
+	if err := validateAction(&action, rule.name); err != nil {
+		return nil, fmt.Errorf("produced an invalid action, skipping it: %w", err)
+	}
+	return &action, nil
 }
 
 // mockOrganisation is the empty organisation with the given fields set. Built
@@ -1297,6 +1314,13 @@ type ValidationReport struct {
 	// Per rule, in load order: what check() decided in each scenario and what
 	// it read. Written to the routine log so a result explains itself.
 	Rules []RuleValidation
+	// Operations are the bridge operations a bridge routine called in any
+	// scenario, sorted; stored with the routine (PA-RT-04). Empty for a
+	// context routine.
+	Operations []string
+	// Bridge marks the report of a bridge routine: its reads are
+	// "operation:path", not ctx paths.
+	Bridge bool
 }
 
 // Log renders the report for the routine log.
@@ -1312,21 +1336,36 @@ func (r ValidationReport) Log() string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString("Validation record — check() in each mock scenario:\n")
+		if r.Bridge {
+			b.WriteString("Validation record — check() in each mock scenario, against the API's mock answers:\n")
+		} else {
+			b.WriteString("Validation record — check() in each mock scenario:\n")
+		}
 		for _, rule := range r.Rules {
 			fmt.Fprintf(&b, "  rule '%s'\n", rule.Name)
 			for i, d := range rule.Decisions {
 				fmt.Fprintf(&b, "    %d %-66s %s\n", i+1, d.Label, d.Result)
 			}
+			paths := ctxPaths
+			if r.Bridge {
+				paths = func(p []string) []string { return p }
+			}
 			if len(rule.FieldsRead) > 0 {
-				fmt.Fprintf(&b, "    fields read: %s\n", strings.Join(ctxPaths(rule.FieldsRead), ", "))
+				fmt.Fprintf(&b, "    fields read: %s\n", strings.Join(paths(rule.FieldsRead), ", "))
 			} else {
 				b.WriteString("    fields read: none\n")
 			}
 			if len(rule.Missing) > 0 {
-				fmt.Fprintf(&b, "    fields that do not exist: %s\n", strings.Join(ctxPaths(rule.Missing), ", "))
+				label := "fields that do not exist"
+				if r.Bridge {
+					label = "not allowed by the API documents"
+				}
+				fmt.Fprintf(&b, "    %s: %s\n", label, strings.Join(paths(rule.Missing), "; "))
 			}
 		}
+	}
+	if len(r.Operations) > 0 {
+		fmt.Fprintf(&b, "\nAPI operations called: %s\n", strings.Join(r.Operations, ", "))
 	}
 	return b.String()
 }

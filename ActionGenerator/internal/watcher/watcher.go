@@ -94,6 +94,10 @@ type Watcher struct {
 	serviceKey string
 	triggers   map[MessageType]bool
 	onChange   func()
+	// extra decides about message types the fixed set does not name: those
+	// the API catalogue lists as invalidating what an active bridge routine
+	// reads (PA-RT-07). Nil: none.
+	extra func(messageType string) bool
 
 	ws *wswatcher.Watcher
 }
@@ -116,6 +120,12 @@ func NewFor(name, baseURL, internalServiceKey string, triggers []MessageType, on
 		triggers:   set,
 		onChange:   onChange,
 	}, nil
+}
+
+// SetExtraTriggers adds message types decided at the time a message
+// arrives, from the API catalogue and the active routines. Call before Start.
+func (w *Watcher) SetExtraTriggers(extra func(messageType string) bool) {
+	w.extra = extra
 }
 
 // Start opens the connection and begins reacting to events.
@@ -144,7 +154,10 @@ func (w *Watcher) resync() {
 // every one of them means the context may have moved, and the answer is always
 // to read it again.
 func (w *Watcher) dispatch(msg wswatcher.Message) {
-	if w.onChange == nil || !w.triggers[MessageType(msg.Type)] {
+	if w.onChange == nil {
+		return
+	}
+	if !w.triggers[MessageType(msg.Type)] && (w.extra == nil || !w.extra(msg.Type)) {
 		return
 	}
 	logger.Debugf("%s: received %s event", w.name, msg.Type)

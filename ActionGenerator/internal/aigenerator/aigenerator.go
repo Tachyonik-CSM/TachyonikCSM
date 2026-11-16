@@ -26,11 +26,13 @@ import (
 
 	"tachyonik/actiongenerator/internal/actionrulewatcher"
 	"tachyonik/actiongenerator/internal/aimanager"
+	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/codegen"
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/actiongenerator/internal/jsruntime"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aipick"
+	"tachyonik/lib/apibridge"
 	"tachyonik/lib/logger"
 )
 
@@ -49,6 +51,41 @@ type AIActionGenerator struct {
 	rules             map[int64]*aimanager.ActionRule     // by ID
 	executors         map[int64]*jsruntime.JSRuleExecutor // by rule ID
 	mu                sync.RWMutex
+	// catalogue is the platform API catalogue bridge routines are generated
+	// against, validated against and checked against; nil: context routines
+	// only.
+	catalogue *catalogue.Holder
+}
+
+// APICataloguePlaceholder is where the system prompt wants the catalogue's
+// operations: replaced, at generation, with what the routine may call
+// (PA-RT-05). A system prompt without it generates context routines, as
+// before — applying a prompt with it is what switches generation over.
+const APICataloguePlaceholder = "{{API_CATALOGUE}}"
+
+// SetCatalogue gives the generator the platform API catalogue.
+func (ag *AIActionGenerator) SetCatalogue(c *catalogue.Holder) {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	ag.catalogue = c
+}
+
+// Triggers are the WebSocket message types after which an active bridge
+// routine's answers may differ: the x-invalidated-by of every operation it
+// calls (PA-RT-07).
+func (ag *AIActionGenerator) Triggers() map[string]bool {
+	ag.mu.RLock()
+	defer ag.mu.RUnlock()
+	set := map[string]bool{}
+	if ag.catalogue == nil {
+		return set
+	}
+	for _, e := range ag.executors {
+		if e.IsBridge() {
+			ag.catalogue.InvalidatedBy(e.Operations(), set)
+		}
+	}
+	return set
 }
 
 // New creates a new AIActionGenerator.
@@ -110,6 +147,26 @@ func (ag *AIActionGenerator) loadActiveRoutine(rule *aimanager.ActionRule) {
 		logger.Errorf("Failed to load routine %d code for action rule %d (%s): %v",
 			routine.ID, rule.ID, rule.Title, err)
 		return
+	}
+
+	// A bridge routine runs only while the catalogue still offers what it
+	// calls (PA-RT-06): one that lost an operation would fail on every
+	// evaluation; it is held back and said so instead.
+	if executor.IsBridge() {
+		ops := routine.Operations()
+		executor.SetOperations(ops)
+		if ag.catalogue != nil && ag.catalogue.Loaded() {
+			if missing := ag.catalogue.Missing(ops); len(missing) > 0 {
+				logger.Errorf("Holding back routine %d of action rule %d (%s): it calls %s, which the API catalogue no longer has — regenerate the routine",
+					routine.ID, rule.ID, rule.Title, strings.Join(missing, ", "))
+				delete(ag.executors, rule.ID)
+				return
+			}
+			if dep := ag.catalogue.Deprecated(ops); len(dep) > 0 {
+				logger.Warnf("Routine %d of action rule %d (%s) calls deprecated operations %s — regenerate it before they go",
+					routine.ID, rule.ID, rule.Title, strings.Join(dep, ", "))
+			}
+		}
 	}
 
 	ag.executors[rule.ID] = executor
@@ -224,7 +281,20 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for action rule %d with %s", rule.ID, choice.Describe())
 
-	codeGen := codegen.New(choice.Client, ruleModel, choice.SystemPrompt)
+	// A system prompt asking for the catalogue gets it: the operations a
+	// bridge routine may call, rendered from the managers' documents.
+	systemPrompt := choice.SystemPrompt
+	bridgePrompt := strings.Contains(systemPrompt, APICataloguePlaceholder)
+	if bridgePrompt {
+		ag.mu.RLock()
+		cat := ag.catalogue
+		ag.mu.RUnlock()
+		if cat == nil || !cat.Loaded() {
+			return nil, fmt.Errorf("cannot generate the routine for rule %d: the system prompt asks for the platform API catalogue, which is not loaded", rule.ID)
+		}
+		systemPrompt = strings.ReplaceAll(systemPrompt, APICataloguePlaceholder, cat.Render())
+	}
+	codeGen := codegen.New(choice.Client, ruleModel, systemPrompt)
 
 	// The options this rule offers, with the condition each is offered under.
 	// They go into the prompt so the generated routine can decide per option
@@ -274,7 +344,20 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 	// the routine either way: for a failure it says why, and for a pass it
 	// records what each scenario decided and which fields were read, so a
 	// routine that never fires can be understood without re-running anything.
-	report := tempExecutor.ValidateWithMockCtxReport()
+	var report jsruntime.ValidationReport
+	var fingerprint string
+	if tempExecutor.IsBridge() {
+		var b *apibridge.Bridge
+		ag.mu.RLock()
+		cat := ag.catalogue
+		ag.mu.RUnlock()
+		if cat != nil {
+			b, fingerprint = cat.Bridge()
+		}
+		report = tempExecutor.ValidateBridge(b)
+	} else {
+		report = tempExecutor.ValidateWithMockCtxReport()
+	}
 	for _, note := range report.Notes {
 		logger.Infof("  Validation note for rule %d: %s", rule.ID, note)
 	}
@@ -283,12 +366,12 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 		for i, e := range report.Errors {
 			logger.Errorf("  Validation error %d for rule %d: %v", i+1, rule.ID, e)
 		}
-		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", report.Log())
+		ag.storeRoutineAPI(code, rule.ID, version, ruleModel, sha256Hex, "failed", report.Log(), fingerprint, report.Operations)
 		return nil, combinedErr
 	}
 
 	// Store as passed routine in AIManager
-	routine, err := ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "passed", report.Log())
+	routine, err := ag.storeRoutineAPI(code, rule.ID, version, ruleModel, sha256Hex, "passed", report.Log(), fingerprint, report.Operations)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store routine for rule %d: %w", rule.ID, err)
 	}
@@ -299,16 +382,24 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 
 // storeRoutine creates a routine in AIManager with the given parameters.
 func (ag *AIActionGenerator) storeRoutine(code string, ruleID int64, version, model, sha256Hex, status, log string) (*aimanager.Routine, error) {
+	return ag.storeRoutineAPI(code, ruleID, version, model, sha256Hex, status, log, "", nil)
+}
+
+// storeRoutineAPI stores a routine with what a bridge routine was generated
+// against: the catalogue fingerprint and the operations it calls (PA-RT-04).
+func (ag *AIActionGenerator) storeRoutineAPI(code string, ruleID int64, version, model, sha256Hex, status, log, fingerprint string, operations []string) (*aimanager.Routine, error) {
 	routine, err := ag.aiMgrClient.CreateRoutine(aimanager.CreateRoutineRequest{
-		Code:        code,
-		Rule:        ruleID,
-		Type:        "ActionGenerator",
-		Version:     version,
-		Model:       model,
-		SHA256:      sha256Hex,
-		GeneratedAt: time.Now().Format(time.RFC3339),
-		Status:      status,
-		Log:         log,
+		APIFingerprint: fingerprint,
+		APIOperations:  operations,
+		Code:           code,
+		Rule:           ruleID,
+		Type:           "ActionGenerator",
+		Version:        version,
+		Model:          model,
+		SHA256:         sha256Hex,
+		GeneratedAt:    time.Now().Format(time.RFC3339),
+		Status:         status,
+		Log:            log,
 	})
 	if err != nil {
 		logger.Errorf("Failed to store routine in AIManager: %v", err)

@@ -187,6 +187,10 @@ actionmanager:    # where actions are created and withdrawn
   url: http://localhost:8082
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
+toolmanager:      # capabilities.get, for bridge routines
+  url: http://localhost:8086
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
+
 ai_manager:       # rules, routines, AI assignment and system prompt
   url: http://localhost:8085
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
@@ -231,6 +235,8 @@ Environment variables override configuration file values:
 | `ACTIONMANAGER_URL` | ActionManager API URL | `http://localhost:8082` |
 | `ACTIONMANAGER_INTERNAL_SERVICE_KEY` | ActionManager service key | - |
 | `ACTIONGENERATOR_AI_MANAGER_URL` | AIManager API URL | `http://localhost:8085` |
+| `TOOLMANAGER_URL` | ToolManager API URL (bridge routines) | `http://localhost:8086` |
+| `TOOLMANAGER_INTERNAL_SERVICE_KEY` | ToolManager service key | - |
 | `AIMANAGER_INTERNAL_SERVICE_KEY` | AIManager service key | - |
 | `ACTIONGENERATOR_AI_TIMEOUT_SECONDS` | HTTP timeout for AI code-generation requests | `300` |
 | `ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS` | Budget for a single JS execution — loading a routine, one `check()`, one `createAction()`. Routine code is AI-generated and goja cannot be preempted, so without this a rule that never terminates hangs its goroutine for the life of the process. `0` disables the guard | `5` |
@@ -416,6 +422,44 @@ One copy of the context shape is still kept by hand: AIManager's dry-run default
 `RuleContext` belongs there too. The AI writes rules from a system prompt stored in AIManager
 (Settings → ActionGenerator → System Prompt) that documents this context — a field the prompt does
 not mention is a field no generated rule will use, however well it is populated.
+
+### Bridge routines
+
+A routine can also read the platform's data through the **API bridge**
+instead of a rule context
+([docs/specs/01-platform-api-catalogue.md](../docs/specs/01-platform-api-catalogue.md)).
+Such a routine declares `var routineContract = 2;`, and its `check(api)`,
+`createAction(api)` and option conditions call
+`api.<namespace>.<verb>({…})`: for example `api.assets.stats()` or
+`api.capabilities.get()`. Each call goes to the manager for the user being
+evaluated.
+
+Context routines and bridge routines run side by side.
+
+- **Catalogue.** At startup ActionGenerator reads the platform API catalogue
+  from AIManager and builds the bridge from it, read-only. It does so again
+  on `API_CATALOGUE_UPDATED`. A routine whose operations the catalogue no
+  longer offers is held back, and the log says so.
+- **Generation.** A system prompt containing `{{API_CATALOGUE}}` gets the
+  catalogue's operations in its place: names, parameters, answer fields and
+  descriptions. Applying such a prompt (`prompts/actiongenerator.txt`) is what
+  switches generation to bridge routines. Without the placeholder, routines
+  are generated as context routines, as before.
+- **Validation.** Every rule runs against the managers' mock answers for each
+  scenario. A routine fails when it calls an operation it may not, passes an
+  argument the operation doesn't have, or reads a field the answer doesn't
+  have. The routine is stored with the operations it called and the catalogue
+  fingerprint.
+- **Evaluation.**
+  - One bridge pass per evaluation pass: the same call is answered once.
+  - In a shared workspace, the rule runs once for the primary owner, and the
+    managers answer with the workspace's data.
+  - A rule whose `check()` or `createAction()` throws, typically because a
+    call failed, is left **undecided**: nothing is created and nothing is
+    withdrawn.
+- **Triggers.** A bridge routine is re-evaluated on the messages its
+  operations list as `x-invalidated-by`, from any manager. For that,
+  ActionGenerator also connects to ActionManager's WebSocket.
 
 ### Adding a new rule
 

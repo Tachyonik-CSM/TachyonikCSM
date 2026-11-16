@@ -46,6 +46,14 @@ actionmanager:
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ActionManager's internal_service_key
                                                             # Env: ACTIONMANAGER_INTERNAL_SERVICE_KEY
 
+# ToolManager answers what a user's tools can do (capabilities.get) to routines
+# that read through the platform API bridge.
+toolmanager:
+  url: http://localhost:8086  # ToolManager API URL (default: http://localhost:8086)
+                              # Env: TOOLMANAGER_URL
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ToolManager's internal_service_key
+                                                            # Env: TOOLMANAGER_INTERNAL_SERVICE_KEY
+
 # AIManager holds the action rules, the JavaScript routines generated from them,
 # and this module's AI assignment and system prompt — all retrieved at runtime
 # and refreshed live. Generated routines are stored back here, so this is the
