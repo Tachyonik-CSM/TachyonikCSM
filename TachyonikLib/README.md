@@ -100,16 +100,16 @@ All twelve service modules depend on this library:
 |--------|---------------|
 | ActionExecutor | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `jsctxtrace`, `aiclient/*` |
 | ActionGenerator | `logger`, `heartbeat`, `aimwatcher`, `jsctxtrace`, `aiclient/*` |
-| ActionManager | `logger` |
-| AIManager | `logger`, `textextract`, `aiclient/*`, `apicatalogue`, `apiregister` (its request type, and in a test) |
+| ActionManager | `logger` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
+| AIManager | `logger`, `textextract`, `aiclient/*`, `apicatalogue`, `apiregister` (its request type), `apibridge` (in tests) |
 | AssetManager | `logger`, `systemmanager`, `apiregister`, `apicatalogue` and `apibridge` (in tests) |
 | ChatAI | `logger`, `aimwatcher`, `providererr` |
-| ResourceManager | `logger`, `systemmanager`, `proxyrelease` |
+| ResourceManager | `logger`, `systemmanager`, `proxyrelease` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 | SourceAnalyser | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
 | SourceImporter | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
-| SystemManager | `logger` |
+| SystemManager | `logger` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 | TachyonikProxy | `logger` (and `proxyrelease` in a test, to check both copies of the release key agree) |
-| ToolManager | `logger`, `aimwatcher`, `providererr` |
+| ToolManager | `logger`, `aimwatcher`, `providererr` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 
 ## Versioning
 

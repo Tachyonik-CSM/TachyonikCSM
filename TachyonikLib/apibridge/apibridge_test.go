@@ -224,12 +224,15 @@ func TestUnknownArgumentThrows(t *testing.T) {
 // PA-BR-04: only documented fields reach the routine.
 func TestUndocumentedFieldsAreDropped(t *testing.T) {
 	m := newManager(t)
+	// Field by field: a Go map has no key order, so JSON.stringify of one
+	// does not either.
 	v, err := run(t, bridge(t, m, ReadOnly).NewPass(),
-		`var a = api.things.list(); JSON.stringify(a)`)
+		`var a = api.things.list(); var t = a.things[0];
+		 [Object.keys(a).sort().join("+"), Object.keys(t).sort().join("+"), t.id, t.name].join(",")`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != `{"things":[{"id":1,"name":"a"}]}` {
+	if v != "things,id+name,1,a" {
 		t.Errorf("answer = %v", v)
 	}
 }

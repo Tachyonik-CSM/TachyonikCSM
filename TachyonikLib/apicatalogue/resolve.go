@@ -66,6 +66,7 @@ func (r *resolver) operation(method, path string, raw map[string]interface{}, sh
 	op.Deprecated, _ = raw["deprecated"].(bool)
 	op.Bridge, _ = raw["x-bridge"].(string)
 	op.MCP, _ = raw["x-mcp"].(string)
+	op.Unscoped, _ = raw["x-bridge-unscoped"].(bool)
 	if list, ok := raw["x-invalidated-by"].([]interface{}); ok {
 		for _, v := range list {
 			s, ok := v.(string)

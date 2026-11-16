@@ -78,7 +78,11 @@ type Operation struct {
 	Bridge        string
 	MCP           string
 	InvalidatedBy []string
-	Parameters    []*Parameter
+	// Unscoped marks a bridge operation whose answer concerns no user — the
+	// latest proxy release, a catalogue of tool kinds — so nothing in it is
+	// bound to the user (x-bridge-unscoped, PA-CAT-05).
+	Unscoped   bool
+	Parameters []*Parameter
 	// RequestBody is the JSON request body's schema, or nil.
 	RequestBody *Schema
 	// Response is the schema of the first 2xx JSON answer, or nil.
