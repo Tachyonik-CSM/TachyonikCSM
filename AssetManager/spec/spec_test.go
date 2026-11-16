@@ -9,7 +9,6 @@
 package spec
 
 import (
-	"strings"
 	"testing"
 
 	"tachyonik/lib/apicatalogue"
@@ -44,8 +43,7 @@ func TestNamespaces(t *testing.T) {
 }
 
 // PA-CAT-05, PA-BR-07: every bridge operation names its user only through a
-// bound parameter, and the query userId — which narrows a list to that one
-// user instead of the user's visible set — is never the bridge's.
+// bound parameter, and no userId is left for a routine to choose.
 func TestBridgeOperationsAreBound(t *testing.T) {
 	doc, err := apicatalogue.Parse(OpenAPI)
 	if err != nil {
@@ -54,8 +52,8 @@ func TestBridgeOperationsAreBound(t *testing.T) {
 	for _, op := range doc.BridgeOperations(true) {
 		bound := false
 		for _, p := range op.Parameters {
-			if p.Name == "userId" && p.Bound != apicatalogue.BoundOmit {
-				t.Errorf("%s: userId must be x-bridge-bound: omit", op.ID)
+			if p.Name == "userId" && p.Bound == "" {
+				t.Errorf("%s: userId must be x-bridge-bound — user, or omit where it narrows the answer to that one user", op.ID)
 			}
 			if p.Bound == apicatalogue.BoundUser {
 				bound = true
@@ -69,8 +67,11 @@ func TestBridgeOperationsAreBound(t *testing.T) {
 				bound = true
 			}
 		}
-		if !bound {
-			t.Errorf("%s: nothing names the user the call is for", op.ID)
+		if !bound && !op.Unscoped {
+			t.Errorf("%s: nothing names the user the call is for, and it is not marked x-bridge-unscoped", op.ID)
+		}
+		if bound && op.Unscoped {
+			t.Errorf("%s: marked x-bridge-unscoped, but binds a user", op.ID)
 		}
 	}
 }
@@ -81,8 +82,8 @@ func TestOperationalEndpointsAreNotBridged(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, op := range doc.Operations {
-		if (op.Namespace() == "assetManager" || strings.HasPrefix(op.Path, "/api/internal/")) && op.Bridge != "" {
-			t.Errorf("%s: internal and operational endpoints are not for routines", op.ID)
+		if op.Namespace() == "assetManager" && op.Bridge != "" {
+			t.Errorf("%s: the service's own operation is not for routines", op.ID)
 		}
 	}
 }

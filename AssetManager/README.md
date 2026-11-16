@@ -148,7 +148,8 @@ AIManager reports no appliance license, so no cap applies.
 ### Platform API catalogue
 
 At startup AssetManager registers its API document, `spec/openapi.yaml`
-(embedded in the binary), with AIManager at `aimanager.url`, in the background
+(embedded in the binary by `spec/spec.go`), with AIManager
+at `aimanager.url`, in the background
 and retried until AIManager takes it (AM-OPS-18). That is how generated
 routines and the WebUI learn what AssetManager offers: see
 [docs/specs/01-platform-api-catalogue.md](../docs/specs/01-platform-api-catalogue.md).
