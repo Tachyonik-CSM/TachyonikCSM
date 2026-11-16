@@ -25,6 +25,8 @@ import (
 	"tachyonik/assetmanager/internal/systemmanager"
 	"tachyonik/assetmanager/internal/version"
 	"tachyonik/assetmanager/internal/websocket"
+	"tachyonik/assetmanager/spec"
+	"tachyonik/lib/apiregister"
 	"tachyonik/lib/logger"
 )
 
@@ -157,6 +159,21 @@ func main() {
 	// blocking for serving requests (it touches an existing populated
 	// table; clients can wait for it transitively).
 	handler.MarkReady()
+
+	// Register the API document with AIManager, which keeps the platform API
+	// catalogue the API bridge and the WebUI read (PA-REG-01). In the
+	// background, and retried: serving does not wait for AIManager.
+	if cfg.AIManager.URL != "" {
+		apiregister.Start(context.Background(), apiregister.Config{
+			Module:       spec.Module,
+			Version:      version.Version,
+			Document:     spec.OpenAPI,
+			AIManagerURL: cfg.AIManager.URL,
+			ServiceKey:   cfg.AIManager.InternalServiceKey,
+		})
+	} else {
+		logger.Warn("aimanager.url is not set: the API document is not registered, and routines cannot use AssetManager through the API bridge")
+	}
 
 	// Start server in a goroutine
 	go func() {

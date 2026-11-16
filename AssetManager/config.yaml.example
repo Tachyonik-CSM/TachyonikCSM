@@ -54,12 +54,15 @@ systemmanager:
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match SystemManager's internal_service_key
                                                             # Env: ASSETMANAGER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY
 
-# AIManager serves this appliance's license, i.e. the licensed host-asset cap.
-# Set url on an appliance (instance mode: appliance) so the cap is enforced;
-# leave it empty on the SaaS, where there is no appliance license. If AIManager
-# cannot be reached, assets are still created (the cap fails open).
+# AIManager serves this appliance's license, i.e. the licensed host-asset cap,
+# and keeps the platform API catalogue, where AssetManager registers its API
+# document at startup (docs/specs/01-platform-api-catalogue.md). Set url in
+# both instance modes; on the SaaS, AIManager reports no appliance license, so
+# no cap applies. Left empty, there is no cap and the API document is not
+# registered. If AIManager cannot be reached, assets are still created (the cap
+# fails open) and the registration is retried in the background.
 aimanager:
-  url: ""  # AIManager API URL, e.g. http://localhost:8085 (default: empty = no instance-wide cap)
+  url: ""  # AIManager API URL, e.g. http://localhost:8085 (default: empty = no instance-wide cap, no registration)
            # Env: ASSETMANAGER_AIMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AIManager's internal_service_key
                                                             # Env: ASSETMANAGER_AIMANAGER_INTERNAL_SERVICE_KEY

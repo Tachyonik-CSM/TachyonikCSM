@@ -102,7 +102,7 @@ auth:          { jwt_secret: "...", internal_service_key: "..." }
 cors:          { allowed_origins: [http://localhost:5173] }
 rscmanager:    { url: http://localhost:8080, internal_service_key: "..." }
 systemmanager: { url: http://localhost:8083, internal_service_key: "..." }
-aimanager:     { url: "", internal_service_key: "..." }   # set url on an appliance only
+aimanager:     { url: "", internal_service_key: "..." }   # licence cap and API catalogue; set in both modes
 log:           { file_path: /home/tachyon/log/tachyonik-assetmanager.log, to_console: false, to_file: true, level: INFO }
 ```
 
@@ -142,8 +142,21 @@ owns the pairing token and fetches the license from the SaaS) and rejects the
 create with `403` once the instance-wide Host-asset count reaches the cap.
 Existing assets are never removed. Enforcement is best-effort and fails **open**
 (the create is allowed) if the license cannot be read, so a transient AIManager
-outage never blocks asset creation. Leave `aimanager.url` empty on the SaaS
-(`instance mode: saas`) — there is no appliance license to honor there.
+outage never blocks asset creation. On the SaaS (`instance mode: saas`)
+AIManager reports no appliance license, so no cap applies.
+
+### Platform API catalogue
+
+At startup AssetManager registers its API document, `spec/openapi.yaml`
+(embedded in the binary), with AIManager at `aimanager.url`, in the background
+and retried until AIManager takes it (AM-OPS-18). That is how generated
+routines and the WebUI learn what AssetManager offers: see
+[docs/specs/01-platform-api-catalogue.md](../docs/specs/01-platform-api-catalogue.md).
+Set `aimanager.url` in both instance modes; with it empty the document is not
+registered, and the log says so. The document must stay true to the code —
+`spec/spec_test.go` and `internal/handlers/api_document_test.go` fail when a
+route is undocumented, a documented route is not served, or a bridge
+operation answers differently from its schema (AM-API-14).
 
 ### Configuration Priority
 
