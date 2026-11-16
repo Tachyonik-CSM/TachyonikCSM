@@ -26,7 +26,7 @@ action requests it sends, and the WebSocket messages it reacts to, all in
 
 Topics that hold for every TachyonikCSM service — sessions and
 authentication, tenancy, migration and versioning policy — belong to the
-cross-cutting specifications under `docs/specs/` (planned) and are referred to
+cross-cutting specifications under [`docs/specs/`](../../docs/specs/README.md) and are referred to
 rather than repeated here. Where ActionGenerator relies on another module's
 behaviour, the requirement is named (for example `AM-DATA-19` in
 [AssetManager's specification](../../AssetManager/spec/README.md)).

@@ -53,7 +53,7 @@ func serve(t *testing.T, status int, body string) (*Client, *recorded) {
 }
 
 func TestGetSourcesForUser(t *testing.T) {
-	c, got := serve(t, http.StatusOK, `{"entries":[{"id":1,"filename":"scan.xml","sourceType":"nmap","status":"processed","createdAt":"2026-01-01T00:00:00Z","lastSeenAt":"2026-02-01T00:00:00Z"}],"total":1,"maxEntries":5}`)
+	c, got := serve(t, http.StatusOK, `{"sources":[{"id":1,"filename":"scan.xml","sourceType":"nmap","status":"processed","createdAt":"2026-01-01T00:00:00Z","lastSeenAt":"2026-02-01T00:00:00Z"}],"total":1,"maxSources":5}`)
 
 	sources, err := c.GetSourcesForUser(52)
 	if err != nil {
@@ -73,7 +73,7 @@ func TestGetSourcesForUser(t *testing.T) {
 // GetSourceCount reads the count and the limit out of the same reply the
 // source list comes from.
 func TestGetSourceCount(t *testing.T) {
-	c, got := serve(t, http.StatusOK, `{"entries":[{"id":1}],"total":3,"maxEntries":5}`)
+	c, got := serve(t, http.StatusOK, `{"sources":[{"id":1}],"total":3,"maxSources":5}`)
 
 	count, max, err := c.GetSourceCount(52)
 	if err != nil {

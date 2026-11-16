@@ -42,9 +42,9 @@ type Source struct {
 // envelope carries the quota alongside the entries, which is why the count and
 // the list are one call rather than two.
 type sourceListResponse struct {
-	Entries    []Source `json:"entries"`
+	Entries    []Source `json:"sources"`
 	Total      int      `json:"total"`
-	MaxEntries int      `json:"maxEntries"`
+	MaxEntries int      `json:"maxSources"`
 }
 
 // Tool is one row of a user's tool inventory.
