@@ -27,6 +27,8 @@ import (
 	"tachyonik/actionexecutor/internal/jsruntime"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aipick"
+	"tachyonik/lib/apibridge"
+	"tachyonik/lib/apiholder"
 	"tachyonik/lib/logger"
 )
 
@@ -40,6 +42,21 @@ type AIActionExecutor struct {
 	rules       map[int64]*aimanager.ExecutionRule
 	runtimes    map[int64]*jsruntime.JSExecutorRuntime
 	mu          sync.RWMutex
+	// catalogue is the platform API catalogue bridge routines are generated,
+	// validated and checked against; nil: hand-written-bridge routines only.
+	catalogue *apiholder.Holder
+}
+
+// APICataloguePlaceholder is where the system prompt wants the catalogue's
+// operations, read and write: replaced at generation (PA-RT-05). A prompt
+// without it generates routines for the hand-written bridge, as before.
+const APICataloguePlaceholder = "{{API_CATALOGUE}}"
+
+// SetCatalogue gives the executor the platform API catalogue.
+func (ag *AIActionExecutor) SetCatalogue(c *apiholder.Holder) {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	ag.catalogue = c
 }
 
 // New creates a new AIActionExecutor.
@@ -88,6 +105,25 @@ func (ag *AIActionExecutor) loadActiveRoutine(rule *aimanager.ExecutionRule) {
 			routine.ID, rule.ID, rule.Title, err)
 		delete(ag.runtimes, rule.ID)
 		return
+	}
+
+	// A bridge routine runs only while the catalogue still offers what it
+	// calls (PA-RT-06).
+	if rt.IsBridge() {
+		ops := routine.Operations()
+		rt.SetOperations(ops)
+		if ag.catalogue != nil && ag.catalogue.Loaded() {
+			if missing := ag.catalogue.Missing(ops); len(missing) > 0 {
+				logger.Errorf("Holding back routine %d of execution rule %d (%s): it calls %s, which the API catalogue no longer has — regenerate the routine",
+					routine.ID, rule.ID, rule.Title, strings.Join(missing, ", "))
+				delete(ag.runtimes, rule.ID)
+				return
+			}
+			if dep := ag.catalogue.Deprecated(ops); len(dep) > 0 {
+				logger.Warnf("Routine %d of execution rule %d (%s) calls deprecated operations %s — regenerate it before they go",
+					routine.ID, rule.ID, rule.Title, strings.Join(dep, ", "))
+			}
+		}
 	}
 
 	ag.runtimes[rule.ID] = rt
@@ -149,7 +185,19 @@ func (ag *AIActionExecutor) GenerateForRule(rule *aimanager.ExecutionRule) (*aim
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for execution rule %d with %s", rule.ID, choice.Describe())
 
-	codeGen := codegen.New(choice.Client, ruleModel, choice.SystemPrompt)
+	// A system prompt asking for the catalogue gets the operations a bridge
+	// routine may call, read and write.
+	systemPrompt := choice.SystemPrompt
+	if strings.Contains(systemPrompt, APICataloguePlaceholder) {
+		ag.mu.RLock()
+		cat := ag.catalogue
+		ag.mu.RUnlock()
+		if cat == nil || !cat.Loaded() {
+			return nil, fmt.Errorf("cannot generate the routine for rule %d: the system prompt asks for the platform API catalogue, which is not loaded", rule.ID)
+		}
+		systemPrompt = strings.ReplaceAll(systemPrompt, APICataloguePlaceholder, cat.Render())
+	}
+	codeGen := codegen.New(choice.Client, ruleModel, systemPrompt)
 
 	code, err := codeGen.Generate(*rule)
 	if err != nil {
@@ -172,7 +220,27 @@ func (ag *AIActionExecutor) GenerateForRule(rule *aimanager.ExecutionRule) (*aim
 		return nil, fmt.Errorf("rule ID validation failed for rule %d: %w", rule.ID, err)
 	}
 
-	routine, err := ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "passed", "")
+	// A bridge routine is run against the managers' mock answers first
+	// (PA-VAL-02), and stored with what it calls (PA-RT-04).
+	var log, fingerprint string
+	var operations []string
+	if tempRuntime.IsBridge() {
+		var b *apibridge.Bridge
+		ag.mu.RLock()
+		cat := ag.catalogue
+		ag.mu.RUnlock()
+		if cat != nil {
+			b, fingerprint = cat.Bridge()
+		}
+		v := tempRuntime.ValidateBridge(b, ag.cfg.ExecutionTimeout())
+		log, operations = v.Log(), v.Operations
+		if len(v.Errors) > 0 {
+			ag.storeRoutineAPI(code, rule.ID, version, ruleModel, sha256Hex, "failed", log, fingerprint, operations)
+			return nil, fmt.Errorf("validation against the API's mock answers failed for rule %d with %d errors", rule.ID, len(v.Errors))
+		}
+	}
+
+	routine, err := ag.storeRoutineAPI(code, rule.ID, version, ruleModel, sha256Hex, "passed", log, fingerprint, operations)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store routine for rule %d: %w", rule.ID, err)
 	}
@@ -183,16 +251,24 @@ func (ag *AIActionExecutor) GenerateForRule(rule *aimanager.ExecutionRule) (*aim
 }
 
 func (ag *AIActionExecutor) storeRoutine(code string, ruleID int64, version, model, sha256Hex, status, log string) (*aimanager.Routine, error) {
+	return ag.storeRoutineAPI(code, ruleID, version, model, sha256Hex, status, log, "", nil)
+}
+
+// storeRoutineAPI stores a routine with what a bridge routine was generated
+// against (PA-RT-04).
+func (ag *AIActionExecutor) storeRoutineAPI(code string, ruleID int64, version, model, sha256Hex, status, log, fingerprint string, operations []string) (*aimanager.Routine, error) {
 	routine, err := ag.aiMgrClient.CreateRoutine(aimanager.CreateRoutineRequest{
-		Code:        code,
-		Rule:        ruleID,
-		Type:        "ActionExecutor",
-		Version:     version,
-		Model:       model,
-		SHA256:      sha256Hex,
-		GeneratedAt: time.Now().Format(time.RFC3339),
-		Status:      status,
-		Log:         log,
+		APIFingerprint: fingerprint,
+		APIOperations:  operations,
+		Code:           code,
+		Rule:           ruleID,
+		Type:           "ActionExecutor",
+		Version:        version,
+		Model:          model,
+		SHA256:         sha256Hex,
+		GeneratedAt:    time.Now().Format(time.RFC3339),
+		Status:         status,
+		Log:            log,
 	})
 	if err != nil {
 		logger.Errorf("Failed to store routine in AIManager: %v", err)

@@ -14,6 +14,7 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"github.com/dop251/goja"
 
@@ -22,6 +23,8 @@ import (
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/jsruntime"
 	"tachyonik/actionexecutor/internal/runaudit"
+	libbridge "tachyonik/lib/apibridge"
+	"tachyonik/lib/apiholder"
 	"tachyonik/lib/logger"
 )
 
@@ -43,7 +46,13 @@ type Runner struct {
 	bridge   *apibridge.Bridge
 	reporter Reporter
 	audit    AuditEmitter
+	// catalogue is the platform API bridge bridge routines run on; nil:
+	// hand-written-bridge routines only.
+	catalogue *apiholder.Holder
 }
+
+// SetCatalogue gives the runner the platform API bridge.
+func (r *Runner) SetCatalogue(c *apiholder.Holder) { r.catalogue = c }
 
 // New creates a Runner. reporter and audit may be nil: the run still happens,
 // only that part of its bookkeeping is skipped.
@@ -65,17 +74,45 @@ func New(cfg *config.Config, bridge *apibridge.Bridge, reporter *aimanager.Clien
 func (r *Runner) Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, subject string) (*jsruntime.ExecResult, error) {
 	// The routine runs in a VM of its own; its api object is made for that VM.
 	// The tool calls it makes are collected for the audit entry.
-	tools := &apibridge.ToolCallLog{}
-	buildAPI := func(vm *goja.Runtime) goja.Value { return r.bridge.BuildRecording(vm, auth, tools) }
+	var buildAPI func(vm *goja.Runtime) goja.Value
+	var toolCalls func() []runaudit.ToolCall
+	if rt.IsBridge() {
+		// A bridge routine runs on the platform API bridge, read-write, for
+		// the run's user and role (PA-BR-09). Its calls end with the run.
+		var b *libbridge.Bridge
+		if r.catalogue != nil {
+			b, _ = r.catalogue.Bridge()
+		}
+		if b == nil {
+			err := errors.New("the platform API catalogue is not loaded, so a bridge routine cannot run")
+			r.report(ruleID, "error", err.Error(), nil)
+			r.record(auth.UserID, subject, err, "", "", nil)
+			return nil, err
+		}
+		pass := b.NewPass()
+		if limit := r.cfg.ExecutionTimeout(); limit > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), limit)
+			defer cancel()
+			pass.SetContext(ctx)
+		}
+		buildAPI = func(vm *goja.Runtime) goja.Value {
+			return pass.ObjectFor(vm, libbridge.Identity{UserID: auth.UserID, Role: auth.UserRole})
+		}
+		toolCalls = func() []runaudit.ToolCall { return apibridge.ToolCallsOf(pass.Calls()) }
+	} else {
+		tools := &apibridge.ToolCallLog{}
+		buildAPI = func(vm *goja.Runtime) goja.Value { return r.bridge.BuildRecording(vm, auth, tools) }
+		toolCalls = tools.Calls
+	}
 
 	result, err := rt.Run(buildAPI, r.cfg.ExecutionTimeout())
 	if err != nil {
 		r.report(ruleID, "error", err.Error(), nil)
-		r.record(auth.UserID, subject, err, "", "", tools.Calls())
+		r.record(auth.UserID, subject, err, "", "", toolCalls())
 		return nil, err
 	}
 	r.report(ruleID, result.Status, result.Message, result.Changes)
-	r.record(auth.UserID, subject, nil, result.Status, result.Message, tools.Calls())
+	r.record(auth.UserID, subject, nil, result.Status, result.Message, toolCalls())
 	return result, nil
 }
 

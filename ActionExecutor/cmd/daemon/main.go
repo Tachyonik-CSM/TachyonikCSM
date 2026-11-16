@@ -39,6 +39,8 @@ import (
 	"tachyonik/actionexecutor/internal/version"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aimwatcher"
+	libbridge "tachyonik/lib/apibridge"
+	"tachyonik/lib/apiholder"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
 	"tachyonik/lib/systemmanager"
@@ -103,6 +105,21 @@ func setupLogging(cfg *config.Config) (*os.File, error) {
 		FilePath:  cfg.Log.FilePath,
 		Level:     cfg.Log.Level,
 	})
+}
+
+// newAPICatalogue makes the holder of the platform API catalogue, read-write,
+// with where this daemon reaches each manager. A call may take as long as a
+// run: a tool run takes minutes (PA-BR-10).
+func newAPICatalogue(cfg *config.Config) *apiholder.Holder {
+	ep := func(url, key string) apiholder.Endpoint { return apiholder.Endpoint{BaseURL: url, ServiceKey: key} }
+	return apiholder.New(map[string]apiholder.Endpoint{
+		"assetmanager":    ep(cfg.AssetManager.URL, cfg.AssetManager.InternalServiceKey),
+		"systemmanager":   ep(cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey),
+		"resourcemanager": ep(cfg.ResourceManager.URL, cfg.ResourceManager.InternalServiceKey),
+		"actionmanager":   ep(cfg.ActionManager.URL, cfg.ActionManager.InternalServiceKey),
+		"aimanager":       ep(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey),
+		"toolmanager":     ep(cfg.ToolManager.URL, cfg.ToolManager.InternalServiceKey),
+	}, libbridge.ReadWrite, libbridge.Options{CallTimeout: cfg.ExecutionTimeout()})
 }
 
 func main() {
@@ -184,6 +201,28 @@ func runDaemon(cfg *config.Config) {
 	// Create AIActionExecutor with the default AI chat client
 	aiExec := aiexecutor.New(aiMgrClient, resolveAI(cfg, aiMgrClient), cfg)
 
+	// The platform API catalogue, and the read-write bridge built from it,
+	// for bridge routines (docs/specs/01-platform-api-catalogue.md). Loaded
+	// before the rules, so a bridge routine is checked against it as it loads.
+	apiCatalogue := newAPICatalogue(cfg)
+	loadAPICatalogue := func() {
+		cat, err := aiMgrClient.GetAPICatalogue()
+		if err != nil {
+			logger.Warnf("The platform API catalogue cannot be read yet, bridge routines do not run until it can: %v", err)
+			return
+		}
+		docs := make([]apiholder.Document, len(cat.Documents))
+		for i, d := range cat.Documents {
+			docs[i] = apiholder.Document{Module: d.Module, Document: d.Document}
+		}
+		if err := apiCatalogue.Load(cat.Fingerprint, docs); err != nil {
+			logger.Warnf("API catalogue: %v", err)
+		}
+		logger.Infof("API catalogue loaded: %d documents, fingerprint %.12s", len(cat.Documents), cat.Fingerprint)
+	}
+	loadAPICatalogue()
+	aiExec.SetCatalogue(apiCatalogue)
+
 	// Load execution rules and their active routines
 	if err := aiExec.LoadRules(); err != nil {
 		logger.Errorf("Failed to load execution rules: %v", err)
@@ -218,6 +257,7 @@ func runDaemon(cfg *config.Config) {
 	// to AIManager and writes the audit entry through SystemManager.
 	smClient := systemmanager.NewClient(cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey)
 	runner := run.New(cfg, bridge, aiMgrClient, smClient)
+	runner.SetCatalogue(apiCatalogue)
 
 	// Manual runs: a user's Execute arrives as a request from AIManager.
 	manualRuns := manualrun.New(aiMgrClient, aiExec, runner)
@@ -239,6 +279,14 @@ func runDaemon(cfg *config.Config) {
 	if err != nil {
 		logger.Errorf("Failed to create execution rule watcher: %v", err)
 	} else {
+		// A changed catalogue rebuilds the bridge and re-checks the active
+		// routines against it (PA-RT-06, -08).
+		erw.SetCatalogueUpdatedHandler(func() {
+			loadAPICatalogue()
+			if err := aiExec.LoadRules(); err != nil {
+				logger.Errorf("Failed to reload execution rules after the API catalogue changed: %v", err)
+			}
+		})
 		erw.SetRunRequestHandler(manualRuns.OnRequested)
 		erw.SetConnectHandler(manualRuns.PickUpPending)
 		erw.Start()

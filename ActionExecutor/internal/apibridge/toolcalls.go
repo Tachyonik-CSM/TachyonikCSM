@@ -19,6 +19,8 @@ import (
 	"sync"
 
 	"tachyonik/actionexecutor/internal/runaudit"
+
+	libbridge "tachyonik/lib/apibridge"
 )
 
 // ToolCallLog collects the tool calls of one run. Safe for concurrent use; the
@@ -73,4 +75,24 @@ func (l *ToolCallLog) recordResult(toolID int64, result map[string]interface{}) 
 		c.Reason = strings.Join(texts, "; ")
 	}
 	l.add(c)
+}
+
+// ToolCallsOf turns the toolCalls.execute calls a run made through the
+// platform API bridge into the audit entry's list, as ToolCallLog does for
+// the hand-written bridge: what ran, on which proxy, and why it failed.
+func ToolCallsOf(calls []libbridge.Call) []runaudit.ToolCall {
+	l := &ToolCallLog{}
+	for _, c := range calls {
+		if c.Operation != "toolCalls.execute" {
+			continue
+		}
+		switch {
+		case c.Err != nil:
+			l.add(runaudit.ToolCall{Tool: "a tool", Reason: c.Err.Error()})
+		default:
+			answer, _ := c.Answer.(map[string]interface{})
+			l.recordResult(0, answer)
+		}
+	}
+	return l.Calls()
 }

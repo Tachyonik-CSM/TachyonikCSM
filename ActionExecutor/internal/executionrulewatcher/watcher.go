@@ -29,6 +29,7 @@ const (
 	typeExecutionRuleUpdated = "EXECUTION_RULE_UPDATED"
 	typeExecutionRuleDeleted = "EXECUTION_RULE_DELETED"
 	typeFeedImported         = "FEED_IMPORTED"
+	typeAPICatalogueUpdated  = "API_CATALOGUE_UPDATED"
 	typeExecutionRequested   = "EXECUTION_REQUESTED"
 )
 
@@ -58,6 +59,7 @@ type Watcher struct {
 	onFeedImported func()
 	onRunRequested func(RunRequest)
 	onConnect      func()
+	onCatalogue    func()
 
 	ws *wswatcher.Watcher
 	db *wswatcher.Debouncer
@@ -100,6 +102,12 @@ func (w *Watcher) SetConnectHandler(handler func()) {
 	w.onConnect = handler
 }
 
+// SetCatalogueUpdatedHandler sets the callback fired when AIManager announces
+// a change to the platform API catalogue (PA-RT-08), in its own goroutine.
+func (w *Watcher) SetCatalogueUpdatedHandler(handler func()) {
+	w.onCatalogue = handler
+}
+
 // Start opens the connection and begins dispatching.
 func (w *Watcher) Start() {
 	w.db = wswatcher.NewDebouncer(w.debounceFor, "executionrulewatcher")
@@ -130,6 +138,11 @@ func (w *Watcher) dispatch(msg wswatcher.Message) {
 		if w.onFeedImported != nil {
 			logger.Info("FEED_IMPORTED received, triggering full reload")
 			go w.onFeedImported()
+		}
+	case typeAPICatalogueUpdated:
+		if w.onCatalogue != nil {
+			logger.Info("API_CATALOGUE_UPDATED received, reloading the API catalogue")
+			go w.onCatalogue()
 		}
 	}
 }

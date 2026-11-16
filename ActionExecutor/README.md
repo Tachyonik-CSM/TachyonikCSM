@@ -273,6 +273,40 @@ routine neither stores the output again nor deletes old copies.
 Every call blocks and throws a JavaScript error on a non-2xx answer, so a
 routine wraps calls in `try/catch` where it can recover.
 
+### Bridge routines
+
+A routine can run on the **platform API bridge** instead of the hand-written
+`api` above
+([docs/specs/01-platform-api-catalogue.md](../docs/specs/01-platform-api-catalogue.md)).
+Such a routine declares `var routineContract = 2;`. Its `run(api)` calls
+`api.<namespace>.<verb>({…, body})` with the operations the managers document,
+read and write, for example `api.assets.stats()` or
+`api.toolCalls.execute({body: {toolId: 40}})`. Routines without the
+declaration keep running on the hand-written bridge, which goes one release
+after every execution routine has been regenerated.
+
+- **Catalogue.** At startup ActionExecutor reads the platform API catalogue
+  from AIManager and builds the read-write bridge from it. It does so again
+  on `API_CATALOGUE_UPDATED`.
+- **Identity.** Every call is made for the run's user and role. The bridge
+  sets `X-User-ID`, `X-User-Role` and the owner fields itself; a routine
+  can't name anyone.
+- **Time limit.** Calls end with the run's time limit, so a tool run may take
+  as long as the run.
+- **Audit.** Tool runs appear in the run's audit entry as before, taken from
+  the bridge's record of the `toolCalls.execute` calls.
+- **Generation.** A system prompt containing `{{API_CATALOGUE}}` gets the
+  catalogue's read and write operations in its place. Applying such a prompt
+  (`prompts/actionexecutor.txt`) is the switch to bridge routines.
+- **Validation (new).** A generated bridge routine runs once per mock
+  scenario against the managers' mock answers; writes change nothing there. It
+  fails when it calls an operation it may not, passes an argument the
+  operation doesn't have, or reads a field the answer doesn't have. It is
+  stored with the operations it called and the catalogue fingerprint.
+- **Hold-back.** An active routine whose operations the catalogue no longer
+  has is held back, and the log says so.
+- **Test tab.** The routine lists' Test tabs can't run bridge routines yet.
+
 ### Time limit
 
 A real run — manual or automatic — may take `execution.timeout_seconds`

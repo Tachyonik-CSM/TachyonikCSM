@@ -62,6 +62,10 @@ type JSExecutorRuntime struct {
 	mu      sync.RWMutex
 	program *goja.Program
 	ruleIDs []int64
+	// contract is 2 for a bridge routine (bridge.go), 1 otherwise.
+	contract int
+	// operations a bridge routine was recorded as calling (PA-RT-04).
+	operations []string
 }
 
 // New creates a new JSExecutorRuntime.
@@ -76,10 +80,11 @@ func (e *JSExecutorRuntime) LoadFromString(code string) error {
 	if err != nil {
 		return fmt.Errorf("failed to execute JS code: %w", err)
 	}
-	_, executors, err := instantiate(program, LoadBudget)
+	vm, executors, err := instantiate(program, LoadBudget)
 	if err != nil {
 		return err
 	}
+	contract := routineContract(vm)
 	ids := make([]int64, len(executors))
 	for i, x := range executors {
 		ids[i] = x.ruleID
@@ -88,6 +93,7 @@ func (e *JSExecutorRuntime) LoadFromString(code string) error {
 	e.mu.Lock()
 	e.program = program
 	e.ruleIDs = ids
+	e.contract = contract
 	e.mu.Unlock()
 
 	logger.Infof("Loaded %d JS executors", len(executors))
