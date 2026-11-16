@@ -57,6 +57,9 @@ const (
 const (
 	BoundUser = "user"
 	BoundOmit = "omit"
+	// BoundRole marks a parameter the bridge sets to the role of the user
+	// the call is for, where a manager decides on it (X-User-Role).
+	BoundRole = "role"
 )
 
 // Document is one manager's parsed API document.
@@ -284,8 +287,8 @@ func checkExposure(op *Operation, where string) []error {
 		}
 	}
 	for _, p := range op.Parameters {
-		if p.Bound != "" && p.Bound != BoundUser && p.Bound != BoundOmit {
-			errs = append(errs, fmt.Errorf("%s (%s): parameter %s: x-bridge-bound %q is neither %q nor %q", where, op.ID, p.Name, p.Bound, BoundUser, BoundOmit))
+		if p.Bound != "" && p.Bound != BoundUser && p.Bound != BoundOmit && p.Bound != BoundRole {
+			errs = append(errs, fmt.Errorf("%s (%s): parameter %s: x-bridge-bound %q is not %q, %q or %q", where, op.ID, p.Name, p.Bound, BoundUser, BoundRole, BoundOmit))
 		}
 	}
 	return errs

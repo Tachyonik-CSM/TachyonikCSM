@@ -65,6 +65,8 @@ paths:
     post:
       operationId: things.create
       x-bridge: write
+      parameters:
+        - { name: X-User-Role, in: header, x-bridge-bound: role, schema: { type: string } }
       requestBody:
         content:
           application/json:
@@ -182,6 +184,30 @@ func TestCallIsMadeForTheBoundUser(t *testing.T) {
 	// Answered from the cache — and the bound value was never the routine's.
 	if q := m.last.Load().(*http.Request).URL.Query().Get("userId"); q != "42" {
 		t.Errorf("userId = %s", q)
+	}
+}
+
+// A role is bound like the user: set by the bridge from the identity, sent
+// only when known; and a write's answer is recorded with the call.
+func TestBoundRoleAndWriteAnswers(t *testing.T) {
+	m := newManager(t)
+	b := bridge(t, m, ReadWrite)
+	p := b.NewPass()
+	vm := goja.New()
+	_ = vm.Set("api", p.ObjectFor(vm, Identity{UserID: 42, Role: "admin"}))
+	if _, err := vm.RunString(`api.things.create({body: {name: "n", role: "registered"}})`); err != nil {
+		t.Fatal(err)
+	}
+	r := m.last.Load().(*http.Request)
+	if r.Header.Get("X-User-Role") != "admin" {
+		t.Errorf("X-User-Role = %q, want admin", r.Header.Get("X-User-Role"))
+	}
+	calls := p.Calls()
+	if len(calls) != 1 || calls[0].Answer == nil || calls[0].Err != nil {
+		t.Fatalf("calls = %+v", calls)
+	}
+	if got := calls[0].Answer.(map[string]interface{})["id"]; got != float64(9) {
+		t.Errorf("answer = %v", calls[0].Answer)
 	}
 }
 

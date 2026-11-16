@@ -170,10 +170,24 @@ type Pass struct {
 	calls []Call
 }
 
+// Identity is who a routine's calls are made for: the user, and the user's
+// role where a manager decides on it (x-bridge-bound: role). An empty role
+// is not sent.
+type Identity struct {
+	UserID int64
+	Role   string
+}
+
 // Call is one call a routine made, as a Pass records it.
 type Call struct {
 	Operation string
 	UserID    int64
+	// Answer is a write call's answer, as the routine got it; nil for reads
+	// and failed calls. A run's audit names what its writes did from it —
+	// which tools ran, for instance.
+	Answer interface{}
+	// Err is why a call that was made failed, or nil.
+	Err error
 	// Problem is why the call was refused before it was made — an unknown
 	// operation, an argument the operation does not have — or "".
 	Problem string
@@ -259,10 +273,15 @@ func (p *Pass) Reads() []string {
 	return out
 }
 
-// Object builds the `api` object for one runtime and one user. Every
-// evaluation gets a fresh runtime (AG-SEC-12), and so a fresh object; the
-// cache is the Pass's.
+// Object builds the `api` object for one runtime and one user, without a
+// role. Every evaluation gets a fresh runtime (AG-SEC-12), and so a fresh
+// object; the cache is the Pass's.
 func (p *Pass) Object(vm *goja.Runtime, userID int64) goja.Value {
+	return p.ObjectFor(vm, Identity{UserID: userID})
+}
+
+// ObjectFor builds the `api` object for one runtime and one identity.
+func (p *Pass) ObjectFor(vm *goja.Runtime, who Identity) goja.Value {
 	api := vm.NewObject()
 	b := p.bridge
 	names := make([]string, 0, len(b.spaces))
@@ -275,7 +294,7 @@ func (p *Pass) Object(vm *goja.Runtime, userID int64) goja.Value {
 		for _, verb := range b.spaces[ns] {
 			id := ns + "." + verb
 			_ = obj.Set(verb, func(call goja.FunctionCall) goja.Value {
-				return p.invoke(vm, id, userID, call)
+				return p.invoke(vm, id, who, call)
 			})
 		}
 		_ = api.Set(ns, obj)
@@ -283,8 +302,9 @@ func (p *Pass) Object(vm *goja.Runtime, userID int64) goja.Value {
 	return api
 }
 
-func (p *Pass) invoke(vm *goja.Runtime, id string, userID int64, call goja.FunctionCall) goja.Value {
+func (p *Pass) invoke(vm *goja.Runtime, id string, who Identity, call goja.FunctionCall) goja.Value {
 	bo := p.bridge.ops[id]
+	userID := who.UserID
 	var args map[string]interface{}
 	if a := call.Argument(0); !goja.IsUndefined(a) && !goja.IsNull(a) {
 		m, ok := a.Export().(map[string]interface{})
@@ -294,7 +314,7 @@ func (p *Pass) invoke(vm *goja.Runtime, id string, userID int64, call goja.Funct
 		}
 		args = m
 	}
-	req, problem := p.bridge.prepare(bo, userID, args)
+	req, problem := p.bridge.prepare(bo, who, args)
 	if problem != "" {
 		p.record(Call{Operation: id, UserID: userID, Problem: problem})
 		panic(vm.NewGoError(fmt.Errorf("api.%s: %s", id, problem)))
@@ -332,7 +352,11 @@ func (p *Pass) invoke(vm *goja.Runtime, id string, userID int64, call goja.Funct
 	ctx := p.ctx
 	p.mu.Unlock()
 	answer, err := p.bridge.do(ctx, bo, req)
-	p.record(Call{Operation: id, UserID: userID})
+	c := Call{Operation: id, UserID: userID, Err: err}
+	if write && err == nil {
+		c.Answer = answer
+	}
+	p.record(c)
 	if err != nil {
 		panic(vm.NewGoError(fmt.Errorf("api.%s: %w", id, err)))
 	}
@@ -400,7 +424,8 @@ func (r request) cacheKey() string {
 // prepare builds the request, or says why it cannot be made. The routine's
 // arguments are used only where the documentation has a parameter for them,
 // and never for a bound one.
-func (b *Bridge) prepare(bo *boundOp, userID int64, args map[string]interface{}) (request, string) {
+func (b *Bridge) prepare(bo *boundOp, who Identity, args map[string]interface{}) (request, string) {
+	userID := who.UserID
 	op := bo.op
 	req := request{path: op.Path, query: url.Values{}, header: http.Header{}}
 	known := map[string]bool{}
@@ -408,8 +433,11 @@ func (b *Bridge) prepare(bo *boundOp, userID int64, args map[string]interface{})
 		// A header parameter is the bridge's to set, never the routine's: a
 		// routine choosing headers could choose whom a call acts for.
 		if prm.In == "header" {
-			if prm.Bound == apicatalogue.BoundUser {
+			switch {
+			case prm.Bound == apicatalogue.BoundUser:
 				req.header.Set(prm.Name, strconv.FormatInt(userID, 10))
+			case prm.Bound == apicatalogue.BoundRole && who.Role != "":
+				req.header.Set(prm.Name, who.Role)
 			}
 			continue
 		}
@@ -423,10 +451,17 @@ func (b *Bridge) prepare(bo *boundOp, userID int64, args map[string]interface{})
 		}
 		known[prm.Name] = true
 		var value interface{}
-		if prm.Bound == apicatalogue.BoundUser {
+		switch {
+		case prm.Bound == apicatalogue.BoundUser:
 			value = userID
-		} else if v, ok := args[prm.Name]; ok && v != nil {
-			value = v
+		case prm.Bound == apicatalogue.BoundRole:
+			if who.Role != "" {
+				value = who.Role
+			}
+		default:
+			if v, ok := args[prm.Name]; ok && v != nil {
+				value = v
+			}
 		}
 		if value == nil {
 			if prm.Required {
@@ -453,8 +488,11 @@ func (b *Bridge) prepare(bo *boundOp, userID int64, args map[string]interface{})
 		if m, ok := body.(map[string]interface{}); ok {
 			m = copyMap(m)
 			for name, fs := range op.RequestBody.Properties {
-				if fs.Bound == apicatalogue.BoundUser {
+				switch {
+				case fs.Bound == apicatalogue.BoundUser:
 					m[name] = userID
+				case fs.Bound == apicatalogue.BoundRole && who.Role != "":
+					m[name] = who.Role
 				}
 			}
 			body = m
