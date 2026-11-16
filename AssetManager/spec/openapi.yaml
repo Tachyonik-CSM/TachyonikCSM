@@ -95,6 +95,8 @@ paths:
         (AM-DATA-33, -34), and with 503 while SystemManager cannot be asked
         for the limit (AM-DATA-44). Reporting an existing one again is never
         refused for a limit.
+      parameters:
+        - $ref: "#/components/parameters/actingRole"
       requestBody:
         required: true
         content:
@@ -128,6 +130,7 @@ paths:
       description: Only assets without a link are deleted; the others are skipped (AM-DATA-27, AM-SEC-10).
       requestBody: { $ref: "#/components/requestBodies/Ids" }
       parameters:
+        - $ref: "#/components/parameters/actingRole"
         - $ref: "#/components/parameters/actingUser"
       responses:
         "200": { $ref: "#/components/responses/ChangeResult" }
@@ -178,6 +181,7 @@ paths:
               properties:
                 type: { type: string, enum: [Host] }
       parameters:
+        - $ref: "#/components/parameters/actingRole"
         - $ref: "#/components/parameters/actingUser"
       responses:
         "200": { description: "The asset as it now is.", content: { application/json: { schema: { $ref: "#/components/schemas/Asset" } } } }
@@ -1159,6 +1163,12 @@ components:
       description: Whose records; from a service only, 403 from a user (AM-SEC-12). It scopes the answer to that one user, not to the user's visible set; the API bridge therefore never sends it, and names the user by `X-User-ID` instead (PA-CAT-05, PA-BR-07).
       x-bridge-bound: omit
       schema: { type: integer }
+    actingRole:
+      name: X-User-Role
+      in: header
+      description: The role of the user a service acts for, where the decision depends on it (an administrator may act on others' records). The API bridge sets it to the role of the user a routine runs for (PA-CAT-05).
+      x-bridge-bound: role
+      schema: { type: string }
     actingUser:
       name: X-User-ID
       in: header
