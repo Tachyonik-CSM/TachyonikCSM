@@ -6,6 +6,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # ActionGenerator
 
+What ActionGenerator must and must not do is specified in [spec/](spec/README.md), including the rule context routines read and the routine contract. This README covers building, configuring and running it; where the two disagree, the specification wins.
+
 ActionGenerator is a daemon that turns the state of a user's installation into
 **actions** — the concrete next steps shown in the Actions view.
 
@@ -523,8 +525,8 @@ input on both sides.
 ### Components
 
 - **aigenerator** — owns the rules and their routines: loads them from AIManager,
-  keeps one executor per rule, asks the AI for a routine when a rule has none,
-  and stores the result back with its version, model and checksum.
+  keeps one executor per rule, asks the AI for a routine when an administrator
+  requests one, and stores the result back with its version, model and checksum.
 - **codegen** — prompts the AI provider with the module system prompt and checks
   that what comes back declares exactly the rule ID it was asked for.
 - **jsruntime** — the goja runtime: builds the context, runs the routines under

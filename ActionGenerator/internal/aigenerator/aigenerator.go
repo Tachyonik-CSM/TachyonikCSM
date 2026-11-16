@@ -4,8 +4,8 @@
 
 // Package aigenerator owns the action rules and the JavaScript routines
 // generated from them. It loads the rules from AIManager, keeps one executor per
-// rule, and asks the configured AI to write a routine for a rule that has none —
-// storing the result back in AIManager with its version, model and checksum.
+// rule, and asks the configured AI to write a routine for a rule when an
+// administrator requests one — storing the result back in AIManager with its version, model and checksum.
 //
 // A generated routine is not trusted on arrival: it must name exactly the rule
 // it was generated for, and it must pass evaluation against mock contexts before
