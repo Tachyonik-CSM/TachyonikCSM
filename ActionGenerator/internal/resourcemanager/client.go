@@ -32,6 +32,10 @@ type Source struct {
 	SourceType string `json:"sourceType"`
 	Status     string `json:"status"`
 	CreatedAt  string `json:"createdAt"`
+	// LastSeenAt is when the source's content last arrived: its creation, or
+	// later when a tool delivered byte-identical output again. Null only on a
+	// row from before ResourceManager kept it.
+	LastSeenAt *string `json:"lastSeenAt"`
 }
 
 // sourceListResponse is ResourceManager's reply to the sources endpoint. The

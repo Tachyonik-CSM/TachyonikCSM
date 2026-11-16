@@ -53,7 +53,7 @@ func serve(t *testing.T, status int, body string) (*Client, *recorded) {
 }
 
 func TestGetSourcesForUser(t *testing.T) {
-	c, got := serve(t, http.StatusOK, `{"entries":[{"id":1,"filename":"scan.xml","sourceType":"nmap","status":"processed"}],"total":1,"maxEntries":5}`)
+	c, got := serve(t, http.StatusOK, `{"entries":[{"id":1,"filename":"scan.xml","sourceType":"nmap","status":"processed","createdAt":"2026-01-01T00:00:00Z","lastSeenAt":"2026-02-01T00:00:00Z"}],"total":1,"maxEntries":5}`)
 
 	sources, err := c.GetSourcesForUser(52)
 	if err != nil {
@@ -61,6 +61,9 @@ func TestGetSourcesForUser(t *testing.T) {
 	}
 	if len(sources) != 1 || sources[0].Filename != "scan.xml" {
 		t.Errorf("sources = %+v", sources)
+	}
+	if sources[0].LastSeenAt == nil || *sources[0].LastSeenAt != "2026-02-01T00:00:00Z" {
+		t.Errorf("lastSeenAt = %v, want 2026-02-01T00:00:00Z", sources[0].LastSeenAt)
 	}
 	if got.method != "GET" || got.path != "/api/sources" || got.query != "userId=52" {
 		t.Errorf("request = %s %s?%s", got.method, got.path, got.query)

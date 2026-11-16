@@ -688,12 +688,19 @@ func (g *Generator) addSources(ctx *jsruntime.RuleContext, user *systemmanager.U
 	} else {
 		ctx.Sources = make([]map[string]interface{}, len(sources))
 		for i, s := range sources {
+			// Always a timestamp: a row without one has not been seen
+			// since it was created.
+			lastSeen := s.CreatedAt
+			if s.LastSeenAt != nil && *s.LastSeenAt != "" {
+				lastSeen = *s.LastSeenAt
+			}
 			ctx.Sources[i] = map[string]interface{}{
 				"id":         s.ID,
 				"filename":   s.Filename,
 				"sourceType": s.SourceType,
 				"status":     s.Status,
 				"createdAt":  s.CreatedAt,
+				"lastSeen":   lastSeen,
 			}
 		}
 	}

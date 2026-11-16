@@ -921,8 +921,8 @@ func registeredUserScenario(questionnaires, policies map[string]interface{}) Rul
 		SourceCount: 2,
 		SourceMax:   10,
 		Sources: []map[string]interface{}{
-			{"id": int64(10), "filename": "network.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-05-01T00:00:00Z"},
-			{"id": int64(11), "filename": "vuln.nessus", "sourceType": "nessus", "status": "processed", "createdAt": "2025-05-10T00:00:00Z"},
+			{"id": int64(10), "filename": "network.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-05-01T00:00:00Z", "lastSeen": "2025-05-01T00:00:00Z"},
+			{"id": int64(11), "filename": "vuln.nessus", "sourceType": "nessus", "status": "processed", "createdAt": "2025-05-10T00:00:00Z", "lastSeen": "2025-05-10T00:00:00Z"},
 		},
 		AssetCount: 4,
 		Assets: []map[string]interface{}{
@@ -1006,9 +1006,9 @@ func MockScenarios() []MockScenario {
 			SourceCount: 3,
 			SourceMax:   3,
 			Sources: []map[string]interface{}{
-				{"id": int64(1), "filename": "scan1.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-01T00:00:00Z"},
-				{"id": int64(2), "filename": "scan2.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-15T00:00:00Z"},
-				{"id": int64(3), "filename": "scan3.xml", "sourceType": "nessus", "status": "processed", "createdAt": "2025-07-01T00:00:00Z"},
+				{"id": int64(1), "filename": "scan1.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-01T00:00:00Z", "lastSeen": "2025-07-01T00:00:00Z"},
+				{"id": int64(2), "filename": "scan2.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-15T00:00:00Z", "lastSeen": "2025-06-15T00:00:00Z"},
+				{"id": int64(3), "filename": "scan3.xml", "sourceType": "nessus", "status": "processed", "createdAt": "2025-07-01T00:00:00Z", "lastSeen": "2025-07-01T00:00:00Z"},
 			},
 			AssetCount: 2,
 			Assets: []map[string]interface{}{
