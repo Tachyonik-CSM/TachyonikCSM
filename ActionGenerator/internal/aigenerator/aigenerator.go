@@ -26,13 +26,13 @@ import (
 
 	"tachyonik/actiongenerator/internal/actionrulewatcher"
 	"tachyonik/actiongenerator/internal/aimanager"
-	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/codegen"
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/actiongenerator/internal/jsruntime"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aipick"
 	"tachyonik/lib/apibridge"
+	"tachyonik/lib/apiholder"
 	"tachyonik/lib/logger"
 )
 
@@ -54,7 +54,7 @@ type AIActionGenerator struct {
 	// catalogue is the platform API catalogue bridge routines are generated
 	// against, validated against and checked against; nil: context routines
 	// only.
-	catalogue *catalogue.Holder
+	catalogue *apiholder.Holder
 }
 
 // APICataloguePlaceholder is where the system prompt wants the catalogue's
@@ -64,7 +64,7 @@ type AIActionGenerator struct {
 const APICataloguePlaceholder = "{{API_CATALOGUE}}"
 
 // SetCatalogue gives the generator the platform API catalogue.
-func (ag *AIActionGenerator) SetCatalogue(c *catalogue.Holder) {
+func (ag *AIActionGenerator) SetCatalogue(c *apiholder.Holder) {
 	ag.mu.Lock()
 	defer ag.mu.Unlock()
 	ag.catalogue = c

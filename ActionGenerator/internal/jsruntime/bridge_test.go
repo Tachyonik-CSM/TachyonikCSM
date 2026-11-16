@@ -159,7 +159,7 @@ func TestBridgeValidation(t *testing.T) {
 	}
 
 	for name, c := range map[string]struct{ code, want string }{
-		"invented field": {strings.Replace(staleThingsRoutine, "t.stale; })", "t.stael; })", 1), "reads things[].stael"},
+		"invented field":   {strings.Replace(staleThingsRoutine, "t.stale; })", "t.stael; })", 1), "reads things[].stael"},
 		"unknown argument": {strings.Replace(staleThingsRoutine, "api.things.list().things.filter", "api.things.list({colour: 1}).things.filter", 1), `no parameter "colour"`},
 		"always true":      {strings.Replace(staleThingsRoutine, "return stale(api) > 0;", "return api.things.list() !== null;", 1), "true in every mock scenario"},
 		"reads nothing":    {strings.Replace(staleThingsRoutine, "return stale(api) > 0;", "return false;", 1), "would never fire"},

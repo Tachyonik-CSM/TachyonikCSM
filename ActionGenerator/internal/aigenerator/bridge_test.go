@@ -23,13 +23,13 @@ import (
 
 	"tachyonik/actiongenerator/internal/actionrulewatcher"
 	"tachyonik/actiongenerator/internal/aimanager"
-	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/lib/apibridge"
 	"tachyonik/lib/apicatalogue"
+	"tachyonik/lib/apiholder"
 )
 
-func thingsCatalogue(t *testing.T) *catalogue.Holder {
+func thingsCatalogue(t *testing.T) *apiholder.Holder {
 	t.Helper()
 	var ex strings.Builder
 	for _, sc := range apicatalogue.Scenarios {
@@ -58,8 +58,8 @@ paths:
               schema: { type: object, properties: { count: { type: integer, description: The number of things. } } }
               examples:
 ` + ex.String()
-	h := catalogue.New(map[string]catalogue.Endpoint{"assetmanager": {BaseURL: "http://127.0.0.1:1"}}, apibridge.Options{})
-	if err := h.Load(&aimanager.APICatalogue{Fingerprint: "fp1", Documents: []aimanager.APIDocument{{Module: "assetmanager", Document: doc}}}); err != nil {
+	h := apiholder.New(map[string]apiholder.Endpoint{"assetmanager": {BaseURL: "http://127.0.0.1:1"}}, apibridge.ReadOnly, apibridge.Options{})
+	if err := h.Load("fp1", []apiholder.Document{{Module: "assetmanager", Document: doc}}); err != nil {
 		t.Fatal(err)
 	}
 	return h

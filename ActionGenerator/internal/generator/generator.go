@@ -24,11 +24,11 @@ import (
 	"tachyonik/actiongenerator/internal/actionmanager"
 	"tachyonik/actiongenerator/internal/aimanager"
 	"tachyonik/actiongenerator/internal/assetmanager"
-	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/jsruntime"
 	"tachyonik/actiongenerator/internal/resourcemanager"
 	"tachyonik/actiongenerator/internal/systemmanager"
 	"tachyonik/lib/apibridge"
+	"tachyonik/lib/apiholder"
 	"tachyonik/lib/logger"
 )
 
@@ -69,11 +69,11 @@ type Generator struct {
 	executorMu    sync.RWMutex
 	// catalogue holds the API bridge bridge routines read through; nil runs
 	// context routines only.
-	catalogue *catalogue.Holder
+	catalogue *apiholder.Holder
 }
 
 // SetCatalogue gives the generator the API bridge for bridge routines.
-func (g *Generator) SetCatalogue(c *catalogue.Holder) { g.catalogue = c }
+func (g *Generator) SetCatalogue(c *apiholder.Holder) { g.catalogue = c }
 
 // newPass starts one evaluation pass of the API bridge, or nil without one.
 // One pass per evaluation pass: a user's answers are fetched once and shared

@@ -30,7 +30,6 @@ import (
 	"tachyonik/actiongenerator/internal/aigenerator"
 	"tachyonik/actiongenerator/internal/aimanager"
 	"tachyonik/actiongenerator/internal/assetmanager"
-	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/codegen"
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/actiongenerator/internal/generator"
@@ -41,6 +40,7 @@ import (
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aimwatcher"
 	"tachyonik/lib/apibridge"
+	"tachyonik/lib/apiholder"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
 )
@@ -200,7 +200,11 @@ func runDaemon(cfg *config.Config) {
 			logger.Warnf("The platform API catalogue cannot be read yet, bridge routines do not run until it can: %v", err)
 			return
 		}
-		if err := apiCatalogue.Load(cat); err != nil {
+		docs := make([]apiholder.Document, len(cat.Documents))
+		for i, d := range cat.Documents {
+			docs[i] = apiholder.Document{Module: d.Module, Document: d.Document}
+		}
+		if err := apiCatalogue.Load(cat.Fingerprint, docs); err != nil {
 			logger.Warnf("API catalogue: %v", err)
 		}
 		logger.Infof("API catalogue loaded: %d documents, fingerprint %.12s", len(cat.Documents), cat.Fingerprint)
@@ -418,22 +422,22 @@ func runDaemon(cfg *config.Config) {
 // newAPICatalogue makes the holder of the platform API catalogue, with where
 // this daemon reaches each manager. A bridge call is bounded by the shorter
 // of 3 seconds and the routine's own execution budget (PA-BR-10).
-func newAPICatalogue(cfg *config.Config) *catalogue.Holder {
+func newAPICatalogue(cfg *config.Config) *apiholder.Holder {
 	callTimeout := 3 * time.Second
 	if js := time.Duration(cfg.AI.JSExecTimeoutSeconds) * time.Second; js > 0 && js < callTimeout {
 		callTimeout = js
 	}
-	ep := func(s config.ServiceConfig) catalogue.Endpoint {
-		return catalogue.Endpoint{BaseURL: s.URL, ServiceKey: s.InternalServiceKey}
+	ep := func(s config.ServiceConfig) apiholder.Endpoint {
+		return apiholder.Endpoint{BaseURL: s.URL, ServiceKey: s.InternalServiceKey}
 	}
-	return catalogue.New(map[string]catalogue.Endpoint{
+	return apiholder.New(map[string]apiholder.Endpoint{
 		"assetmanager":    ep(cfg.AssetManager),
 		"systemmanager":   ep(cfg.SystemManager),
 		"resourcemanager": ep(cfg.ResourceManager),
 		"actionmanager":   ep(cfg.ActionManager),
 		"aimanager":       ep(cfg.AIManager),
 		"toolmanager":     ep(cfg.ToolManager),
-	}, apibridge.Options{CallTimeout: callTimeout})
+	}, apibridge.ReadOnly, apibridge.Options{CallTimeout: callTimeout})
 }
 
 // logConfiguration reports what the daemon is about to run with. Kept whole and

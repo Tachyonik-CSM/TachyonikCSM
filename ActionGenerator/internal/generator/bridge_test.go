@@ -17,12 +17,11 @@ import (
 	"time"
 
 	"tachyonik/actiongenerator/internal/actionmanager"
-	"tachyonik/actiongenerator/internal/aimanager"
-	"tachyonik/actiongenerator/internal/catalogue"
 	"tachyonik/actiongenerator/internal/jsruntime"
 	"tachyonik/actiongenerator/internal/systemmanager"
 	"tachyonik/lib/apibridge"
 	"tachyonik/lib/apicatalogue"
+	"tachyonik/lib/apiholder"
 )
 
 const countRoutine = `var routineContract = 2;
@@ -80,8 +79,8 @@ func withdrawals(t *testing.T, status int, body string) int32 {
 	}))
 	t.Cleanup(am.Close)
 
-	h := catalogue.New(map[string]catalogue.Endpoint{"assetmanager": {BaseURL: things.URL}}, apibridge.Options{})
-	if err := h.Load(&aimanager.APICatalogue{Documents: []aimanager.APIDocument{{Module: "assetmanager", Document: countDocument()}}}); err != nil {
+	h := apiholder.New(map[string]apiholder.Endpoint{"assetmanager": {BaseURL: things.URL}}, apibridge.ReadOnly, apibridge.Options{})
+	if err := h.Load("", []apiholder.Document{{Module: "assetmanager", Document: countDocument()}}); err != nil {
 		t.Fatal(err)
 	}
 	e := jsruntime.New(5 * time.Second)
