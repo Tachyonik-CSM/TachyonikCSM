@@ -440,6 +440,12 @@ Context routines and bridge routines run side by side.
   from AIManager and builds the bridge from it, read-only. It does so again
   on `API_CATALOGUE_UPDATED`. A routine whose operations the catalogue no
   longer offers is held back, and the log says so.
+  Each time it logs a warning for a manager that has not registered its
+  document (usually: `aimanager.url` is not set in that manager's
+  configuration) and for one it has no URL for; the latter's operations are
+  left out (PA-RT-09). Reading a name `api` does not have throws an error
+  naming it and what exists, e.g. "api.assets does not exist in the platform
+  API: its namespaces are: …" (PA-BR-11).
 - **Generation.** A system prompt containing `{{API_CATALOGUE}}` gets the
   catalogue's operations in its place: names, parameters, answer fields and
   descriptions. Applying such a prompt (`prompts/actiongenerator.txt`) is what

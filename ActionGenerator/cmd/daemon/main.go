@@ -208,6 +208,9 @@ func runDaemon(cfg *config.Config) {
 			logger.Warnf("API catalogue: %v", err)
 		}
 		logger.Infof("API catalogue loaded: %d documents, fingerprint %.12s", len(cat.Documents), cat.Fingerprint)
+		for _, gap := range apiCatalogue.Gaps() {
+			logger.Warnf("API catalogue: %s", gap)
+		}
 	}
 	loadAPICatalogue()
 	aiGen.SetCatalogue(apiCatalogue)
