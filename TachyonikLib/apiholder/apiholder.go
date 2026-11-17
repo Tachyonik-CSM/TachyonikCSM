@@ -48,6 +48,7 @@ type Holder struct {
 	fingerprint string
 	ops         map[string]*apicatalogue.Operation // the profile's operations, by id
 	modules     map[string]string                  // operation id -> module
+	gaps        []string
 }
 
 // New makes an empty holder for a bridge profile. A manager without an
@@ -64,9 +65,11 @@ func (h *Holder) Load(fingerprint string, documents []Document) error {
 	var problems []string
 	ops := map[string]*apicatalogue.Operation{}
 	owner := map[string]string{}
+	registered := map[string]bool{}
 	for _, d := range documents {
+		registered[d.Module] = true
 		ep, ok := h.endpoints[d.Module]
-		if !ok {
+		if !ok || ep.BaseURL == "" {
 			continue
 		}
 		doc, err := apicatalogue.Parse([]byte(d.Document))
@@ -84,13 +87,34 @@ func (h *Holder) Load(fingerprint string, documents []Document) error {
 	if err != nil {
 		return fmt.Errorf("the catalogue cannot be bridged: %w", err)
 	}
+	var gaps []string
+	for _, m := range apicatalogue.Modules {
+		ep, ok := h.endpoints[m]
+		switch {
+		case !registered[m]:
+			gaps = append(gaps, fmt.Sprintf("%s has not registered its API document, so routines cannot call it — is aimanager.url set in its configuration, and has it been restarted?", m))
+		case !ok || ep.BaseURL == "":
+			gaps = append(gaps, fmt.Sprintf("%s's operations are left out: no URL is configured for it here", m))
+		}
+	}
 	h.mu.Lock()
-	h.bridge, h.fingerprint, h.ops, h.modules = b, fingerprint, ops, owner
+	h.bridge, h.fingerprint, h.ops, h.modules, h.gaps = b, fingerprint, ops, owner, gaps
 	h.mu.Unlock()
 	if len(problems) > 0 {
 		return fmt.Errorf("documents left out: %s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// Gaps says, one sentence per module, which of apicatalogue.Modules the
+// loaded catalogue leaves routines without: one that has not registered its
+// document, or one this module has no URL for. Empty when every manager is
+// there. A routine generated meanwhile cannot call what is missing, and
+// fails validation if it tries.
+func (h *Holder) Gaps() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return append([]string(nil), h.gaps...)
 }
 
 // Bridge returns the current bridge and the catalogue fingerprint it was

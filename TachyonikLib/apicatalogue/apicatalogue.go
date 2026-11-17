@@ -31,6 +31,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Modules are the modules that register an API document: the managers with
+// an HTTP API (PA-CAT-01, PA-NG-03). AIManager accepts a registration from
+// these only; a routine-running module warns when one of them is missing
+// from the catalogue it loaded.
+var Modules = []string{
+	"actionmanager",
+	"aimanager",
+	"assetmanager",
+	"resourcemanager",
+	"systemmanager",
+	"toolmanager",
+}
+
 // Scenarios are the mock scenarios every bridge operation answers in, by the
 // names its examples carry (PA-VAL-01). The list with the situation each one
 // stands for is docs/specs/mock-scenarios.md; a test keeps the two equal.

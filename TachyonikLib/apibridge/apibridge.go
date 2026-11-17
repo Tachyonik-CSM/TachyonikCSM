@@ -168,6 +168,10 @@ type Pass struct {
 	ctx   context.Context
 	cache map[string]interface{} // key -> filtered answer
 	calls []Call
+	// strays are names the routine reached for on api that do not exist
+	// ("assets", "assets.count"): not calls, so never among the operations a
+	// routine is stored with, but violations all the same.
+	strays map[string]bool
 }
 
 // Identity is who a routine's calls are made for: the user, and the user's
@@ -182,9 +186,12 @@ type Identity struct {
 type Call struct {
 	Operation string
 	UserID    int64
-	// Answer is a write call's answer, as the routine got it; nil for reads
-	// and failed calls. A run's audit names what its writes did from it —
-	// which tools ran, for instance.
+	// Args are the arguments the routine passed, as it passed them.
+	Args map[string]interface{}
+	// Answer is a write call's answer, as the routine got it — and in a mock
+	// pass every call's mock answer; nil for reads of a live pass and for
+	// failed calls. A run's audit names what its writes did from it — which
+	// tools ran, for instance — and a dry run shows the mock answers.
 	Answer interface{}
 	// Err is why a call that was made failed, or nil.
 	Err error
@@ -230,6 +237,11 @@ func (p *Pass) Calls() []Call {
 // "<operation>: <field path>". Sorted, without repeats.
 func (p *Pass) Violations() []string {
 	seen := map[string]bool{}
+	p.mu.Lock()
+	for name := range p.strays {
+		seen["api."+name+": not an operation of the platform API"] = true
+	}
+	p.mu.Unlock()
 	for _, c := range p.Calls() {
 		if c.Problem != "" {
 			seen[c.Operation+": "+c.Problem] = true
@@ -281,6 +293,13 @@ func (p *Pass) Object(vm *goja.Runtime, userID int64) goja.Value {
 }
 
 // ObjectFor builds the `api` object for one runtime and one identity.
+//
+// The object and each namespace refuse a name that does not exist: reading
+// api.assets when the catalogue has no such namespace, or api.assets.count
+// when it has no such operation, throws a TypeError naming what does exist,
+// and is a violation of a mock pass. Without that the routine would read
+// undefined and fail later with a TypeError that names neither — or not fail
+// at all, where it only tests the name.
 func (p *Pass) ObjectFor(vm *goja.Runtime, who Identity) goja.Value {
 	api := vm.NewObject()
 	b := p.bridge
@@ -291,15 +310,41 @@ func (p *Pass) ObjectFor(vm *goja.Runtime, who Identity) goja.Value {
 	sort.Strings(names)
 	for _, ns := range names {
 		obj := vm.NewObject()
-		for _, verb := range b.spaces[ns] {
+		verbs := append([]string(nil), b.spaces[ns]...)
+		sort.Strings(verbs)
+		for _, verb := range verbs {
 			id := ns + "." + verb
 			_ = obj.Set(verb, func(call goja.FunctionCall) goja.Value {
 				return p.invoke(vm, id, who, call)
 			})
 		}
-		_ = api.Set(ns, obj)
+		_ = api.Set(ns, p.guard(vm, obj, ns+".", fmt.Sprintf("the namespace %q has only: %s", ns, strings.Join(verbs, ", "))))
 	}
-	return api
+	return p.guard(vm, api, "", "its namespaces are: "+strings.Join(names, ", "))
+}
+
+// guard wraps obj so that reading a name it does not have throws. Names obj
+// has through its prototype (toString, hasOwnProperty, …) are passed through,
+// and toJSON reads as undefined, so the object can still be printed.
+func (p *Pass) guard(vm *goja.Runtime, obj *goja.Object, prefix, has string) goja.Value {
+	return vm.ToValue(vm.NewProxy(obj, &goja.ProxyTrapConfig{
+		Get: func(target *goja.Object, property string, receiver goja.Value) goja.Value {
+			if v := target.Get(property); v != nil {
+				return v
+			}
+			if property == "toJSON" {
+				return goja.Undefined()
+			}
+			name := prefix + property
+			p.mu.Lock()
+			if p.strays == nil {
+				p.strays = map[string]bool{}
+			}
+			p.strays[name] = true
+			p.mu.Unlock()
+			panic(vm.NewTypeError("api.%s does not exist in the platform API: %s", name, has))
+		},
+	}))
 }
 
 func (p *Pass) invoke(vm *goja.Runtime, id string, who Identity, call goja.FunctionCall) goja.Value {
@@ -316,7 +361,7 @@ func (p *Pass) invoke(vm *goja.Runtime, id string, who Identity, call goja.Funct
 	}
 	req, problem := p.bridge.prepare(bo, who, args)
 	if problem != "" {
-		p.record(Call{Operation: id, UserID: userID, Problem: problem})
+		p.record(Call{Operation: id, UserID: userID, Args: args, Problem: problem})
 		panic(vm.NewGoError(fmt.Errorf("api.%s: %s", id, problem)))
 	}
 
@@ -326,7 +371,7 @@ func (p *Pass) invoke(vm *goja.Runtime, id string, who Identity, call goja.Funct
 	if p.scenario != "" {
 		answer, err := p.mockAnswer(bo)
 		if err != nil {
-			c := Call{Operation: id, UserID: userID}
+			c := Call{Operation: id, UserID: userID, Args: args}
 			if !errors.Is(err, errNotFound) {
 				c.Problem = err.Error()
 			}
@@ -334,7 +379,7 @@ func (p *Pass) invoke(vm *goja.Runtime, id string, who Identity, call goja.Funct
 			panic(vm.NewGoError(fmt.Errorf("api.%s: %w", id, err)))
 		}
 		tr := jsctxtrace.New()
-		p.record(Call{Operation: id, UserID: userID, trace: tr})
+		p.record(Call{Operation: id, UserID: userID, Args: args, Answer: answer, trace: tr})
 		return tr.Wrap(vm, answer)
 	}
 
@@ -343,7 +388,7 @@ func (p *Pass) invoke(vm *goja.Runtime, id string, who Identity, call goja.Funct
 		cached, ok := p.cache[key]
 		p.mu.Unlock()
 		if ok {
-			p.record(Call{Operation: id, UserID: userID})
+			p.record(Call{Operation: id, UserID: userID, Args: args})
 			return vm.ToValue(deepCopy(cached))
 		}
 	}
@@ -352,7 +397,7 @@ func (p *Pass) invoke(vm *goja.Runtime, id string, who Identity, call goja.Funct
 	ctx := p.ctx
 	p.mu.Unlock()
 	answer, err := p.bridge.do(ctx, bo, req)
-	c := Call{Operation: id, UserID: userID, Err: err}
+	c := Call{Operation: id, UserID: userID, Args: args, Err: err}
 	if write && err == nil {
 		c.Answer = answer
 	}

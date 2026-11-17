@@ -109,3 +109,33 @@ func TestMissingAndTriggers(t *testing.T) {
 		t.Errorf("fingerprint = %q", fp)
 	}
 }
+
+// A manager that has not registered, and one registered but without a URL
+// here, are named; a registered and reachable one is not. The unreachable
+// one's operations are not offered.
+func TestGapsNameWhatRoutinesLack(t *testing.T) {
+	h := New(map[string]Endpoint{
+		"assetmanager":  {BaseURL: "http://127.0.0.1:1"},
+		"systemmanager": {},
+	}, apibridge.ReadOnly, apibridge.Options{})
+	sys := strings.ReplaceAll(document(), "things.", "settings.")
+	if err := h.Load("fp", []Document{{Module: "assetmanager", Document: document()}, {Module: "systemmanager", Document: sys}}); err != nil {
+		t.Fatal(err)
+	}
+	gaps := strings.Join(h.Gaps(), "\n")
+	for _, want := range []string{
+		"toolmanager has not registered its API document",
+		"actionmanager has not registered",
+		"systemmanager's operations are left out: no URL is configured for it here",
+	} {
+		if !strings.Contains(gaps, want) {
+			t.Errorf("gaps lack %q:\n%s", want, gaps)
+		}
+	}
+	if strings.Contains(gaps, "assetmanager") {
+		t.Errorf("a registered, reachable manager is named:\n%s", gaps)
+	}
+	if strings.Contains(h.Render(), "settings.") {
+		t.Error("an unreachable manager's operations are offered to the AI")
+	}
+}

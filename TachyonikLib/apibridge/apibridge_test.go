@@ -291,11 +291,10 @@ func TestPassCache(t *testing.T) {
 // user and clears the cache.
 func TestProfilesAndWrites(t *testing.T) {
 	m := newManager(t)
-	if _, err := run(t, bridge(t, m, ReadOnly).NewPass(), `api.things.create`); err != nil {
-		t.Fatal(err)
-	}
-	if v, _ := run(t, bridge(t, m, ReadOnly).NewPass(), `typeof api.things.create`); v != "undefined" {
-		t.Errorf("read profile offers create: %v", v)
+	// The read profile has no create: naming it throws, and says so.
+	if _, err := run(t, bridge(t, m, ReadOnly).NewPass(), `api.things.create`); err == nil ||
+		!strings.Contains(err.Error(), "api.things.create does not exist") {
+		t.Errorf("read profile offers create: %v", err)
 	}
 
 	p := bridge(t, m, ReadWrite).NewPass()
@@ -400,5 +399,33 @@ func TestMockPass(t *testing.T) {
 	}
 	if got := p.Violations(); len(got) != 1 || !strings.Contains(got[0], `no parameter "nope"`) {
 		t.Errorf("a caught bad call must still count: %v", got)
+	}
+}
+
+// A name the API does not have throws a TypeError that names it and what
+// exists instead, and is a violation — not a call, so it is never among the
+// operations a routine is stored with.
+func TestUnknownNamesAreRefusedClearly(t *testing.T) {
+	m := newManager(t)
+	b := bridge(t, m, ReadOnly)
+	p := b.NewMockPass(apicatalogue.Scenarios[0])
+	_, err := run(t, p, `api.assets.stats()`)
+	if err == nil || !strings.Contains(err.Error(), `api.assets does not exist in the platform API: its namespaces are: things`) {
+		t.Errorf("unknown namespace: %v", err)
+	}
+	_, err = run(t, p, `api.things.count()`)
+	if err == nil || !strings.Contains(err.Error(), `api.things.count does not exist in the platform API: the namespace "things" has only: get, list`) {
+		t.Errorf("unknown operation: %v", err)
+	}
+	v := strings.Join(p.Violations(), "; ")
+	if !strings.Contains(v, "api.assets: not an operation") || !strings.Contains(v, "api.things.count: not an operation") {
+		t.Errorf("violations = %q", v)
+	}
+	if len(p.Calls()) != 0 {
+		t.Errorf("an unknown name was recorded as a call: %+v", p.Calls())
+	}
+	// What objects have anyway still works, and the object can be printed.
+	if _, err := run(t, b.NewPass(), `api.hasOwnProperty("things") && String(api.things) && JSON.stringify(api)`); err != nil {
+		t.Errorf("ordinary object use: %v", err)
 	}
 }
