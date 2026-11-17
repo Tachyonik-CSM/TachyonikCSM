@@ -29,7 +29,7 @@ type fakeChat struct{ code string }
 
 func (f fakeChat) Chat(string, string, string) (string, error) { return f.code, nil }
 
-const passingRoutine = `var executors = [{ name: "x", ruleId: 4, run: function (api) { return { status: "success", message: "" }; } }];`
+const passingRoutine = `var routineContract = 2; var executors = [{ name: "x", ruleId: 4, run: function (api) { return { status: "success", message: "" }; } }];`
 
 func TestAGeneratedRoutineIsActivatedOnlyWhenAskedAndPassed(t *testing.T) {
 	for _, tc := range []struct {
@@ -70,8 +70,9 @@ func TestAGeneratedRoutineIsActivatedOnlyWhenAskedAndPassed(t *testing.T) {
 
 			// AIManager does not answer for the module's AI (404 below), so
 			// generation falls back to the AI loaded at startup: fakeChat.
-			cfg := &config.Config{AI: config.AIConfig{SystemPrompt: "generate", Model: "m"}}
+			cfg := &config.Config{AI: config.AIConfig{SystemPrompt: "generate against " + APICataloguePlaceholder, Model: "m"}}
 			ag := New(aimanager.NewClient(srv.URL, "k"), fakeChat{code: tc.code}, cfg)
+			ag.SetCatalogue(emptyCatalogue(t))
 			ag.HandleRuleChange(executionrulewatcher.RuleChangeEvent{Type: "updated", RuleID: 4})
 
 			mu.Lock()

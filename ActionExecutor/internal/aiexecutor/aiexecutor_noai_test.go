@@ -17,10 +17,10 @@ import (
 )
 
 // sampleExecRoutine is a minimal, hand-written execution routine. It mirrors
-// the shape produced by AI code generation (an `executors` array whose entries
-// expose a `run(api)` function) but needs no AI to exist — running a
+// the shape produced by AI code generation (the routine contract, and an
+// `executors` array whose entries expose a `run(api)` function) but needs no AI to exist — running a
 // routine is pure JS.
-const sampleExecRoutine = `
+const sampleExecRoutine = `var routineContract = 2;
 var executors = [
   {
     name: "noop-executor",

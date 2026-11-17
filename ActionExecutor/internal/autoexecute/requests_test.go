@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Tests the automatic run's own two requests — reading the user's automation
-// setting and deleting the handled action. They go through the bridge now, and
-// must carry the service key and the action's owner as before.
+// setting and deleting the handled action. They must carry the service key
+// and the action's owner.
 
 package autoexecute
 
@@ -15,8 +15,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/config"
+	"tachyonik/actionexecutor/internal/servicecall"
 )
 
 type seenRequest struct {
@@ -36,7 +36,7 @@ func handlerAgainst(t *testing.T, answer string) (*Handler, *[]seenRequest) {
 	cfg := &config.Config{}
 	cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey = srv.URL, "sm-key"
 	cfg.ActionManager.URL, cfg.ActionManager.InternalServiceKey = srv.URL, "am-key"
-	return &Handler{bridge: apibridge.New(cfg), cfg: cfg}, &seen
+	return &Handler{calls: servicecall.New(), cfg: cfg}, &seen
 }
 
 func TestTheAutomationSettingIsReadAsTheUser(t *testing.T) {

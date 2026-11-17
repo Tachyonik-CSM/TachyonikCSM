@@ -2,14 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Pins how a bridge routine runs (PA-BR-09): on the read-write API bridge,
-// for the run's user AND role, with its tool runs named in the run's audit
-// entry as the hand-written bridge names them; and how it is validated
-// against the mock answers (PA-VAL-02).
+// Pins how a routine runs (PA-BR-09): on the read-write API bridge, for the
+// run's user AND role, with its tool runs named in the run's audit entry, and
+// what it creates owned by the run's user whatever owner it names
+// (PA-BR-03); and how it is validated against the mock answers (PA-VAL-02).
 
 package run
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/jsruntime"
 	libbridge "tachyonik/lib/apibridge"
@@ -71,6 +71,24 @@ paths:
                   proxyName: { type: string }
                   content: { type: string }
                   isError: { type: boolean }
+  /api/tool-notes:
+    post:
+      operationId: toolNotes.create
+      x-bridge: write
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: integer, x-bridge-bound: user }
+                text: { type: string }
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: integer } } }
 `
 }
 
@@ -120,14 +138,14 @@ func TestABridgeRoutineRunsForTheUserAndRole(t *testing.T) {
 	audit := &messages{}
 	cfg := &config.Config{}
 	cfg.Execution.TimeoutSeconds = 5
-	r := New(cfg, apibridge.New(cfg), nil, audit)
+	r := New(cfg, nil, audit)
 	r.SetCatalogue(catalogueFor(t, srv.URL))
 
 	rt := jsruntime.New()
-	if err := rt.LoadFromString(toolRoutine); err != nil || !rt.IsBridge() {
-		t.Fatalf("load: %v, bridge=%v", err, rt.IsBridge())
+	if err := rt.LoadFromString(toolRoutine); err != nil {
+		t.Fatalf("load: %v", err)
 	}
-	result, err := r.Execute(4, rt, apibridge.AuthContext{UserID: 7, UserRole: "admin"}, "Execution rule \"Scan\" (id 4) run manually")
+	result, err := r.Execute(4, rt, AuthContext{UserID: 7, UserRole: "admin"}, "Execution rule \"Scan\" (id 4) run manually")
 	if err != nil || result.Status != "success" || result.Message != "ran Nmap" {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
@@ -140,6 +158,41 @@ func TestABridgeRoutineRunsForTheUserAndRole(t *testing.T) {
 	defer audit.mu.Unlock()
 	if len(audit.text) != 1 || !strings.Contains(audit.text[0], "Nmap") {
 		t.Errorf("audit = %v, want the tool named", audit.text)
+	}
+}
+
+func TestWhatARoutineCreatesBelongsToTheRunsUser(t *testing.T) {
+	var mu sync.Mutex
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = string(b)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{}
+	cfg.Execution.TimeoutSeconds = 5
+	r := New(cfg, nil, nil)
+	r.SetCatalogue(catalogueFor(t, srv.URL))
+	rt := jsruntime.New()
+	if err := rt.LoadFromString(`var routineContract = 2;
+var executors = [{ name: "note", ruleId: 4, run: function (api) {
+  api.toolNotes.create({body: {userId: 99, text: "hi"}});
+  return { status: "success" };
+} }];`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Execute(4, rt, AuthContext{UserID: 7}, "s"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(body, `"userId":7`) || strings.Contains(body, "99") {
+		t.Errorf("created with body %s, want userId 7", body)
 	}
 }
 

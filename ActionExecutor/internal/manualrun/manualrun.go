@@ -21,9 +21,9 @@ import (
 	"fmt"
 
 	"tachyonik/actionexecutor/internal/aimanager"
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/executionrulewatcher"
 	"tachyonik/actionexecutor/internal/jsruntime"
+	"tachyonik/actionexecutor/internal/run"
 	"tachyonik/actionexecutor/internal/runaudit"
 	"tachyonik/lib/logger"
 )
@@ -37,14 +37,18 @@ type Requests interface {
 
 // Runner runs one routine for one user and records it (package run).
 type Runner interface {
-	Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, subject string) (*jsruntime.ExecResult, error)
+	Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth run.AuthContext, subject string) (*jsruntime.ExecResult, error)
 	RecordNotRun(userID int64, subject, why string)
+	Refuse(ruleID, userID int64, subject, why string)
 }
 
 // Rules are the loaded execution rules and their routines (package aiexecutor).
 type Rules interface {
 	GetRule(ruleID int64) *aimanager.ExecutionRule
 	GetRuntime(ruleID int64) *jsruntime.JSExecutorRuntime
+	// HeldBack is why the rule's active routine is not loaded — it predates
+	// the platform API, say — or "".
+	HeldBack(ruleID int64) string
 }
 
 // Handler carries out run requests.
@@ -113,13 +117,18 @@ func (h *Handler) run(req *aimanager.ExecutionRequest) (bool, aimanager.Executio
 	}
 	rt := h.rules.GetRuntime(req.ExecutionRuleID)
 	if rt == nil {
+		if why := h.rules.HeldBack(req.ExecutionRuleID); why != "" {
+			logger.Errorf("manualrun: request %d refused: %s", req.ID, why)
+			h.runner.Refuse(rule.ID, req.UserID, subject, why)
+			return false, failure(why)
+		}
 		why := fmt.Sprintf("execution rule %d (%s) has no active routine", rule.ID, rule.Title)
 		h.runner.RecordNotRun(req.UserID, subject, why)
 		return false, failure(why)
 	}
 
 	logger.Infof("manualrun: running rule %d for user %d (request %d)", rule.ID, req.UserID, req.ID)
-	auth := apibridge.AuthContext{UserID: req.UserID, UserRole: req.UserRole}
+	auth := run.AuthContext{UserID: req.UserID, UserRole: req.UserRole}
 	result, err := h.runner.Execute(rule.ID, rt, auth, subject)
 	if err != nil {
 		logger.Errorf("manualrun: rule %d for user %d failed: %v", rule.ID, req.UserID, err)

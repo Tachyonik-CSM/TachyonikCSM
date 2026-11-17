@@ -21,7 +21,7 @@ import (
 func loaded(t *testing.T, run string) *JSExecutorRuntime {
 	t.Helper()
 	rt := New()
-	code := `var executors = [{ name: "e", ruleId: 4, run: function (api) { ` + run + ` } }];`
+	code := `var routineContract = 2; var executors = [{ name: "e", ruleId: 4, run: function (api) { ` + run + ` } }];`
 	if err := rt.LoadFromString(code); err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestTheNextRunAfterATimeoutWorks(t *testing.T) {
 	rt := New()
 	// The api object decides whether this run loops, so one routine can time
 	// out once and then run normally.
-	code := `var executors = [{ name: "e", ruleId: 4, run: function (api) {
+	code := `var routineContract = 2; var executors = [{ name: "e", ruleId: 4, run: function (api) {
 		if (api && api.loop) { while (true) {} }
 		return { status: "success", message: "ran" };
 	} }];`
@@ -96,7 +96,7 @@ func TestALimitThatFiresAtTheEndDoesNotCarryOver(t *testing.T) {
 // stack, which would take the whole daemon down.
 func TestRunawayRecursionFailsTheRun(t *testing.T) {
 	rt := New()
-	if err := rt.LoadFromString(`function down(n) { return down(n + 1); }
+	if err := rt.LoadFromString(`var routineContract = 2; function down(n) { return down(n + 1); }
 		var executors = [{ name: "e", ruleId: 4, run: function (api) { return down(0); } }];`); err != nil {
 		t.Fatalf("load: %v", err)
 	}

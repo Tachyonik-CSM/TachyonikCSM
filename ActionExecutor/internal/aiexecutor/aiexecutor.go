@@ -9,6 +9,12 @@
 //
 // The rule watcher calls in here when a rule changes, so a running daemon picks
 // up new and edited rules live.
+//
+// Only bridge routines — `var routineContract = 2;`, run on the platform API
+// bridge — are generated and loaded. An active routine that predates the
+// platform API is held back when it is loaded, with the reason kept for the
+// runs asked of its rule (HeldBack), and the system prompt must ask for the
+// catalogue ({{API_CATALOGUE}}) before the AI is asked for a routine.
 package aiexecutor
 
 import (
@@ -27,7 +33,6 @@ import (
 	"tachyonik/actionexecutor/internal/jsruntime"
 	"tachyonik/lib/aiclient"
 	"tachyonik/lib/aipick"
-	"tachyonik/lib/apibridge"
 	"tachyonik/lib/apiholder"
 	"tachyonik/lib/logger"
 )
@@ -41,16 +46,24 @@ type AIActionExecutor struct {
 	cfg         *config.Config
 	rules       map[int64]*aimanager.ExecutionRule
 	runtimes    map[int64]*jsruntime.JSExecutorRuntime
-	mu          sync.RWMutex
-	// catalogue is the platform API catalogue bridge routines are generated,
-	// validated and checked against; nil: hand-written-bridge routines only.
+	// heldBack says, by rule, why its active routine is not loaded although
+	// AIManager names one — so a run asked of the rule says so.
+	heldBack map[int64]string
+	mu       sync.RWMutex
+	// catalogue is the platform API catalogue routines are generated,
+	// validated and checked against; nil: none can be generated.
 	catalogue *apiholder.Holder
 }
 
 // APICataloguePlaceholder is where the system prompt wants the catalogue's
 // operations, read and write: replaced at generation (PA-RT-05). A prompt
-// without it generates routines for the hand-written bridge, as before.
+// without it predates the platform API, and no routine is generated with it.
 const APICataloguePlaceholder = "{{API_CATALOGUE}}"
+
+// errPromptPredatesAPI fails a generation whose system prompt does not ask for
+// the catalogue.
+var errPromptPredatesAPI = errors.New("the ActionExecutor system prompt predates the platform API (it has no " +
+	APICataloguePlaceholder + "): replace it with prompts/actionexecutor.txt in AIManager (AI → Modules → ActionExecutor)")
 
 // SetCatalogue gives the executor the platform API catalogue.
 func (ag *AIActionExecutor) SetCatalogue(c *apiholder.Holder) {
@@ -67,7 +80,28 @@ func New(aiMgrClient *aimanager.Client, chatClient codegen.ChatClient, cfg *conf
 		cfg:         cfg,
 		rules:       make(map[int64]*aimanager.ExecutionRule),
 		runtimes:    make(map[int64]*jsruntime.JSExecutorRuntime),
+		heldBack:    make(map[int64]string),
 	}
+}
+
+// hold leaves the rule without a routine and keeps why. Caller holds ag.mu.
+func (ag *AIActionExecutor) hold(ruleID int64, why string) {
+	delete(ag.runtimes, ruleID)
+	ag.heldBack[ruleID] = why
+}
+
+// HeldBack is why the rule's active routine is not loaded, or "" when it is,
+// or when the rule has none.
+func (ag *AIActionExecutor) HeldBack(ruleID int64) string {
+	ag.mu.RLock()
+	defer ag.mu.RUnlock()
+	return ag.heldBack[ruleID]
+}
+
+// PredatesAPIMessage is why a routine without `var routineContract = 2;` is
+// neither loaded nor run.
+func PredatesAPIMessage(ruleID, routineID int64) string {
+	return fmt.Sprintf("execution rule %d: routine %d predates the platform API, which this version no longer runs — generate the rule anew", ruleID, routineID)
 }
 
 // loadActiveRoutine fetches and loads the active routine for a rule into ag.runtimes.
@@ -78,6 +112,7 @@ func New(aiMgrClient *aimanager.Client, chatClient codegen.ChatClient, cfg *conf
 // routine when the newly activated one would not load meant an older routine
 // went on running under a rule that no longer named it.
 func (ag *AIActionExecutor) loadActiveRoutine(rule *aimanager.ExecutionRule) {
+	delete(ag.heldBack, rule.ID)
 	if rule.ActiveRoutine == nil {
 		delete(ag.runtimes, rule.ID)
 		logger.Debugf("Execution rule %d (%s) has no active routine", rule.ID, rule.Title)
@@ -88,41 +123,46 @@ func (ag *AIActionExecutor) loadActiveRoutine(rule *aimanager.ExecutionRule) {
 	if err != nil {
 		logger.Errorf("Failed to fetch active routine %d for execution rule %d (%s), the rule has no routine loaded: %v",
 			*rule.ActiveRoutine, rule.ID, rule.Title, err)
-		delete(ag.runtimes, rule.ID)
+		ag.hold(rule.ID, fmt.Sprintf("execution rule %d: its active routine %d could not be fetched from AIManager", rule.ID, *rule.ActiveRoutine))
 		return
 	}
 
 	if routine.Status != "passed" {
 		logger.Warnf("Active routine %d for execution rule %d has status '%s'; the rule has no routine loaded",
 			routine.ID, rule.ID, routine.Status)
-		delete(ag.runtimes, rule.ID)
+		ag.hold(rule.ID, fmt.Sprintf("execution rule %d: its active routine %d has status %q", rule.ID, routine.ID, routine.Status))
 		return
 	}
 
 	rt := jsruntime.New()
 	if err := rt.LoadFromString(routine.Code); err != nil {
+		if errors.Is(err, jsruntime.ErrPredatesBridge) {
+			why := PredatesAPIMessage(rule.ID, routine.ID)
+			logger.Errorf("%s (%s)", why, rule.Title)
+			ag.hold(rule.ID, why)
+			return
+		}
 		logger.Errorf("Failed to load routine %d code for execution rule %d (%s), the rule has no routine loaded: %v",
 			routine.ID, rule.ID, rule.Title, err)
-		delete(ag.runtimes, rule.ID)
+		ag.hold(rule.ID, fmt.Sprintf("execution rule %d: its active routine %d does not load: %v", rule.ID, routine.ID, err))
 		return
 	}
 
-	// A bridge routine runs only while the catalogue still offers what it
-	// calls (PA-RT-06).
-	if rt.IsBridge() {
-		ops := routine.Operations()
-		rt.SetOperations(ops)
-		if ag.catalogue != nil && ag.catalogue.Loaded() {
-			if missing := ag.catalogue.Missing(ops); len(missing) > 0 {
-				logger.Errorf("Holding back routine %d of execution rule %d (%s): it calls %s, which the API catalogue no longer has — regenerate the routine",
-					routine.ID, rule.ID, rule.Title, strings.Join(missing, ", "))
-				delete(ag.runtimes, rule.ID)
-				return
-			}
-			if dep := ag.catalogue.Deprecated(ops); len(dep) > 0 {
-				logger.Warnf("Routine %d of execution rule %d (%s) calls deprecated operations %s — regenerate it before they go",
-					routine.ID, rule.ID, rule.Title, strings.Join(dep, ", "))
-			}
+	// A routine runs only while the catalogue still offers what it calls
+	// (PA-RT-06).
+	ops := routine.Operations()
+	rt.SetOperations(ops)
+	if ag.catalogue != nil && ag.catalogue.Loaded() {
+		if missing := ag.catalogue.Missing(ops); len(missing) > 0 {
+			logger.Errorf("Holding back routine %d of execution rule %d (%s): it calls %s, which the API catalogue no longer has — regenerate the routine",
+				routine.ID, rule.ID, rule.Title, strings.Join(missing, ", "))
+			ag.hold(rule.ID, fmt.Sprintf("execution rule %d: routine %d calls %s, which the platform API no longer has — generate the rule anew",
+				rule.ID, routine.ID, strings.Join(missing, ", ")))
+			return
+		}
+		if dep := ag.catalogue.Deprecated(ops); len(dep) > 0 {
+			logger.Warnf("Routine %d of execution rule %d (%s) calls deprecated operations %s — regenerate it before they go",
+				routine.ID, rule.ID, rule.Title, strings.Join(dep, ", "))
 		}
 	}
 
@@ -142,6 +182,7 @@ func (ag *AIActionExecutor) LoadRules() error {
 
 	ag.rules = make(map[int64]*aimanager.ExecutionRule, len(rules))
 	ag.runtimes = make(map[int64]*jsruntime.JSExecutorRuntime)
+	ag.heldBack = make(map[int64]string)
 
 	for i := range rules {
 		rule := &rules[i]
@@ -185,18 +226,21 @@ func (ag *AIActionExecutor) GenerateForRule(rule *aimanager.ExecutionRule) (*aim
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for execution rule %d with %s", rule.ID, choice.Describe())
 
-	// A system prompt asking for the catalogue gets the operations a bridge
-	// routine may call, read and write.
+	// The system prompt gets the operations a routine may call, read and
+	// write (PA-RT-05). One that does not ask for them describes the api
+	// object this module no longer has: the AI is not asked.
 	systemPrompt := choice.SystemPrompt
-	if strings.Contains(systemPrompt, APICataloguePlaceholder) {
-		ag.mu.RLock()
-		cat := ag.catalogue
-		ag.mu.RUnlock()
-		if cat == nil || !cat.Loaded() {
-			return nil, fmt.Errorf("cannot generate the routine for rule %d: the system prompt asks for the platform API catalogue, which is not loaded", rule.ID)
-		}
-		systemPrompt = strings.ReplaceAll(systemPrompt, APICataloguePlaceholder, cat.Render())
+	if !strings.Contains(systemPrompt, APICataloguePlaceholder) {
+		logger.Errorf("Cannot generate the routine for execution rule %d: %v", rule.ID, errPromptPredatesAPI)
+		return nil, fmt.Errorf("cannot generate the routine for rule %d: %w", rule.ID, errPromptPredatesAPI)
 	}
+	ag.mu.RLock()
+	cat := ag.catalogue
+	ag.mu.RUnlock()
+	if cat == nil || !cat.Loaded() {
+		return nil, fmt.Errorf("cannot generate the routine for rule %d: the platform API catalogue is not loaded", rule.ID)
+	}
+	systemPrompt = strings.ReplaceAll(systemPrompt, APICataloguePlaceholder, cat.Render())
 	codeGen := codegen.New(choice.Client, ruleModel, systemPrompt)
 
 	code, err := codeGen.Generate(*rule)
@@ -210,7 +254,10 @@ func (ag *AIActionExecutor) GenerateForRule(rule *aimanager.ExecutionRule) (*aim
 	version := fmt.Sprintf("v%s", time.Now().Format("20060102_150405"))
 
 	tempRuntime := jsruntime.New()
-	if err := tempRuntime.LoadFromString(code); err != nil {
+	if err := tempRuntime.LoadFromString(code); errors.Is(err, jsruntime.ErrPredatesBridge) {
+		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", "Validation failed: "+errNotBridgeRoutine.Error())
+		return nil, fmt.Errorf("validation failed for rule %d: %w", rule.ID, errNotBridgeRoutine)
+	} else if err != nil {
 		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", fmt.Sprintf("Syntax validation failed: %v", err))
 		return nil, fmt.Errorf("syntax validation failed for rule %d: %w", rule.ID, err)
 	}
@@ -220,24 +267,14 @@ func (ag *AIActionExecutor) GenerateForRule(rule *aimanager.ExecutionRule) (*aim
 		return nil, fmt.Errorf("rule ID validation failed for rule %d: %w", rule.ID, err)
 	}
 
-	// A bridge routine is run against the managers' mock answers first
+	// The routine is run against the managers' mock answers first
 	// (PA-VAL-02), and stored with what it calls (PA-RT-04).
-	var log, fingerprint string
-	var operations []string
-	if tempRuntime.IsBridge() {
-		var b *apibridge.Bridge
-		ag.mu.RLock()
-		cat := ag.catalogue
-		ag.mu.RUnlock()
-		if cat != nil {
-			b, fingerprint = cat.Bridge()
-		}
-		v := tempRuntime.ValidateBridge(b, ag.cfg.ExecutionTimeout())
-		log, operations = v.Log(), v.Operations
-		if len(v.Errors) > 0 {
-			ag.storeRoutineAPI(code, rule.ID, version, ruleModel, sha256Hex, "failed", log, fingerprint, operations)
-			return nil, fmt.Errorf("validation against the API's mock answers failed for rule %d with %d errors", rule.ID, len(v.Errors))
-		}
+	b, fingerprint := cat.Bridge()
+	v := tempRuntime.ValidateBridge(b, ag.cfg.ExecutionTimeout())
+	log, operations := v.Log(), v.Operations
+	if len(v.Errors) > 0 {
+		ag.storeRoutineAPI(code, rule.ID, version, ruleModel, sha256Hex, "failed", log, fingerprint, operations)
+		return nil, fmt.Errorf("validation against the API's mock answers failed for rule %d with %d errors", rule.ID, len(v.Errors))
 	}
 
 	routine, err := ag.storeRoutineAPI(code, rule.ID, version, ruleModel, sha256Hex, "passed", log, fingerprint, operations)
@@ -351,6 +388,7 @@ func (ag *AIActionExecutor) HandleRuleChange(event executionrulewatcher.RuleChan
 		ag.mu.Lock()
 		delete(ag.rules, event.RuleID)
 		delete(ag.runtimes, event.RuleID)
+		delete(ag.heldBack, event.RuleID)
 		ag.mu.Unlock()
 
 		logger.Infof("Removed execution rule %d from AI action executor", event.RuleID)
@@ -413,6 +451,10 @@ func (ag *AIActionExecutor) pickAI(ruleAI *int64) (aipick.Choice, error) {
 	}
 	return lookup.Pick(ruleAI, loaded)
 }
+
+// errNotBridgeRoutine fails a generated routine that does not declare the
+// routine contract.
+var errNotBridgeRoutine = errors.New("the routine must begin with var routineContract = 2;")
 
 // errNoAIManager is what a lookup reports when this module has no AIManager
 // client to ask.

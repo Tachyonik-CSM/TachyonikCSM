@@ -209,8 +209,9 @@ The outcome has the shape the Execute dialog shows:
 ```
 
 A routine that reports `status: "error"` gives `success: false` with its
-message in `error`; a rule that is not loaded, has no active routine, or whose
-run failed gives `success: false` and the reason in `error`.
+message in `error`; a rule that is not loaded, has no active routine, whose
+routine was held back (see [Routines](#routines)), or whose run failed gives
+`success: false` and the reason in `error`.
 
 ## Automatic Execution
 
@@ -227,8 +228,8 @@ action:
 
 The routine then runs with the service key on the user's behalf, and the action
 is deleted when the run succeeds, so the user never sees a task they had chosen
-to have handled for them. When it fails, the action stays for the user to
-handle.
+to have handled for them. When it fails, or the rule's routine was held back,
+the action stays for the user to handle.
 
 The WebUI's Action Guide offers the *Automatic* checkbox only where these
 conditions can hold, for the same reason: elsewhere it would have no effect.
@@ -240,50 +241,17 @@ compiled once when loaded and runs in a **fresh VM for every run**, so nothing i
 keeps in a global can reach the next run, another user's included; runs of one
 rule also no longer wait for each other. Recursion is capped (2048 calls), and
 loading a routine is bounded too (5 s for its top-level code).
-**Everything is read and written through `api`**, including who the run is
-for (`api.user.get()`): it returns current data, can be filtered, costs a
-request only when a routine needs it, and throws on failure.
 
-The `api` object (`internal/apibridge`) proxies calls to the backends on the
-user's behalf, with the user's permissions:
-
-| Namespace | Calls | Service |
-| --- | --- | --- |
-| `api.user` | `get` — the user the run is for | SystemManager |
-| `api.organisation` | `get`, `update` | SystemManager |
-| `api.assets` | `list`, `get`, `create`, `update` (the type only), `delete` | AssetManager |
-| `api.vulnerabilities`, `api.detections` | `list` | AssetManager |
-| `api.actions` | `list`, `create`, `update`, `delete` | ActionManager |
-| `api.sources` | `list`, `create`, `delete` | ResourceManager |
-| `api.tools` | `list`, `get` | ResourceManager, enriched from AIManager |
-| `api.tools.execute(toolId, arguments, ruleId?)` | run a security tool | ToolManager |
-
-Every call uses the service key with the run's user id and role
-(`X-User-ID`/`X-User-Role`), so the backend applies that user's permissions — for
-a manual run the user and role AIManager checked when they asked.
-
-`api.tools.execute` returns `{toolName, proxyName, content, isError, storedFiles, storedSources,
-errors, warnings}`. Output files are stored as sources by ToolManager, and
-`storedSources` gives their ids. A file identical to a source already on record
-is not stored again; it is reported in `warnings`, not `errors`, and that
-source's last-seen date is updated. A newer successful run of the same tool with
-the same arguments replaces the earlier run's sources (ResourceManager), so a
-routine neither stores the output again nor deletes old copies.
-
-Every call blocks and throws a JavaScript error on a non-2xx answer, so a
-routine wraps calls in `try/catch` where it can recover.
-
-### Bridge routines
-
-A routine can run on the **platform API bridge** instead of the hand-written
-`api` above
+A routine begins with `var routineContract = 2;` and runs on the **platform
+API bridge** in its read-write profile
 ([docs/specs/01-platform-api-catalogue.md](../docs/specs/01-platform-api-catalogue.md)).
-Such a routine declares `var routineContract = 2;`. Its `run(api)` calls
-`api.<namespace>.<verb>({…, body})` with the operations the managers document,
-read and write, for example `api.assets.stats()` or
-`api.toolCalls.execute({body: {toolId: 40}})`. Routines without the
-declaration keep running on the hand-written bridge, which goes one release
-after every execution routine has been regenerated.
+**Everything is read and written through `api`**: `run(api)` calls
+`api.<namespace>.<verb>({…, body})` with the operations the managers document
+and register, read and write, for example `api.assets.stats()` or
+`api.toolCalls.execute({body: {toolId: 40}})`. A call returns the answer the
+operation documents, and throws a JavaScript error naming the operation and
+the reason when it fails, so a routine wraps calls in `try/catch` where it can
+recover.
 
 - **Catalogue.** At startup ActionExecutor reads the platform API catalogue
   from AIManager and builds the read-write bridge from it. It does so again
@@ -293,25 +261,39 @@ after every execution routine has been regenerated.
   configuration) and for one it has no URL for; the latter's operations are
   left out (PA-RT-09). Reading a name `api` does not have throws an error
   naming it and what exists, e.g. "api.assets does not exist in the platform
-  API: its namespaces are: …" (PA-BR-11).
-- **Identity.** Every call is made for the run's user and role. The bridge
-  sets `X-User-ID`, `X-User-Role` and the owner fields itself; a routine
-  can't name anyone.
-- **Time limit.** Calls end with the run's time limit, so a tool run may take
-  as long as the run.
-- **Audit.** Tool runs appear in the run's audit entry as before, taken from
-  the bridge's record of the `toolCalls.execute` calls.
-- **Generation.** A system prompt containing `{{API_CATALOGUE}}` gets the
-  catalogue's read and write operations in its place. Applying such a prompt
-  (`prompts/actionexecutor.txt`) is the switch to bridge routines.
-- **Validation (new).** A generated bridge routine runs once per mock
-  scenario against the managers' mock answers; writes change nothing there. It
-  fails when it calls an operation it may not, passes an argument the
-  operation doesn't have, or reads a field the answer doesn't have. It is
-  stored with the operations it called and the catalogue fingerprint.
+  API: its namespaces are: …" (PA-BR-11). Until the catalogue has been read,
+  no routine runs; a run asked for fails saying so.
+- **Identity.** Every call is made with the service key for the run's user
+  and role — for a manual run the user and role AIManager checked when they
+  asked. The bridge sets `X-User-ID`, `X-User-Role` and the owner fields of
+  what a routine creates itself; a routine can't name anyone.
+- **Generation.** The system prompt must contain `{{API_CATALOGUE}}`, which is
+  replaced by the catalogue's read and write operations. A prompt without it
+  predates the platform API: the AI is not asked, the generation fails with
+  that reason, and the log says to replace the prompt with
+  `prompts/actionexecutor.txt` (an operator applies it in AIManager, AI →
+  Modules).
+- **Validation.** A generated routine fails when it does not begin with
+  `var routineContract = 2;`. Otherwise it runs once per mock scenario against
+  the managers' mock answers; writes change nothing there. It fails when it
+  calls an operation it may not, passes an argument the operation doesn't
+  have, or reads a field the answer doesn't have. It is stored with the
+  operations it called and the catalogue fingerprint.
 - **Hold-back.** An active routine whose operations the catalogue no longer
   has is held back, and the log says so.
-- **Test tab.** The routine lists' Test tabs can't run bridge routines yet.
+
+### Routines that predate the platform API
+
+A routine without `var routineContract = 2;` was written for an `api` object
+this version no longer has, and **never runs**. When it is loaded — at
+startup, on a rule change, a feed import or a catalogue change — it is held
+back and the log says
+`execution rule 4: routine 240 predates the platform API, which this version no longer runs — generate the rule anew`.
+A run asked of the rule — manual, from a run request, or automatic — fails
+with the same message: it is the request's error, the rule's last execution
+(status `error`) and a Warning in the audit trail; an action that would have
+been handled automatically stays for the user. Generating the rule anew, and
+making the new routine the active one, ends it.
 
 ### Time limit
 
@@ -321,22 +303,21 @@ fails with `routine exceeded its time limit of 4m40s`, reported like any other
 failure (last execution, audit trail, WebUI). The next run of the rule starts
 cleanly.
 
-The interrupt lands between JavaScript statements. A backend call already under
-way finishes first: `api.tools.execute` may wait up to the limit (ToolManager
-allows a tool 10 minutes), every other `api.*` call at most 30 s.
+The interrupt lands between JavaScript statements. A bridge call under way is
+cancelled when the limit passes; one call may take up to the limit, as a tool
+run does (ToolManager allows a tool 10 minutes).
 
 The routine lists' Test tabs run routines through AIManager's dry run
-(`POST /api/dry-run`, package `dryrun`), against a mock of this module's `api`
-that records every call and changes nothing. A method added to the bridge
-belongs in that mock too; `scripts/check-dryrun-mock.sh` (part of
-`make lib-check`) fails when one is missing.
+(`POST /api/dry-run`), which changes nothing.
 
 ### Which routine runs
 
 Exactly the one AIManager marks as the rule's active routine. If it cannot be
-loaded — not *passed*, not found, or not valid JavaScript — the rule has **no**
-routine loaded and a run is refused (`424`), rather than the previously loaded
-routine going on in its place. A deleted rule is unloaded at once.
+loaded — not *passed*, not found, not valid JavaScript, predating the platform
+API, or calling operations the catalogue no longer has — the rule has **no**
+routine loaded and a run is refused with the reason, rather than the
+previously loaded routine going on in its place. A deleted rule is unloaded at
+once.
 
 ## Audit Trail
 
@@ -350,6 +331,7 @@ Each run writes one entry to the user's audit trail in SystemManager (module
 | Automatic | Info | `Action "…" (id 42) executed automatically by execution rule 4: success — <message>. Tools: …` |
 | Any, failed | Warning | `<subject>: failed (<reason>). Tools: …` |
 | Manual, could not start | Warning | `<subject>: failed (execution rule 4 (…) has no active routine)`, or `Execution rule 4 run manually: failed (execution rule 4 not found)` |
+| Any, routine held back | Warning | `<subject>: failed (execution rule 4: routine 240 predates the platform API, …)` |
 
 - **Status and message.** A success gives the routine's status and, when it
   reported one, its message. A run fails when the routine throws or reports
@@ -358,12 +340,13 @@ Each run writes one entry to the user's audit trail in SystemManager (module
 - **Action.** A manual run started with Execute in an action's dialog names
   the action. Its id and title come with the run request from AIManager,
   because the action is deleted the moment the run is requested.
-- **Tools.** Every `api.tools.execute` call of the run is listed, in order, as
-  `<tool> @ <proxy> (ok)` or `(failed: <reason, at most 120 characters>)`:
-  failed when the tool reported an error or its output could not be stored.
-  A call ToolManager refused is listed as `tool <id>`. At most 10 are listed,
-  the rest counted (`and 3 more`). The names come from ToolManager's answer
-  (`toolName`, `proxyName`); `apibridge.ToolCallLog` collects them.
+- **Tools.** Every `api.toolCalls.execute` call of the run is listed, in
+  order, as `<tool> @ <proxy> (ok)` or `(failed: <reason, at most 120
+  characters>)`: failed when the tool reported an error or its output could
+  not be stored. A call that failed or was refused is listed as `tool <id>`.
+  At most 10 are listed, the rest counted (`and 3 more`). The names come from
+  ToolManager's answer (`toolName`, `proxyName`), read from the bridge's
+  record of the run's calls (`runaudit.ToolCallsOf`).
 - **Tools started by hand** (Tools → Execute) are audited by ToolManager.
 
 ## Architecture
@@ -376,13 +359,13 @@ Each run writes one entry to the user's audit trail in SystemManager (module
 | `internal/aiexecutor` | Holds the rules and their loaded routines; generates routines |
 | `internal/codegen` | The generation request to the AI and its checks |
 | `internal/jsruntime` | Runs a routine in goja, under its time limit |
-| `internal/apibridge` | The `api` object a routine calls, and the one place a request to another service is authenticated |
-| `internal/run` | One run of a routine for one user: `api` object, time limit, result to AIManager, audit entry — the same for manual and automatic runs |
+| `internal/run` | One run of a routine for one user: the platform API bridge as `api`, time limit, result to AIManager, audit entry — the same for manual and automatic runs |
+| `internal/servicecall` | An automatic run's own two requests (automation setting, deleting the action), with the service key on the user's behalf |
 | `internal/manualrun` | Users' run requests from AIManager: claim, run, report |
 | `internal/autoexecute` | Automatic execution of new actions |
 | `internal/actionwatcher` | Watches ActionManager for new actions (on `tachyonik/lib/wswatcher`) |
 | `internal/executionrulewatcher` | Watches AIManager for rule changes and feed imports, debounced per rule, and for run requests (on `tachyonik/lib/wswatcher`) |
-| `internal/runaudit` | Wording of the audit-trail entries |
+| `internal/runaudit` | Wording of the audit-trail entries, and the tool runs read from the bridge's calls |
 | `internal/version` | The build version, injected at build time |
 
 **Events.** A changed rule is reloaded — that rule only; when a generation was requested for it

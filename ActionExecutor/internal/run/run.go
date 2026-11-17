@@ -11,6 +11,12 @@
 // report the result to AIManager, write the audit entry — and a change to what
 // surrounds a run had to be made twice. Now each caller keeps
 // only what is its own: reporting to the request, or deleting the action.
+//
+// The api object is the platform API bridge in its read-write profile, for the
+// run's user and role (docs/specs/01-platform-api-catalogue.md, PA-BR-09). A
+// run that cannot start — no catalogue, or a rule whose routine was held back
+// when it was loaded — is reported and audited as failed like one that ran
+// and failed, so whoever asked for it learns why.
 package run
 
 import (
@@ -19,7 +25,6 @@ import (
 	"github.com/dop251/goja"
 
 	"tachyonik/actionexecutor/internal/aimanager"
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/jsruntime"
 	"tachyonik/actionexecutor/internal/runaudit"
@@ -40,14 +45,23 @@ type AuditEmitter interface {
 	CreateAuditEvent(userID int64, level, module, message string) error
 }
 
+// AuthContext is who a run acts for: the user, and their role when it is
+// known. The bridge sets every bound parameter to them (PA-BR-03). There is
+// no user token: a manual run arrives from AIManager, which checked the
+// user's login when they asked, and an automatic run has nobody pressing
+// anything.
+type AuthContext struct {
+	UserID   int64
+	UserRole string
+}
+
 // Runner holds what every run needs. One is created at startup and shared.
 type Runner struct {
 	cfg      *config.Config
-	bridge   *apibridge.Bridge
 	reporter Reporter
 	audit    AuditEmitter
-	// catalogue is the platform API bridge bridge routines run on; nil:
-	// hand-written-bridge routines only.
+	// catalogue is the platform API bridge routines run on; nil or not
+	// loaded: no routine can run.
 	catalogue *apiholder.Holder
 }
 
@@ -56,8 +70,8 @@ func (r *Runner) SetCatalogue(c *apiholder.Holder) { r.catalogue = c }
 
 // New creates a Runner. reporter and audit may be nil: the run still happens,
 // only that part of its bookkeeping is skipped.
-func New(cfg *config.Config, bridge *apibridge.Bridge, reporter *aimanager.Client, audit AuditEmitter) *Runner {
-	r := &Runner{cfg: cfg, bridge: bridge, audit: audit}
+func New(cfg *config.Config, reporter *aimanager.Client, audit AuditEmitter) *Runner {
+	r := &Runner{cfg: cfg, audit: audit}
 	// A nil *Client in the interface would not compare equal to nil.
 	if reporter != nil {
 		r.reporter = reporter
@@ -71,49 +85,48 @@ func New(cfg *config.Config, bridge *apibridge.Bridge, reporter *aimanager.Clien
 //
 // The error is the run's own failure (Run could not produce a result); a
 // routine that reports status "error" returns that result and no error.
-func (r *Runner) Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, subject string) (*jsruntime.ExecResult, error) {
-	// The routine runs in a VM of its own; its api object is made for that VM.
-	// The tool calls it makes are collected for the audit entry.
-	var buildAPI func(vm *goja.Runtime) goja.Value
-	var toolCalls func() []runaudit.ToolCall
-	if rt.IsBridge() {
-		// A bridge routine runs on the platform API bridge, read-write, for
-		// the run's user and role (PA-BR-09). Its calls end with the run.
-		var b *libbridge.Bridge
-		if r.catalogue != nil {
-			b, _ = r.catalogue.Bridge()
-		}
-		if b == nil {
-			err := errors.New("the platform API catalogue is not loaded, so a bridge routine cannot run")
-			r.report(ruleID, "error", err.Error(), nil)
-			r.record(auth.UserID, subject, err, "", "", nil)
-			return nil, err
-		}
-		pass := b.NewPass()
-		if limit := r.cfg.ExecutionTimeout(); limit > 0 {
-			ctx, cancel := context.WithTimeout(context.Background(), limit)
-			defer cancel()
-			pass.SetContext(ctx)
-		}
-		buildAPI = func(vm *goja.Runtime) goja.Value {
-			return pass.ObjectFor(vm, libbridge.Identity{UserID: auth.UserID, Role: auth.UserRole})
-		}
-		toolCalls = func() []runaudit.ToolCall { return apibridge.ToolCallsOf(pass.Calls()) }
-	} else {
-		tools := &apibridge.ToolCallLog{}
-		buildAPI = func(vm *goja.Runtime) goja.Value { return r.bridge.BuildRecording(vm, auth, tools) }
-		toolCalls = tools.Calls
+func (r *Runner) Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth AuthContext, subject string) (*jsruntime.ExecResult, error) {
+	// The routine runs on the platform API bridge, read-write, for the run's
+	// user and role (PA-BR-09). Its calls, and the pass cache, end with the
+	// run; the tool runs among them go into the audit entry.
+	var b *libbridge.Bridge
+	if r.catalogue != nil {
+		b, _ = r.catalogue.Bridge()
+	}
+	if b == nil {
+		err := errors.New("the platform API catalogue is not loaded, so the routine cannot run")
+		r.Refuse(ruleID, auth.UserID, subject, err.Error())
+		return nil, err
+	}
+	pass := b.NewPass()
+	if limit := r.cfg.ExecutionTimeout(); limit > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), limit)
+		defer cancel()
+		pass.SetContext(ctx)
+	}
+	buildAPI := func(vm *goja.Runtime) goja.Value {
+		return pass.ObjectFor(vm, libbridge.Identity{UserID: auth.UserID, Role: auth.UserRole})
 	}
 
 	result, err := rt.Run(buildAPI, r.cfg.ExecutionTimeout())
+	tools := runaudit.ToolCallsOf(pass.Calls())
 	if err != nil {
 		r.report(ruleID, "error", err.Error(), nil)
-		r.record(auth.UserID, subject, err, "", "", toolCalls())
+		r.record(auth.UserID, subject, err, "", "", tools)
 		return nil, err
 	}
 	r.report(ruleID, result.Status, result.Message, result.Changes)
-	r.record(auth.UserID, subject, nil, result.Status, result.Message, toolCalls())
+	r.record(auth.UserID, subject, nil, result.Status, result.Message, tools)
 	return result, nil
+}
+
+// Refuse records a run of a rule that was asked for and cannot happen — its
+// routine was held back when it was loaded, say, because it predates the
+// platform API: reported to AIManager as the rule's last execution, failed
+// with why, and audited as failed, as a run that failed would be.
+func (r *Runner) Refuse(ruleID, userID int64, subject, why string) {
+	r.report(ruleID, "error", why, nil)
+	r.record(userID, subject, errors.New(why), "", "", nil)
 }
 
 // RecordNotRun audits a run that could not start — no such rule, no active

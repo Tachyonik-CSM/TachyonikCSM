@@ -15,10 +15,11 @@ import (
 	"time"
 
 	"tachyonik/actionexecutor/internal/aimanager"
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/jsruntime"
 	"tachyonik/actionexecutor/internal/runaudit"
+	libbridge "tachyonik/lib/apibridge"
+	"tachyonik/lib/apiholder"
 )
 
 type recorder struct {
@@ -34,8 +35,9 @@ func (r *recorder) CreateAuditEvent(userID int64, level, module, message string)
 	return nil
 }
 
-// newRunner points every backend at one server that answers with nothing;
-// reports and audit entries land in rec.
+// newRunner runs on a catalogue with ToolManager's document (bridge_test.go)
+// against a server that answers with nothing; reports and audit entries land
+// in rec.
 func newRunner(t *testing.T, rec *recorder) *Runner {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,13 +47,9 @@ func newRunner(t *testing.T, rec *recorder) *Runner {
 	t.Cleanup(srv.Close)
 
 	cfg := &config.Config{}
-	for _, u := range []*string{&cfg.AssetManager.URL, &cfg.SystemManager.URL, &cfg.ResourceManager.URL,
-		&cfg.ActionManager.URL, &cfg.ToolManager.URL, &cfg.AIManager.URL} {
-		*u = srv.URL
-	}
 	cfg.Execution.TimeoutSeconds = 1
-	bridge := apibridge.New(cfg)
-	r := New(cfg, bridge, nil, rec)
+	r := New(cfg, nil, rec)
+	r.SetCatalogue(catalogueFor(t, srv.URL))
 	r.reporter = reporterFunc(func() { rec.mu.Lock(); rec.reports = append(rec.reports, "report"); rec.mu.Unlock() })
 	return r
 }
@@ -66,7 +64,7 @@ func (f reporterFunc) ReportLastExecution(int64, aimanager.ReportLastExecutionRe
 func routine(t *testing.T, body string) *jsruntime.JSExecutorRuntime {
 	t.Helper()
 	rt := jsruntime.New()
-	if err := rt.LoadFromString(`var executors = [{ name: "e", ruleId: 4, run: function (api) { ` + body + ` } }];`); err != nil {
+	if err := rt.LoadFromString(`var routineContract = 2; var executors = [{ name: "e", ruleId: 4, run: function (api) { ` + body + ` } }];`); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	return rt
@@ -84,7 +82,7 @@ func TestEveryOutcomeIsReportedAndAuditedOnce(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			rec := &recorder{}
 			r := newRunner(t, rec)
-			auth := apibridge.AuthContext{UserID: 52}
+			auth := AuthContext{UserID: 52}
 			start := time.Now()
 			if _, err := r.Execute(4, routine(t, c.body), auth, runaudit.ManualSubject("r", 4)); err != nil {
 				t.Fatalf("Execute: %v", err)
@@ -99,5 +97,23 @@ func TestEveryOutcomeIsReportedAndAuditedOnce(t *testing.T) {
 				t.Errorf("audited %v, want one %s entry", rec.audits, c.level)
 			}
 		})
+	}
+}
+
+// A run that cannot start is still reported and audited once, as failed:
+// without a catalogue, and when the caller refuses it (a held-back routine).
+func TestARunThatCannotStartIsReportedAndAuditedOnce(t *testing.T) {
+	rec := &recorder{}
+	r := newRunner(t, rec)
+	r.SetCatalogue(apiholder.New(nil, libbridge.ReadWrite, libbridge.Options{})) // never loaded
+	if _, err := r.Execute(4, routine(t, `return { status: "success" };`), AuthContext{UserID: 52}, runaudit.ManualSubject("r", 4)); err == nil {
+		t.Fatal("a run without a catalogue did not fail")
+	}
+	r.Refuse(4, 52, runaudit.ManualSubject("r", 4), "routine 9 predates the platform API")
+	if len(rec.reports) != 2 {
+		t.Errorf("reported %d time(s), want twice", len(rec.reports))
+	}
+	if len(rec.audits) != 2 || rec.audits[0] != "Warning" || rec.audits[1] != "Warning" {
+		t.Errorf("audited %v, want two Warning entries", rec.audits)
 	}
 }

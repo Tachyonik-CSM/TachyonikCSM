@@ -10,7 +10,9 @@
 // user has set that execution rule to Automatic. If so it hands the run to
 // package run — which reports the outcome to AIManager and audits it either
 // way — and deletes the action when the run succeeded, so the user never sees a
-// task they had already chosen to have handled for them.
+// task they had already chosen to have handled for them. A qualifying action
+// whose rule's routine was held back — it predates the platform API, say — is
+// refused the same way a failed run is reported, and stays for the user.
 package autoexecute
 
 import (
@@ -19,10 +21,10 @@ import (
 	"tachyonik/actionexecutor/internal/actionwatcher"
 	"tachyonik/actionexecutor/internal/aiexecutor"
 	"tachyonik/actionexecutor/internal/aimanager"
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/run"
 	"tachyonik/actionexecutor/internal/runaudit"
+	"tachyonik/actionexecutor/internal/servicecall"
 	"tachyonik/lib/logger"
 )
 
@@ -32,10 +34,10 @@ type Handler struct {
 	aiMgrClient *aimanager.Client
 	executor    *aiexecutor.AIActionExecutor
 	runner      *run.Runner
-	// bridge carries the handler's own two requests (the automation setting,
-	// deleting the action), authenticated like every other call.
-	bridge *apibridge.Bridge
-	cfg    *config.Config
+	// calls carries the handler's own two requests (the automation setting,
+	// deleting the action), with the service key on the user's behalf.
+	calls *servicecall.Client
+	cfg   *config.Config
 }
 
 // New creates a new auto-execute handler.
@@ -43,14 +45,13 @@ func New(
 	aiMgrClient *aimanager.Client,
 	executor *aiexecutor.AIActionExecutor,
 	runner *run.Runner,
-	bridge *apibridge.Bridge,
 	cfg *config.Config,
 ) *Handler {
 	return &Handler{
 		aiMgrClient: aiMgrClient,
 		executor:    executor,
 		runner:      runner,
-		bridge:      bridge,
+		calls:       servicecall.New(),
 		cfg:         cfg,
 	}
 }
@@ -103,18 +104,24 @@ func (h *Handler) OnActionCreated(action actionwatcher.Action) {
 		return
 	}
 
+	subject := runaudit.AutoSubject(action.Title, action.ID, executionRuleID)
 	runtime := h.executor.GetRuntime(executionRuleID)
 	if runtime == nil {
+		if why := h.executor.HeldBack(executionRuleID); why != "" {
+			logger.Errorf("autoexecute: action %d not executed: %s", action.ID, why)
+			h.runner.Refuse(executionRuleID, action.UserID, subject, why)
+			return
+		}
 		logger.Warnf("autoexecute: execution rule %d has no loaded runtime", executionRuleID)
 		return
 	}
 
-	auth := h.asUser(action.UserID)
+	auth := run.AuthContext{UserID: action.UserID}
 
 	logger.Infof("autoexecute: auto-executing rule %d for action %d (user %d)",
 		executionRuleID, action.ID, action.UserID)
 
-	result, err := h.runner.Execute(executionRuleID, runtime, auth, runaudit.AutoSubject(action.Title, action.ID, executionRuleID))
+	result, err := h.runner.Execute(executionRuleID, runtime, auth, subject)
 	if err != nil {
 		logger.Errorf("autoexecute: execution failed for rule %d, action %d: %v",
 			executionRuleID, action.ID, err)
@@ -151,8 +158,8 @@ func (h *Handler) checkAutomationStatus(userID, executionRuleID int64) (bool, er
 	var result struct {
 		Settings []userExecutionRuleSetting `json:"settings"`
 	}
-	if err := h.bridge.Call("GET", h.cfg.SystemManager.URL, "/api/user-execution-rule-settings",
-		h.cfg.SystemManager.InternalServiceKey, h.asUser(userID), nil, &result); err != nil {
+	if err := h.calls.Call("GET", h.cfg.SystemManager.URL, "/api/user-execution-rule-settings",
+		h.cfg.SystemManager.InternalServiceKey, userID, nil, &result); err != nil {
 		return false, err
 	}
 	for _, s := range result.Settings {
@@ -166,13 +173,7 @@ func (h *Handler) checkAutomationStatus(userID, executionRuleID int64) (bool, er
 
 // deleteAction calls ActionManager's DELETE /api/actions endpoint.
 func (h *Handler) deleteAction(actionID, userID int64) error {
-	return h.bridge.Call("DELETE", h.cfg.ActionManager.URL, "/api/actions",
-		h.cfg.ActionManager.InternalServiceKey, h.asUser(userID),
+	return h.calls.Call("DELETE", h.cfg.ActionManager.URL, "/api/actions",
+		h.cfg.ActionManager.InternalServiceKey, userID,
 		map[string]interface{}{"ids": []int64{actionID}}, nil)
-}
-
-// asUser is the auth of an automatic run: the service key, on behalf of the
-// action's owner. There is no user token, nobody having pressed anything.
-func (h *Handler) asUser(userID int64) apibridge.AuthContext {
-	return apibridge.AuthContext{UserID: userID}
 }

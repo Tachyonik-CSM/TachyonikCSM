@@ -14,7 +14,7 @@ import (
 	"github.com/dop251/goja"
 )
 
-const reportsItsArguments = `var executors = [{ name: "e", ruleId: 4, run: function (api) {
+const reportsItsArguments = `var routineContract = 2; var executors = [{ name: "e", ruleId: 4, run: function (api) {
 	return { status: "success", message: arguments.length + ":" + typeof api.user };
 } }];`
 

@@ -14,27 +14,31 @@
 # The AI that generates execution routines, and its system prompt, are NOT set
 # here: they are the ActionExecutor module settings in AIManager
 # (AI → Modules), fetched at startup and whenever they change.
+#
+# A routine calls the managers through the platform API bridge: the
+# operations each manager documents and registers in AIManager's API
+# catalogue. The URL and key of each manager below are where those calls go;
+# a manager without a URL is left out of the bridge.
 
-# A routine's api.assets (list, get, create, update, delete),
-# api.vulnerabilities.list and api.detections.list calls go here.
+# The assets, vulnerabilities and detections a routine reads and changes are
+# here.
 assetmanager:
   url: http://localhost:8081  # AssetManager API URL (default: http://localhost:8081)
                               # Env: ASSETMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AssetManager's internal_service_key
                                                             # Env: ASSETMANAGER_INTERNAL_SERVICE_KEY
 
-# SystemManager is used in both directions: the user's organisation and their
-# automation settings (which execution rules run automatically) are read, and a
-# routine's api.user.get and api.organisation.get/update go here; the liveness
-# heartbeat and the audit-trail entry of every run are sent.
+# SystemManager is used in both directions: users' automation settings (which
+# execution rules run automatically) are read, and a routine's calls for the
+# user and the organisation go here; the liveness heartbeat and the
+# audit-trail entry of every run are sent.
 systemmanager:
   url: http://localhost:8083  # SystemManager API URL (default: http://localhost:8083)
                               # Env: SYSTEMMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match SystemManager's internal_service_key
                                                             # Env: SYSTEMMANAGER_INTERNAL_SERVICE_KEY
 
-# A routine's api.sources (list, create, delete) and api.tools (list, get)
-# calls go here.
+# A routine's calls for sources and tool records go here.
 resourcemanager:
   url: http://localhost:8080  # ResourceManager API URL (default: http://localhost:8080)
                               # Env: RESOURCEMANAGER_URL
@@ -42,16 +46,16 @@ resourcemanager:
                                                             # Env: RESOURCEMANAGER_INTERNAL_SERVICE_KEY
 
 # ActionManager is watched for new actions (automatic execution), an action
-# handled automatically is deleted here, and a routine's api.actions (list,
-# create, update, delete) calls go here.
+# handled automatically is deleted here, and a routine's calls for actions go
+# here.
 actionmanager:
   url: http://localhost:8082  # ActionManager API URL (default: http://localhost:8082)
                               # Env: ACTIONMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ActionManager's internal_service_key
                                                             # Env: ACTIONMANAGER_INTERNAL_SERVICE_KEY
 
-# A routine's api.tools.execute runs a security tool through ToolManager, which
-# stores the tool's output files as sources.
+# A routine runs a security tool through ToolManager, which stores the tool's
+# output files as sources.
 toolmanager:
   url: http://localhost:8086  # ToolManager API URL (default: http://localhost:8086)
                               # Env: TOOLMANAGER_URL
@@ -61,8 +65,9 @@ toolmanager:
 # AIManager holds the execution rules, their routines and the module settings;
 # it is watched for changes to all three, and for users' requests to run a rule
 # now, which are claimed and answered here. Each run's result is reported back
-# so the WebUI can show it, and api.tools.list reads the tool capabilities and
-# tool rules from its service-only routes.
+# so the WebUI can show it. It also serves the platform API catalogue the
+# bridge is built from, and a routine's calls for tool capabilities and tool
+# rules go here.
 ai_manager:
   url: http://localhost:8085  # AIManager API URL (default: http://localhost:8085)
                               # Env: ACTIONEXECUTOR_AI_MANAGER_URL
@@ -75,10 +80,10 @@ ai:
 
 execution:
   # How long one routine run (manual or automatic) may take. When it passes, the
-  # routine is interrupted and the run counts as failed. A call to a backend
-  # that is already under way finishes first: other api.* calls wait at most
-  # 30 s, api.tools.execute up to this limit. The WebUI waits for a manual run's
-  # result at least this long.
+  # routine is interrupted and the run counts as failed, and a call to a
+  # manager still under way is cancelled. One call may take up to this limit,
+  # as a tool run does. The WebUI waits for a manual run's result at least
+  # this long.
   timeout_seconds: 280  # (default: 280)
                         # Env: ACTIONEXECUTOR_EXECUTION_TIMEOUT_SECONDS
 

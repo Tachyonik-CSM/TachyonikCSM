@@ -10,14 +10,15 @@ package manualrun
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
 	"tachyonik/actionexecutor/internal/aimanager"
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/executionrulewatcher"
 	"tachyonik/actionexecutor/internal/jsruntime"
+	"tachyonik/actionexecutor/internal/run"
 )
 
 type fakeRequests struct {
@@ -62,21 +63,24 @@ func (f *fakeRequests) ReportExecutionRequest(id int64, done bool, outcome aiman
 type fakeRules struct {
 	rules    map[int64]*aimanager.ExecutionRule
 	runtimes map[int64]*jsruntime.JSExecutorRuntime
+	held     map[int64]string
 }
 
 func (f fakeRules) GetRule(id int64) *aimanager.ExecutionRule        { return f.rules[id] }
 func (f fakeRules) GetRuntime(id int64) *jsruntime.JSExecutorRuntime { return f.runtimes[id] }
+func (f fakeRules) HeldBack(id int64) string                         { return f.held[id] }
 
 type fakeRunner struct {
 	mu       sync.Mutex
-	runs     []apibridge.AuthContext
+	runs     []run.AuthContext
 	subjects []string
 	notRun   []string // subject: why
+	refused  []string // rule: subject: why
 	out      *jsruntime.ExecResult
 	err      error
 }
 
-func (f *fakeRunner) Execute(_ int64, _ *jsruntime.JSExecutorRuntime, auth apibridge.AuthContext, subject string) (*jsruntime.ExecResult, error) {
+func (f *fakeRunner) Execute(_ int64, _ *jsruntime.JSExecutorRuntime, auth run.AuthContext, subject string) (*jsruntime.ExecResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runs = append(f.runs, auth)
@@ -88,6 +92,12 @@ func (f *fakeRunner) RecordNotRun(_ int64, subject, why string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.notRun = append(f.notRun, subject+": "+why)
+}
+
+func (f *fakeRunner) Refuse(ruleID, _ int64, subject, why string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refused = append(f.refused, fmt.Sprintf("%d: %s: %s", ruleID, subject, why))
 }
 
 func ruleFour() fakeRules {
@@ -106,7 +116,7 @@ func TestARequestIsRunForItsUserAndAnswered(t *testing.T) {
 
 	h.OnRequested(executionrulewatcher.RunRequest{ID: 9, ExecutionRuleID: 4, UserID: 52})
 
-	if len(runner.runs) != 1 || runner.runs[0] != (apibridge.AuthContext{UserID: 52, UserRole: "admin"}) {
+	if len(runner.runs) != 1 || runner.runs[0] != (run.AuthContext{UserID: 52, UserRole: "admin"}) {
 		t.Fatalf("runs %+v, want one as user 52 with the recorded role", runner.runs)
 	}
 	got := reqs.reported[9]
@@ -187,5 +197,27 @@ func TestARunFromAnActionIsNamedByIt(t *testing.T) {
 	want := `Action "Retrieve the host assets of the office" (id 812) executed manually by execution rule "Retrieve the host assets" (id 4)`
 	if len(runner.subjects) != 1 || runner.subjects[0] != want {
 		t.Errorf("subjects %q, want %q", runner.subjects, want)
+	}
+}
+
+// A rule whose routine predates the platform API is refused with the reason
+// that held it back: answered, reported as the rule's last execution and
+// audited (Refuse), never run.
+func TestARuleWhoseRoutinePredatesTheAPIIsRefused(t *testing.T) {
+	why := "execution rule 4: routine 240 predates the platform API, which this version no longer runs — generate the rule anew"
+	rules := fakeRules{
+		rules:    map[int64]*aimanager.ExecutionRule{4: {ID: 4, Title: "r"}},
+		runtimes: map[int64]*jsruntime.JSExecutorRuntime{},
+		held:     map[int64]string{4: why},
+	}
+	reqs := newFakeRequests(request)
+	runner := &fakeRunner{}
+	New(reqs, rules, runner).OnRequested(executionrulewatcher.RunRequest{ID: 9})
+	got := reqs.reported[9]
+	if reqs.done[9] || got.Success || got.Error != why || len(runner.runs) != 0 {
+		t.Errorf("reported %+v (done=%v), %d run(s)", got, reqs.done[9], len(runner.runs))
+	}
+	if len(runner.refused) != 1 || !strings.HasPrefix(runner.refused[0], "4: ") || !strings.HasSuffix(runner.refused[0], why) {
+		t.Errorf("refused %v", runner.refused)
 	}
 }

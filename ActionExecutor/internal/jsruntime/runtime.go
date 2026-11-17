@@ -5,13 +5,14 @@
 // Package jsruntime executes the AI-generated execution routines in an embedded
 // JavaScript engine (goja).
 //
-// A routine is an array of executors, each a run(api). api — the synchronous
-// bridge in package apibridge — is the only way it can reach the outside
-// world, for reading as for changing anything, so there is a single place
-// where a routine's effects can be seen, bounded, or replaced with mocks.
-//
-// That substitution is what the routine Test tabs use (AIManager's package
-// dryrun): a mock api that touches nothing, under an interrupt budget.
+// A routine is an array of executors, each a run(api), and declares that it
+// runs on the platform API bridge with a top-level `var routineContract = 2;`
+// (bridge.go). api — the read-write bridge of TachyonikLib's apibridge — is
+// the only way it can reach the outside world, for reading as for changing
+// anything, so there is a single place where a routine's effects can be seen,
+// bounded, or replaced with the managers' mock answers. A routine without the
+// declaration predates the bridge and is refused when it is loaded
+// (ErrPredatesBridge).
 //
 // A real run is bounded: Run interrupts a routine still going at its time
 // limit (execution.timeout_seconds), and the run counts as failed.
@@ -62,8 +63,6 @@ type JSExecutorRuntime struct {
 	mu      sync.RWMutex
 	program *goja.Program
 	ruleIDs []int64
-	// contract is 2 for a bridge routine (bridge.go), 1 otherwise.
-	contract int
 	// operations a bridge routine was recorded as calling (PA-RT-04).
 	operations []string
 }
@@ -73,18 +72,25 @@ func New() *JSExecutorRuntime {
 	return &JSExecutorRuntime{}
 }
 
-// LoadFromString compiles routine code and checks that it defines a usable
-// executors array, by instantiating it once.
+// LoadFromString compiles routine code and checks, by instantiating it once,
+// that it is a bridge routine — ErrPredatesBridge if not — and defines a
+// usable executors array.
 func (e *JSExecutorRuntime) LoadFromString(code string) error {
 	program, err := goja.Compile("routine", code, false)
 	if err != nil {
 		return fmt.Errorf("failed to execute JS code: %w", err)
 	}
-	vm, executors, err := instantiate(program, LoadBudget)
+	vm, err := runTopLevel(program, LoadBudget)
 	if err != nil {
 		return err
 	}
-	contract := routineContract(vm)
+	if !declaresBridge(vm) {
+		return ErrPredatesBridge
+	}
+	executors, err := extractExecutors(vm)
+	if err != nil {
+		return err
+	}
 	ids := make([]int64, len(executors))
 	for i, x := range executors {
 		ids[i] = x.ruleID
@@ -93,7 +99,6 @@ func (e *JSExecutorRuntime) LoadFromString(code string) error {
 	e.mu.Lock()
 	e.program = program
 	e.ruleIDs = ids
-	e.contract = contract
 	e.mu.Unlock()
 
 	logger.Infof("Loaded %d JS executors", len(executors))
@@ -115,17 +120,15 @@ func newVM() *goja.Runtime {
 // what it defines, and a loop there must not hang the loader.
 const LoadBudget = 5 * time.Second
 
-// instantiate runs the program's top-level code in a fresh VM, within budget,
-// and extracts its executors.
-func instantiate(program *goja.Program, budget time.Duration) (*goja.Runtime, []jsExecutor, error) {
+// runTopLevel runs the program's top-level code in a fresh VM, within budget.
+func runTopLevel(program *goja.Program, budget time.Duration) (*goja.Runtime, error) {
 	vm := newVM()
 	timer := time.AfterFunc(budget, func() { vm.Interrupt(errTimeLimit) })
 	defer timer.Stop()
 	if _, err := vm.RunProgram(program); err != nil {
-		return nil, nil, fmt.Errorf("failed to execute JS code: %w", err)
+		return nil, fmt.Errorf("failed to execute JS code: %w", err)
 	}
-	executors, err := extractExecutors(vm)
-	return vm, executors, err
+	return vm, nil
 }
 
 // extractExecutors reads the executors array a routine defines.
@@ -177,7 +180,7 @@ func extractExecutors(vm *goja.Runtime) ([]jsExecutor, error) {
 
 // Run runs the routine's first (and typically only) executor in a VM of its
 // own and returns its parsed result. buildAPI makes the api object for that
-// VM (apibridge.Bridge.Build); it is called once the routine is instantiated.
+// VM (a pass of the platform API bridge); it is called once the routine is instantiated.
 //
 // If the JS throws or the return value cannot be parsed, the result is a
 // failure saying so; an error means the run could not happen at all.
@@ -185,7 +188,8 @@ func extractExecutors(vm *goja.Runtime) ([]jsExecutor, error) {
 // limit bounds the run, top-level code included: when it passes, the
 // JavaScript is interrupted and the result is a failure saying so. The
 // interrupt lands between JavaScript statements; a call waiting in Go (an
-// api.* request) is bounded by its own HTTP timeout instead. Zero means no
+// api.* request) is bounded by the pass's context and its own HTTP timeout
+// instead (PA-BR-10). Zero means no
 // limit.
 func (e *JSExecutorRuntime) Run(buildAPI func(vm *goja.Runtime) goja.Value, limit time.Duration) (*ExecResult, error) {
 	e.mu.RLock()

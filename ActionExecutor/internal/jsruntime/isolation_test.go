@@ -19,7 +19,7 @@ import (
 )
 
 // A routine that remembers the last user it ran for, as a cache would.
-const remembersLastUser = `var lastUser = null;
+const remembersLastUser = `var routineContract = 2; var lastUser = null;
 var executors = [{ name: "e", ruleId: 4, run: function (api) {
 	var seen = lastUser;
 	lastUser = api.user;
@@ -51,7 +51,7 @@ func TestARunSeesNothingOfAnotherUsersRun(t *testing.T) {
 // Runs of one rule no longer queue: with a VM each, two runs overlap.
 func TestRunsOfOneRuleRunSideBySide(t *testing.T) {
 	rt := New()
-	code := `var executors = [{ name: "e", ruleId: 4, run: function (api) {
+	code := `var routineContract = 2; var executors = [{ name: "e", ruleId: 4, run: function (api) {
 		var until = Date.now() + 200; while (Date.now() < until) {}
 		return { status: "success", message: "done" };
 	} }];`

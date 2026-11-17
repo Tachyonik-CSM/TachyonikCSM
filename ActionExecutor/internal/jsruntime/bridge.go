@@ -3,15 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Bridge routines: execution routines that read and write through the
-// platform API bridge, in its read-write profile, instead of this module's
-// hand-written api object (docs/specs/01-platform-api-catalogue.md, PA-BR-09,
-// -10).
+// platform API bridge, in its read-write profile
+// (docs/specs/01-platform-api-catalogue.md, PA-BR-09, -10).
 //
 // A routine declares itself one with a top-level `var routineContract = 2;`.
-// Its executors are the same objects — name, ruleId, run(api) — but api is the
-// bridge: api.<namespace>.<verb>({…, body}) with the answers the managers
-// document. Routines without the declaration keep running on the hand-written
-// bridge until it is removed (PA-MIG-01).
+// Its executors are objects — name, ruleId, run(api) — and api is the bridge:
+// api.<namespace>.<verb>({…, body}) with the answers the managers document.
+// A routine without the declaration was written for the hand-written api
+// object this module had before; that object is gone, so such a routine is
+// refused when it is loaded (ErrPredatesBridge) and never runs.
 //
 // A bridge routine is also validated before it is stored: it is run once per
 // mock scenario against the managers' mock answers, and refused when it calls
@@ -21,6 +21,7 @@
 package jsruntime
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -34,22 +35,17 @@ import (
 // ContractBridge is the routineContract value of a bridge routine.
 const ContractBridge = 2
 
-func routineContract(vm *goja.Runtime) int {
+// ErrPredatesBridge is LoadFromString's answer to a routine that does not
+// declare `var routineContract = 2;`: it was written for the api object this
+// module no longer has. Callers name the rule and routine.
+var ErrPredatesBridge = errors.New("the routine does not begin with var routineContract = 2; it predates the platform API")
+
+func declaresBridge(vm *goja.Runtime) bool {
 	v := vm.Get("routineContract")
 	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
-		return 1
+		return false
 	}
-	if v.ToInteger() == ContractBridge {
-		return ContractBridge
-	}
-	return 1
-}
-
-// IsBridge reports whether the loaded routine runs on the API bridge.
-func (e *JSExecutorRuntime) IsBridge() bool {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.contract == ContractBridge
+	return v.ToInteger() == ContractBridge
 }
 
 // SetOperations records the bridge operations the routine calls.

@@ -4,8 +4,9 @@
 
 // Command actionexecutor is the ActionExecutor daemon entry point. It loads
 // configuration, sets up logging, builds the service clients, resolves the
-// configured AI chat client, and wires up the AIActionExecutor, the api bridge
-// and the runner shared by manual and automatic runs. It then starts the action
+// configured AI chat client, and wires up the AIActionExecutor, the platform
+// API catalogue routines run on, and the runner shared by manual and automatic
+// runs. It then starts the action
 // watcher (automatic runs), the execution-rule watcher (rule changes and users'
 // run requests) and the SystemManager heartbeat, and runs until it receives
 // SIGINT/SIGTERM.
@@ -29,7 +30,6 @@ import (
 	"tachyonik/actionexecutor/internal/actionwatcher"
 	"tachyonik/actionexecutor/internal/aiexecutor"
 	"tachyonik/actionexecutor/internal/aimanager"
-	"tachyonik/actionexecutor/internal/apibridge"
 	"tachyonik/actionexecutor/internal/autoexecute"
 	"tachyonik/actionexecutor/internal/codegen"
 	"tachyonik/actionexecutor/internal/config"
@@ -202,13 +202,13 @@ func runDaemon(cfg *config.Config) {
 	aiExec := aiexecutor.New(aiMgrClient, resolveAI(cfg, aiMgrClient), cfg)
 
 	// The platform API catalogue, and the read-write bridge built from it,
-	// for bridge routines (docs/specs/01-platform-api-catalogue.md). Loaded
-	// before the rules, so a bridge routine is checked against it as it loads.
+	// that routines run on (docs/specs/01-platform-api-catalogue.md). Loaded
+	// before the rules, so a routine is checked against it as it loads.
 	apiCatalogue := newAPICatalogue(cfg)
 	loadAPICatalogue := func() {
 		cat, err := aiMgrClient.GetAPICatalogue()
 		if err != nil {
-			logger.Warnf("The platform API catalogue cannot be read yet, bridge routines do not run until it can: %v", err)
+			logger.Warnf("The platform API catalogue cannot be read yet, routines do not run until it can: %v", err)
 			return
 		}
 		docs := make([]apiholder.Document, len(cat.Documents))
@@ -254,12 +254,10 @@ func runDaemon(cfg *config.Config) {
 	defer aimw.Close()
 	logger.Info("AIManager settings watcher started")
 
-	bridge := apibridge.New(cfg)
-
 	// One runner for manual and automatic runs alike: it reports each result
 	// to AIManager and writes the audit entry through SystemManager.
 	smClient := systemmanager.NewClient(cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey)
-	runner := run.New(cfg, bridge, aiMgrClient, smClient)
+	runner := run.New(cfg, aiMgrClient, smClient)
 	runner.SetCatalogue(apiCatalogue)
 
 	// Manual runs: a user's Execute arrives as a request from AIManager.
@@ -298,7 +296,7 @@ func runDaemon(cfg *config.Config) {
 	}
 
 	// Create auto-execute handler and start action watcher
-	autoExecHandler := autoexecute.New(aiMgrClient, aiExec, runner, bridge, cfg)
+	autoExecHandler := autoexecute.New(aiMgrClient, aiExec, runner, cfg)
 	aw := actionwatcher.New(cfg.ActionManager.URL, cfg.ActionManager.InternalServiceKey, func(action actionwatcher.Action) {
 		go autoExecHandler.OnActionCreated(action)
 	})
