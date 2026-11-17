@@ -121,14 +121,14 @@ paths:
               type: object
               required: [name, type]
               properties:
-                name: { type: string, description: "For a host, its address (AM-DATA-05)." }
-                type: { type: string, enum: [Host], description: Matched ignoring case (AM-DATA-02). }
+                name: { type: string, description: "The asset's name. For a host, its IP address (AM-DATA-05) — or its hostname when the source names no address; one asset per owner, name and type (AM-DATA-01)." }
+                type: { type: string, enum: [Host], description: "The asset type; Host is the only one (AM-DATA-02). Matched ignoring case; any other type is refused with 400." }
                 sourceId: { type: integer, description: The ResourceManager source id. }
                 sourceLabel: { type: string, description: The source's filename. }
                 userId: { type: integer, x-bridge-bound: user, description: "The owner; honoured from a service only (AM-SEC-12). The API bridge sets it to the user a routine runs for." }
-                lastSeen: { $ref: "#/components/schemas/InputTime" }
-                scanCoverageVerifiedAt: { $ref: "#/components/schemas/InputTime" }
-                scanCoverageIntervalDays: { type: integer, minimum: 1, description: Below 1 is ignored with a warning (AM-DATA-29). }
+                lastSeen: { type: string, description: "When the source saw the asset. RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. Left out, empty or unreadable: the time of the request (AM-API-07)." }
+                scanCoverageVerifiedAt: { type: string, description: "When the source verified that the asset is in a scheduled vulnerability scan — only as the source states it (AM-DATA-29). RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. An unreadable time is left out with a warning (AM-API-07)." }
+                scanCoverageIntervalDays: { type: integer, minimum: 1, description: "The shortest interval, in whole days, of a scheduled vulnerability scan that includes the asset, as the source states it (a weekly schedule is 7). Below 1 is ignored with a warning (AM-DATA-29)." }
               description: At least one of sourceId and sourceLabel is required (AM-DATA-07).
       responses:
         "200": { description: "An existing asset, reported again.", content: { application/json: { schema: { $ref: "#/components/schemas/Asset" } } } }
@@ -277,9 +277,9 @@ paths:
                     type: object
                     required: [target, scanCoverageIntervalDays]
                     properties:
-                      target: { type: string, description: 'An address, a CIDR network, a range "a-b", or a hostname.' }
-                      scanCoverageIntervalDays: { type: integer, minimum: 1 }
-                      scanCoverageVerifiedAt: { $ref: "#/components/schemas/InputTime" }
+                      target: { type: string, description: 'What the schedule scans, as the table states it: an IP address ("192.168.1.5"), a CIDR network ("192.168.1.0/24"), an address range ("192.168.1.1-192.168.1.50") or a hostname. An address covers its host asset, created when missing; a network or range covers the existing host assets inside it; a hostname is skipped (AM-DATA-31).' }
+                      scanCoverageIntervalDays: { type: integer, minimum: 1, description: "The schedule's interval in whole days, at least 1; below 1 the entry counts as invalid (AM-DATA-31)." }
+                      scanCoverageVerifiedAt: { type: string, description: "When the table verified the schedule. RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. An unreadable time is left out with a warning (AM-API-07)." }
               description: At least one of sourceId and sourceLabel is required.
       responses:
         "200":
@@ -397,7 +397,7 @@ paths:
                 - type: object
                   required: [severity]
                   properties:
-                    severity: { type: integer, minimum: 0, maximum: 100 }
+                    severity: { type: integer, minimum: 0, maximum: 100, description: "An integer from 0 to 100 (AM-DATA-14); outside it the vulnerability is refused with 400. A scanner's scale is mapped onto it proportionally — CVSS 0.0–10.0 times 10, rounded (7.5 is 75). The bands: 90–100 critical, 70–89 high, 40–69 medium, 1–39 low (AM-DATA-40)." }
       responses:
         "201": { description: "The vulnerability as stored.", content: { application/json: { schema: { $ref: "#/components/schemas/Vulnerability" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -1361,10 +1361,6 @@ components:
       properties:
         error: { type: string }
 
-    InputTime:
-      type: string
-      description: RFC 3339; a time without zone is also read. An unreadable value is ignored with a warning (AM-API-07).
-
     Filter:
       type: object
       properties:
@@ -1408,9 +1404,9 @@ components:
       type: object
       required: [name, host, port]
       properties:
-        name: { type: string }
-        host: { type: string, description: The name of the asset it refers to (AM-DATA-13). }
-        port: { type: string, examples: ["80/tcp"] }
+        name: { type: string, description: "What was found, e.g. the scanner's name of the test or finding." }
+        host: { type: string, description: "The name of the asset it refers to, exactly as that asset is named — for a host, its address (AM-DATA-13)." }
+        port: { type: string, examples: ["80/tcp"], description: 'Where on the host: "port/protocol" ("443/tcp", "53/udp"), or "-" when the finding concerns no port or the port is unknown. Must not be empty.' }
         sourceId: { type: integer }
         sourceLabel: { type: string }
         source:
@@ -1418,7 +1414,7 @@ components:
           deprecated: true
           description: 'The older "filename (ID: N)", read when sourceId and sourceLabel are both missing; until the release after schema version 6 (AM-DATA-16).'
         userId: { type: integer, description: Honoured from a service only. }
-        lastSeen: { $ref: "#/components/schemas/InputTime" }
+        lastSeen: { type: string, description: "When the source saw the finding. RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. Left out, empty or unreadable: the time of the request (AM-API-07)." }
 
     Vulnerability:
       type: object
