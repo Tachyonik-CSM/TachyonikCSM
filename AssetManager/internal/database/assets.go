@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"tachyonik/lib/listquery"
 )
 
 // GetUserIDsByAssetSource returns distinct user IDs that have assets linked
@@ -181,25 +183,33 @@ func (db *DB) CountAssetsByUsers(userIDs []int64) (int, error) {
 	return count, nil
 }
 
-// GetAssetsByUsersWithFilter returns assets for multiple users with optional filtering
+// GetAssetsByUsersWithFilter returns assets for multiple users with optional
+// filtering: newest first without a filter, by severity then newest with one.
 func (db *DB) GetAssetsByUsersWithFilter(userIDs []int64, filter *AssetFilter) ([]Asset, error) {
-	if filter == nil || len(filter.Rules) == 0 {
-		return db.GetAllAssetsByUsers(userIDs)
-	}
+	return db.ListAssets(userIDs, filter, listquery.Query{})
+}
 
+// ListAssets returns the users' assets matching the filter, in the order and
+// at most as many as q asks for (AM-API-16); without a sort in the order of
+// GetAssetsByUsersWithFilter.
+func (db *DB) ListAssets(userIDs []int64, filter *AssetFilter, q listquery.Query) ([]Asset, error) {
 	clause, args := buildUserIDsClause(userIDs)
 	query := "SELECT " + assetColumns + " FROM assets WHERE " + clause
+	order := "created_at DESC"
 
-	filterSQL, filterArgs, ferr := buildAssetFilterSQL(filter, userIDs)
-	if ferr != nil {
-		return nil, ferr
-	}
-	if filterSQL != "" {
-		query += " AND (" + filterSQL + ")"
-		args = append(args, filterArgs...)
+	if filter != nil && len(filter.Rules) > 0 {
+		filterSQL, filterArgs, ferr := buildAssetFilterSQL(filter, userIDs)
+		if ferr != nil {
+			return nil, ferr
+		}
+		if filterSQL != "" {
+			query += " AND (" + filterSQL + ")"
+			args = append(args, filterArgs...)
+		}
+		order = "severity DESC, created_at DESC"
 	}
 
-	query += " ORDER BY severity DESC, created_at DESC"
+	query += " ORDER BY " + q.OrderBy(order, listTieBreak) + q.LimitSQL()
 
 	var assets []Asset
 	err := db.Select(&assets, query, args...)

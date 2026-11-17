@@ -34,6 +34,8 @@ tags:
     description: Weaknesses found on hosts.
   - name: Detections
     description: Things observed on hosts, without severity.
+  - name: MCP
+    description: The MCP server, for signed-in users only (AM-API-15, AM-SEC-23).
   - name: Internal
     description: Service key only (AM-SEC-05).
   - name: Operation
@@ -44,17 +46,31 @@ paths:
     get:
       operationId: assets.list
       x-bridge: read
+      x-mcp: read
       x-invalidated-by: [ASSET_CREATED, ASSET_UPDATED, ASSET_DELETED, VULNERABILITY_CREATED, VULNERABILITY_UPDATED, VULNERABILITY_DELETED, DETECTION_CREATED, DETECTION_UPDATED, DETECTION_DELETED]
       tags: [Assets]
       summary: List the assets of the visible set
       description: |
-        All matching assets, ordered by creation, newest first (with a filter:
-        by severity, highest first). No paging. A service names the user with
-        `userId`; a user who sends it gets 403 (AM-SEC-12).
+        The user's assets — in a shared workspace, everyone's in it — that
+        match `filter`, ordered by creation, newest first (with a filter: by
+        severity, highest first), or by `sort` and `order`. An asset's
+        `severity` is 0–100, the highest of its vulnerabilities (critical
+        90–100, high 70–89, medium 40–69, low 1–39, 0 none); in a filter rule
+        it is written 0.0–10.0. No paging: `limit` answers only the first so
+        many, and `total` still counts all that match (AM-API-16). For counts
+        by severity band or age, assets.stats answers without listing. A
+        service names the user with `userId`; a user who sends it gets 403
+        (AM-SEC-12).
       parameters:
         - $ref: "#/components/parameters/actingUser"
         - $ref: "#/components/parameters/filter"
         - $ref: "#/components/parameters/userIdForService"
+        - name: sort
+          in: query
+          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names and types ignoring case; an asset never scanned (lastScanned null) sorts as the oldest. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
+          schema: { type: string, enum: [severity, score, name, type, createdAt, modifiedAt, lastSeen, lastScanned] }
+        - $ref: "#/components/parameters/listOrder"
+        - $ref: "#/components/parameters/listLimit"
       responses:
         "200":
           description: The assets.
@@ -67,7 +83,7 @@ paths:
                   assets:
                     type: [array, "null"]
                     items: { $ref: "#/components/schemas/Asset" }
-                  total: { type: integer, description: The number of assets listed. }
+                  total: { type: integer, description: "The number of assets matching the filter — with `limit`, also those not answered." }
                   maxHostAssets:
                     type: integer
                     description: The host-asset limit in effect, the lower of the user's and the licence's; 0 is no limit.
@@ -289,10 +305,15 @@ paths:
     get:
       operationId: assets.stats
       x-bridge: read
+      x-mcp: read
       x-invalidated-by: [ASSET_CREATED, ASSET_UPDATED, ASSET_DELETED, VULNERABILITY_CREATED, VULNERABILITY_UPDATED, VULNERABILITY_DELETED, DETECTION_CREATED, DETECTION_UPDATED, DETECTION_DELETED]
       tags: [Assets]
       summary: Statistics over the visible set's assets
-      description: Severity bands as in AM-DATA-40; host assets by age as below.
+      description: |
+        Counts over the user's assets (in a shared workspace, everyone's in
+        it), without listing them: by severity band of the 0–100 severity
+        (AM-DATA-40), and the host assets by when they were last seen, last
+        scanned, and by their scan coverage interval.
       parameters:
         - $ref: "#/components/parameters/actingUser"
         - $ref: "#/components/parameters/userIdForService"
@@ -318,13 +339,28 @@ paths:
     get:
       operationId: vulnerabilities.list
       x-bridge: read
+      x-mcp: read
       x-invalidated-by: [VULNERABILITY_CREATED, VULNERABILITY_UPDATED, VULNERABILITY_DELETED]
       tags: [Vulnerabilities]
       summary: List the vulnerabilities of the visible set
-      description: Ordered by severity, highest first, then newest first. No paging.
+      description: |
+        The weaknesses found on the user's assets (in a shared workspace, on
+        everyone's in it) that match `filter`: each with its name (often with
+        the CVE), the affected asset (`host`) and port, and `severity` 0–100
+        (critical 90–100, high 70–89, medium 40–69, low 1–39); in a filter
+        rule severity is written 0.0–10.0. Ordered by severity, highest
+        first, then newest first, or by `sort` and `order`. No paging:
+        `limit` answers only the first so many, and `total` still counts all
+        that match (AM-API-16).
       parameters:
         - $ref: "#/components/parameters/actingUser"
         - $ref: "#/components/parameters/filter"
+        - name: sort
+          in: query
+          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names and hosts ignoring case. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
+          schema: { type: string, enum: [severity, name, host, createdAt, modifiedAt, lastSeen] }
+        - $ref: "#/components/parameters/listOrder"
+        - $ref: "#/components/parameters/listLimit"
       responses:
         "200":
           description: The vulnerabilities.
@@ -334,7 +370,7 @@ paths:
                 type: object
                 properties:
                   vulnerabilities: { type: [array, "null"], items: { $ref: "#/components/schemas/Vulnerability" } }
-                  total: { type: integer }
+                  total: { type: integer, description: "The number of vulnerabilities matching the filter — with `limit`, also those not answered." }
                   maxVulnerabilities: { type: integer, description: 0 is no limit. }
               examples:
                 anonymous-at-source-limit: { $ref: "#/components/examples/VulnerabilityListAnonymous" }
@@ -424,13 +460,26 @@ paths:
     get:
       operationId: detections.list
       x-bridge: read
+      x-mcp: read
       x-invalidated-by: [DETECTION_CREATED, DETECTION_UPDATED, DETECTION_DELETED]
       tags: [Detections]
       summary: List the detections of the visible set
-      description: Newest first. No paging.
+      description: |
+        What was observed on the user's assets (in a shared workspace, on
+        everyone's in it) — services, software, open ports — without a
+        severity, that match `filter`: each with its name, the asset
+        (`host`) and port. Newest first, or by `sort` and `order`. No paging:
+        `limit` answers only the first so many, and `total` still counts all
+        that match (AM-API-16).
       parameters:
         - $ref: "#/components/parameters/actingUser"
         - $ref: "#/components/parameters/filter"
+        - name: sort
+          in: query
+          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names and hosts ignoring case. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
+          schema: { type: string, enum: [name, host, createdAt, modifiedAt, lastSeen] }
+        - $ref: "#/components/parameters/listOrder"
+        - $ref: "#/components/parameters/listLimit"
       responses:
         "200":
           description: The detections.
@@ -440,7 +489,7 @@ paths:
                 type: object
                 properties:
                   detections: { type: [array, "null"], items: { $ref: "#/components/schemas/Detection" } }
-                  total: { type: integer }
+                  total: { type: integer, description: "The number of detections matching the filter — with `limit`, also those not answered." }
                   maxDetections: { type: integer, description: 0 is no limit. }
               examples:
                 anonymous-at-source-limit: { $ref: "#/components/examples/DetectionListAnonymous" }
@@ -579,6 +628,58 @@ paths:
         "200": { description: "The user ids.", content: { application/json: { schema: { type: object, properties: { userIds: { type: array, items: { type: integer } } } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/mcp:
+    post:
+      operationId: assetManager.mcp
+      tags: [MCP]
+      summary: The manager's MCP server
+      description: |
+        MCP's JSON-RPC over HTTP POST, one JSON object per request:
+        `initialize`, `ping`, `tools/list`, `tools/call` (AM-API-15). The
+        tools are the operations of this document marked `x-mcp`, named by
+        their operationId (PA-MCP-01, PA-MCP-02, PA-MCP-04). A tool call is
+        made as the API call it stands for, with the caller's session, and
+        answers what that call answers the caller (PA-MCP-06). A session
+        only; a request carrying the internal service key is refused with 403
+        (AM-SEC-23). A notification (no `id`) is answered 202 with no body.
+      security: [ { session: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc: { const: "2.0" }
+                id: { type: [integer, string], description: Absent for a notification. }
+                method: { type: string, description: "initialize, ping, tools/list, tools/call or notifications/initialized." }
+                params: { type: object, description: "The method's parameters; for tools/call `{name, arguments}`." }
+      responses:
+        "200":
+          description: The JSON-RPC answer; a failed tool call is a result with `isError`, not an error.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jsonrpc, id]
+                properties:
+                  jsonrpc: { const: "2.0" }
+                  id: { type: [integer, string, "null"] }
+                  result: { type: object, description: The method's result. }
+                  error:
+                    type: object
+                    properties:
+                      code: { type: integer }
+                      message: { type: string }
+        "202": { description: A notification was taken. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: "The internal service key was presented (AM-SEC-23), or the account is deactivated (AM-SEC-03; known deviation, plain text, D1)."
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/Error" } }
+            text/plain: { schema: { type: string } }
 
   /health:
     get:
@@ -1143,13 +1244,19 @@ components:
       name: filter
       in: query
       description: |
-        A JSON-encoded Filter. Columns per list: assets — name, type, severity,
+        A JSON-encoded Filter, {"rules": [{"column", "operator", "value"}],
+        "matchAll"}: matchAll true joins the rules by AND, false by OR; the
+        value is a string. Columns per list: assets — name, type, severity,
         score, lastSeenDays, lastScannedDays, coverageVerifiedDays,
         scanCoverageIntervalDays, detections; vulnerabilities — severity,
         name, host; detections — name, host. Operators: >, <, >=, <=, =,
         contains, does not contain; "is set" and "is not set" (no value) on
         lastScannedDays, coverageVerifiedDays and scanCoverageIntervalDays.
-        Name and type take contains and does not contain; type also =. A rule
+        Name and type take contains and does not contain; type also =.
+        Scales: severity 0.0–10.0, a tenth of the answers' 0–100 (critical is
+        >= 9, high >= 7, medium >= 4, low > 0); score 0–100 as answered; the
+        …Days columns whole days ago (scanCoverageIntervalDays: days between
+        scans); detections the number of detections on the asset. A rule
         that cannot be read (unknown column, an operator the column does not
         take, a value it cannot read) is refused with 400, naming the rule and
         why, e.g. `Filter rule 2: "severity" needs a number, not "high"`
@@ -1157,6 +1264,16 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Filter" }
+    listOrder:
+      name: order
+      in: query
+      description: "The direction of `sort`: asc (lowest, oldest, A first) or desc (highest, newest, Z first). Default: asc for the text fields (name, type, host), desc for the others. Without `sort` it is refused with 400 (AM-API-16)."
+      schema: { type: string, enum: [asc, desc] }
+    listLimit:
+      name: limit
+      in: query
+      description: "Answer at most this many records, after filtering and sorting, from 1 to 500; more or fewer is refused with 400. `total` still counts every matching record, so a total above the number answered says the list was cut. Absent: every matching record (AM-API-04, AM-API-16)."
+      schema: { type: integer, minimum: 1, maximum: 500 }
     userIdForService:
       name: userId
       in: query
@@ -1275,15 +1392,15 @@ components:
         id: { type: integer }
         name: { type: string }
         type: { type: string, enum: [Host] }
-        severity: { type: integer, minimum: 0, maximum: 100, description: Derived (AM-DATA-17). }
-        score: { type: integer, minimum: 0, maximum: 100, description: Derived (AM-DATA-18). }
+        severity: { type: integer, minimum: 0, maximum: 100, description: "0–100, the highest severity of its vulnerabilities, 0 without any: critical 90–100, high 70–89, medium 40–69, low 1–39 (AM-DATA-17)." }
+        score: { type: integer, minimum: 0, maximum: 100, description: "0–100, higher is better: 100 − severity; 100 with findings none of which is severe; 0 with no findings at all (AM-DATA-18)." }
         userId: { type: integer }
         createdAt: { type: string, format: date-time }
         modifiedAt: { type: string, format: date-time }
-        lastSeen: { type: string, format: date-time, description: Derived (AM-DATA-20). }
-        lastScanned: { type: [string, "null"], format: date-time, description: Derived (AM-DATA-21). }
+        lastSeen: { type: string, format: date-time, description: "The newest sighting of it or of a finding on it (AM-DATA-20)." }
+        lastScanned: { type: [string, "null"], format: date-time, description: "The last vulnerability scan; null when never scanned (AM-DATA-21)." }
         lastScanCoverageVerification: { type: [string, "null"], format: date-time, description: Combined over the links (AM-DATA-30). }
-        scanCoverageIntervalDays: { type: [integer, "null"], description: Combined over the links (AM-DATA-30). }
+        scanCoverageIntervalDays: { type: [integer, "null"], description: "The days between its scheduled scans, combined over the links; null when not monitored (AM-DATA-30)." }
         sources: { type: array, items: { $ref: "#/components/schemas/AssetSource" } }
         sourcesLabel: { type: string, description: 'The sources'' labels, comma-separated; "(unknown)" for a link without one.' }
 
@@ -1310,7 +1427,7 @@ components:
         name: { type: string }
         host: { type: string }
         port: { type: string }
-        severity: { type: integer, minimum: 0, maximum: 100 }
+        severity: { type: integer, minimum: 0, maximum: 100, description: "0–100, ten times the CVSS-like 0.0–10.0: critical 90–100, high 70–89, medium 40–69, low 1–39." }
         sourceId: { type: [integer, "null"] }
         sourceLabel: { type: string }
         userId: { type: integer }
@@ -1335,7 +1452,7 @@ components:
     AssetStats:
       type: object
       properties:
-        total: { type: integer }
+        total: { type: integer, description: "All the assets counted, every band together." }
         critical: { type: integer, description: severity 90–100 }
         high: { type: integer, description: 70–89 }
         medium: { type: integer, description: 40–69 }

@@ -245,6 +245,9 @@ func (h *Handler) SetupRoutes() http.Handler {
 	api.HandleFunc("/detections/by-source", h.DeleteDetectionsBySource).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/detections/by-source", h.ClearDetectionSourcesBySource).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/detections/stale", h.DeleteStaleDetectionsBySource).Methods("DELETE", "OPTIONS")
+	// The manager's MCP server, for a signed-in user only (PA-MCP-04, -06):
+	// its tool calls are replayed through r, so the API's own checks apply.
+	api.Handle("/mcp", mcpServer(r)).Methods("POST", "OPTIONS")
 
 	// Internal service routes (require internal service key)
 	internalRoutes := api.PathPrefix("/internal").Subrouter()

@@ -16,6 +16,7 @@ import (
 
 	"tachyonik/assetmanager/internal/database"
 	ws "tachyonik/assetmanager/internal/websocket"
+	"tachyonik/lib/listquery"
 	"tachyonik/lib/logger"
 )
 
@@ -58,12 +59,26 @@ func (h *Handler) ListVulnerabilities(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// sort, order and limit (AM-API-16); absent, the list is as it always was.
+	lq, err := listquery.Parse(r.URL.Query(), database.VulnerabilitySortFields)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	visibleUserIDs := h.GetVisibleUserIDs(r)
 
-	vulnerabilities, err := h.db.GetVulnerabilitiesByUsersWithFilter(visibleUserIDs, filter)
+	vulnerabilities, err := h.db.ListVulnerabilities(visibleUserIDs, filter, lq)
 	if err != nil {
 		logger.Errorf("Failed to retrieve vulnerabilities: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to retrieve vulnerabilities")
+		return
+	}
+	total, err := listTotal(lq, len(vulnerabilities), func() (int, error) {
+		return h.db.CountVulnerabilitiesByUsersWithFilter(visibleUserIDs, filter)
+	})
+	if err != nil {
+		logger.Errorf("Failed to count vulnerabilities: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to retrieve vulnerabilities")
 		return
 	}
@@ -81,7 +96,7 @@ func (h *Handler) ListVulnerabilities(w http.ResponseWriter, r *http.Request) {
 
 	response := ListVulnerabilitiesResponse{
 		Vulnerabilities:    vulnerabilities,
-		Total:              len(vulnerabilities),
+		Total:              total,
 		MaxVulnerabilities: maxVulnerabilities,
 	}
 

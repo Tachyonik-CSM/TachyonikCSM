@@ -232,6 +232,20 @@ Log format includes:
 http://localhost:8081/api
 ```
 
+### MCP server
+
+`POST /api/mcp` is AssetManager's MCP server (MCP's JSON-RPC, one JSON object per
+request: `initialize`, `ping`, `tools/list`, `tools/call`), for AI agents such
+as the chat acting for a signed-in user
+([PA-MCP-04 to -06](../docs/specs/01-platform-api-catalogue.md)). Its tools
+are generated at startup from `spec/openapi.yaml`: one per operation marked
+`x-mcp`, named by its `operationId`. It takes a user's session (`Authorization: Bearer`) only; a request
+carrying the internal service key is refused with 403 (AM-API-15, AM-SEC-23). A tool call is made as
+the API call it stands for, through the same router with the caller's
+session, so it answers exactly what that call answers the user.
+
+The operations marked `x-mcp: read` — the chat's tools for AssetManager's data — are `assets.stats`, `assets.list`, `vulnerabilities.list` and `detections.list`. A test fails when the server offers anything else, or when a signed-in user cannot call one of them (PA-MCP-03).
+
 ### Endpoints
 
 | Method | Endpoint | Description |
@@ -260,6 +274,7 @@ http://localhost:8081/api
 | `DELETE` | `/api/detections/stale` | Delete detections not modified since a given timestamp (internal only) |
 | `POST` | `/api/internal/organisation/recalculate-score` | Recalculate the organisation score for a user (internal only) |
 | `GET` | `/api/internal/users/ids` | Distinct user ids this service holds data for. SystemManager's orphan sweep diffs it against the live users and purges the strays (internal only) |
+| `POST` | `/api/mcp` | The MCP server, for a signed-in user's session only (see *MCP server*) |
 
 #### Findings and their source
 
@@ -272,6 +287,16 @@ column, an operator the column does not take, or a value it cannot read (a
 number where one is needed) is answered with `400` and the rule and the
 reason, e.g. `{"error": "Filter rule 2: \"severity\" needs a number, not \"high\""}`.
 Leaving the rule out used to list more than was asked for (AM-API-05).
+
+**The three lists can be sorted and cut** (AM-API-16): `?sort=<field>` —
+assets `severity`, `score`, `name`, `type`, `createdAt`, `modifiedAt`,
+`lastSeen`, `lastScanned`; vulnerabilities `severity`, `name`, `host`,
+`createdAt`, `modifiedAt`, `lastSeen`; detections `name`, `host`,
+`createdAt`, `modifiedAt`, `lastSeen` — with `&order=asc|desc` (default asc
+for text, desc for numbers and times), and `?limit=1..500`, which answers at
+most that many while `total` still counts every match. All three are
+optional; without them a list is answered as before. An unknown field or
+order, `order` without `sort`, or a limit outside 1–500 is refused with `400`.
 
 The `by-source` and `stale` endpoints are called with the source reference `?source=filename (ID: N)` and find a source's findings by the id in it — so a renamed file still finds its own. A reference without `(ID: N)` is refused with `400`. Deleting by ID removes only findings that no source owns: no `sourceId` and no `sourceLabel`.
 

@@ -16,6 +16,7 @@ import (
 
 	"tachyonik/assetmanager/internal/database"
 	ws "tachyonik/assetmanager/internal/websocket"
+	"tachyonik/lib/listquery"
 	"tachyonik/lib/logger"
 )
 
@@ -57,12 +58,26 @@ func (h *Handler) ListDetections(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// sort, order and limit (AM-API-16); absent, the list is as it always was.
+	lq, err := listquery.Parse(r.URL.Query(), database.DetectionSortFields)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	visibleUserIDs := h.GetVisibleUserIDs(r)
 
-	detections, err := h.db.GetDetectionsByUsersWithFilter(visibleUserIDs, filter)
+	detections, err := h.db.ListDetections(visibleUserIDs, filter, lq)
 	if err != nil {
 		logger.Errorf("Failed to retrieve detections: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to retrieve detections")
+		return
+	}
+	total, err := listTotal(lq, len(detections), func() (int, error) {
+		return h.db.CountDetectionsByUsersWithFilter(visibleUserIDs, filter)
+	})
+	if err != nil {
+		logger.Errorf("Failed to count detections: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to retrieve detections")
 		return
 	}
@@ -80,7 +95,7 @@ func (h *Handler) ListDetections(w http.ResponseWriter, r *http.Request) {
 
 	response := ListDetectionsResponse{
 		Detections:    detections,
-		Total:         len(detections),
+		Total:         total,
 		MaxDetections: maxDetections,
 	}
 

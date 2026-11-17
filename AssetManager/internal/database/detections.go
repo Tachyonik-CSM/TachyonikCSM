@@ -11,6 +11,8 @@ package database
 import (
 	"fmt"
 	"time"
+
+	"tachyonik/lib/listquery"
 )
 
 // Detection represents a detection (severity 0 finding) in the database
@@ -38,11 +40,24 @@ func (db *DB) GetDetectionHostsByIDs(ids []int64, userID int64) ([]string, error
 // GetDetectionsByUsersWithFilter returns the users' detections matching the
 // filter (all of them for none), newest first.
 func (db *DB) GetDetectionsByUsersWithFilter(userIDs []int64, filter *DetectionFilter) ([]Detection, error) {
+	return db.ListDetections(userIDs, filter, listquery.Query{})
+}
+
+// ListDetections returns the users' detections matching the filter, in the order
+// and at most as many as q asks for (AM-API-16); without a sort in the order
+// of GetDetectionsByUsersWithFilter.
+func (db *DB) ListDetections(userIDs []int64, filter *DetectionFilter, q listquery.Query) ([]Detection, error) {
 	var detections []Detection
-	if err := db.listFindings(detectionKind, &detections, userIDs, filter); err != nil {
+	if err := db.listFindings(detectionKind, &detections, userIDs, filter, q); err != nil {
 		return nil, err
 	}
 	return detections, nil
+}
+
+// CountDetectionsByUsersWithFilter counts the users' detections matching the
+// filter.
+func (db *DB) CountDetectionsByUsersWithFilter(userIDs []int64, filter *DetectionFilter) (int, error) {
+	return db.countFindings(detectionKind, userIDs, filter)
 }
 
 // CountDetectionsByUserWithFilter counts the user's detections matching the

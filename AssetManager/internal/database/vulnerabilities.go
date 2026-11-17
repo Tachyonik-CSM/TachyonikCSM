@@ -11,6 +11,8 @@ package database
 import (
 	"fmt"
 	"time"
+
+	"tachyonik/lib/listquery"
 )
 
 // Vulnerability represents a vulnerability in the database
@@ -39,11 +41,24 @@ func (db *DB) GetVulnerabilityHostsByIDs(ids []int64, userID int64) ([]string, e
 // GetVulnerabilitiesByUsersWithFilter returns the users' vulnerabilities
 // matching the filter (all of them for none), by severity, then newest first.
 func (db *DB) GetVulnerabilitiesByUsersWithFilter(userIDs []int64, filter *VulnerabilityFilter) ([]Vulnerability, error) {
+	return db.ListVulnerabilities(userIDs, filter, listquery.Query{})
+}
+
+// ListVulnerabilities returns the users' vulnerabilities matching the filter, in the order
+// and at most as many as q asks for (AM-API-16); without a sort in the order
+// of GetVulnerabilitiesByUsersWithFilter.
+func (db *DB) ListVulnerabilities(userIDs []int64, filter *VulnerabilityFilter, q listquery.Query) ([]Vulnerability, error) {
 	var vulnerabilities []Vulnerability
-	if err := db.listFindings(vulnerabilityKind, &vulnerabilities, userIDs, filter); err != nil {
+	if err := db.listFindings(vulnerabilityKind, &vulnerabilities, userIDs, filter, q); err != nil {
 		return nil, err
 	}
 	return vulnerabilities, nil
+}
+
+// CountVulnerabilitiesByUsersWithFilter counts the users' vulnerabilities matching the
+// filter.
+func (db *DB) CountVulnerabilitiesByUsersWithFilter(userIDs []int64, filter *VulnerabilityFilter) (int, error) {
+	return db.countFindings(vulnerabilityKind, userIDs, filter)
 }
 
 // CountVulnerabilitiesByUserWithFilter counts the user's vulnerabilities

@@ -21,6 +21,7 @@ import (
 
 	"tachyonik/assetmanager/internal/database"
 	ws "tachyonik/assetmanager/internal/websocket"
+	"tachyonik/lib/listquery"
 	"tachyonik/lib/logger"
 )
 
@@ -95,6 +96,12 @@ func (h *Handler) ListAssets(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// sort, order and limit (AM-API-16); absent, the list is as it always was.
+	lq, err := listquery.Parse(r.URL.Query(), database.AssetSortFields)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Use group-aware queries for regular user requests
 	visibleUserIDs := h.GetVisibleUserIDs(r)
@@ -103,16 +110,24 @@ func (h *Handler) ListAssets(w http.ResponseWriter, r *http.Request) {
 		visibleUserIDs = []int64{userID}
 	}
 
-	assets, err := h.db.GetAssetsByUsersWithFilter(visibleUserIDs, filter)
+	assets, err := h.db.ListAssets(visibleUserIDs, filter, lq)
 	if err != nil {
 		logger.Errorf("Failed to retrieve assets: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to retrieve assets")
+		return
+	}
+	total, err := listTotal(lq, len(assets), func() (int, error) {
+		return h.db.CountAssetsByUsersWithFilter(visibleUserIDs, filter)
+	})
+	if err != nil {
+		logger.Errorf("Failed to count assets: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to retrieve assets")
 		return
 	}
 
 	response := ListResponse{
 		Assets:        assets,
-		Total:         len(assets),
+		Total:         total,
 		MaxHostAssets: h.effectiveHostAssetLimit(userID),
 	}
 
@@ -588,6 +603,15 @@ func filterParam(r *http.Request, check func(*database.Filter) error) (*database
 		return nil, err
 	}
 	return &f, nil
+}
+
+// listTotal is a list's total (AM-API-16): the rows answered, or — when a
+// limit may have cut them — the number of all matching rows, counted again.
+func listTotal(q listquery.Query, rows int, count func() (int, error)) (int, error) {
+	if q.Limit == 0 || rows < q.Limit {
+		return rows, nil
+	}
+	return count()
 }
 
 // parseTimestamp reads a timestamp in the layouts clients send: RFC 3339, or

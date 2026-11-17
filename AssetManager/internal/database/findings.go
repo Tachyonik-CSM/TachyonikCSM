@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"tachyonik/lib/listquery"
 )
 
 // findingKind names one finding table and how it is listed.
@@ -60,13 +62,14 @@ func (k findingKind) filteredWhere(userIDs []int64, filter *Filter) (string, []i
 }
 
 // listFindings selects into dest (a pointer to a slice of the kind's struct)
-// the users' findings matching the filter, in the kind's order.
-func (db *DB) listFindings(k findingKind, dest interface{}, userIDs []int64, filter *Filter) error {
+// the users' findings matching the filter, in the kind's order unless q asks
+// for another, and at most as many as q asks for (AM-API-16).
+func (db *DB) listFindings(k findingKind, dest interface{}, userIDs []int64, filter *Filter, q listquery.Query) error {
 	where, args, err := k.filteredWhere(userIDs, filter)
 	if err != nil {
 		return err
 	}
-	if err := db.Select(dest, "SELECT "+k.columns+" FROM "+k.table+" WHERE "+where+" ORDER BY "+k.order, args...); err != nil {
+	if err := db.Select(dest, "SELECT "+k.columns+" FROM "+k.table+" WHERE "+where+" ORDER BY "+q.OrderBy(k.order, listTieBreak)+q.LimitSQL(), args...); err != nil {
 		return fmt.Errorf("failed to get %s: %w", k.table, err)
 	}
 	return nil

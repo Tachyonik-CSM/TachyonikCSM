@@ -78,6 +78,10 @@ func TestServiceAnswersAreDocumented(t *testing.T) {
 	call("GET", "/api/assets?userId=1&filter="+url.QueryEscape(`{"rules":[{"column":"name","operator":"contains","value":"10.0"}],"matchAll":true}`), "", http.StatusOK)
 	call("GET", "/api/vulnerabilities", "", http.StatusOK)
 	call("GET", "/api/detections?filter="+url.QueryEscape(`{"rules":[{"column":"host","operator":"contains","value":"10.0"}],"matchAll":true}`), "", http.StatusOK)
+	// Sorted and cut, as the chat's generated tools ask (AM-API-16).
+	call("GET", "/api/assets?userId=1&sort=severity&limit=1", "", http.StatusOK)
+	call("GET", "/api/vulnerabilities?sort=lastSeen&order=asc&limit=1", "", http.StatusOK)
+	call("GET", "/api/detections?sort=name&limit=1", "", http.StatusOK)
 
 	// A re-import's sweep: everything of source 5 is older than now.
 	stale := "?source=" + url.QueryEscape("scan.xml (ID: 5)") + "&modifiedBefore=" + url.QueryEscape(time.Now().Add(time.Hour).Format(time.RFC3339))
