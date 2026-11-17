@@ -288,6 +288,12 @@ after every execution routine has been regenerated.
 - **Catalogue.** At startup ActionExecutor reads the platform API catalogue
   from AIManager and builds the read-write bridge from it. It does so again
   on `API_CATALOGUE_UPDATED`.
+  Each time it logs a warning for a manager that has not registered its
+  document (usually: `aimanager.url` is not set in that manager's
+  configuration) and for one it has no URL for; the latter's operations are
+  left out (PA-RT-09). Reading a name `api` does not have throws an error
+  naming it and what exists, e.g. "api.assets does not exist in the platform
+  API: its namespaces are: …" (PA-BR-11).
 - **Identity.** Every call is made for the run's user and role. The bridge
   sets `X-User-ID`, `X-User-Role` and the owner fields itself; a routine
   can't name anyone.
