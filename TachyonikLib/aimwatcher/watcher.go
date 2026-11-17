@@ -32,6 +32,7 @@ const (
 	typeAnalysisRuleDeleted    = "ANALYSIS_RULE_DELETED"
 	typeFeedImported           = "FEED_IMPORTED"
 	typeModuleAISettingUpdated = "MODULE_AI_SETTING_UPDATED"
+	typeAPICatalogueUpdated    = "API_CATALOGUE_UPDATED"
 )
 
 // rulePayload extracts the rule ID from an analysis rule event payload.
@@ -64,6 +65,9 @@ type Handlers struct {
 	OnFeedImported func()
 	// OnModuleSettingChange fires when this module's AI settings change.
 	OnModuleSettingChange func()
+	// OnAPICatalogueUpdated fires when a manager registered a changed API
+	// document (docs/specs/01-platform-api-catalogue.md, PA-REG-02).
+	OnAPICatalogueUpdated func()
 }
 
 // Watcher connects to the AIManager WebSocket and dispatches events to the
@@ -108,7 +112,8 @@ func (w *Watcher) Start() {
 	w.ws.Start()
 }
 
-// resync treats a fresh connection as a full reload plus a settings refresh.
+// resync treats a fresh connection as a full reload plus a settings refresh
+// and a catalogue reload.
 // See the package comment: a connection made before the state existed, or
 // remade after an AIManager restart, has missed whatever happened in between.
 func (w *Watcher) resync() {
@@ -119,6 +124,9 @@ func (w *Watcher) resync() {
 	if w.h.OnModuleSettingChange != nil {
 		logger.Infof("WebSocket (re)connected — resyncing module AI settings for %s", w.h.ModuleName)
 		go w.h.OnModuleSettingChange()
+	}
+	if w.h.OnAPICatalogueUpdated != nil {
+		go w.h.OnAPICatalogueUpdated()
 	}
 }
 
@@ -140,6 +148,10 @@ func (w *Watcher) dispatch(msg wswatcher.Message) {
 		}
 	case typeModuleAISettingUpdated:
 		w.handleModuleSettingEvent(msg)
+	case typeAPICatalogueUpdated:
+		if w.h.OnAPICatalogueUpdated != nil {
+			go w.h.OnAPICatalogueUpdated()
+		}
 	}
 }
 

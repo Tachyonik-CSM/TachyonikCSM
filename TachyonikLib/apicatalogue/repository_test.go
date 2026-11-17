@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,14 @@ func TestTheRepositorysDocumentsFitTogether(t *testing.T) {
 		}
 		spaces := map[string]bool{}
 		for _, op := range doc.Operations {
+			// Every answer is documented: its real status, and its schema
+			// or content type — not a "2XX" placeholder (plan
+			// docs/plans/platform-api-follow-ups.md, phase 1).
+			for _, st := range op.Statuses {
+				if strings.EqualFold(st, "2XX") {
+					t.Errorf("%s: %s answers an undocumented \"2XX\"", m, op.ID)
+				}
+			}
 			spaces[op.Namespace()] = true
 			if op.Bridge != "" {
 				bridged++

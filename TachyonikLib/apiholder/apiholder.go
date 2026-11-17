@@ -243,6 +243,16 @@ func (h *Holder) Render() string {
 	return b.String()
 }
 
+// DescribeFields describes a schema's fields as Render does an answer's —
+// name, type, meaning, nested fields indented — leaving out what is hidden
+// from routines (PA-CAT-11). For other readers of the documents, such as the
+// MCP tools generated from them.
+func DescribeFields(s *apicatalogue.Schema) string {
+	var b strings.Builder
+	renderSchema(&b, s, "  ", 0)
+	return b.String()
+}
+
 // renderBody describes a request body's fields, leaving out the ones the
 // bridge sets itself.
 func renderBody(b *strings.Builder, s *apicatalogue.Schema, indent string) {

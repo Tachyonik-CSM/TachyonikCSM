@@ -37,6 +37,8 @@ replace tachyonik/lib => ../TachyonikLib
 | `apiholder` | A routine-running module's copy of the platform API catalogue and the bridge built from it, in one profile (read-only for ActionGenerator, read-write for ActionExecutor): loaded from AIManager's documents, it answers which of a routine's operations are gone or deprecated, which messages invalidate its reads, and renders the operations — with a write's body, without what the bridge sets — for the AI that writes a routine. `Gaps` names the managers the loaded catalogue leaves out: not registered, or no URL configured in the holding module (whose operations are then not offered). |
 | `apicontract` | Checks a hand-written client of a manager against that manager's API document (`<Manager>/spec/openapi.yaml`). A client declares its calls in a test — method, path, query parameters, the Go types it sends and decodes — and `Test` reports a path or parameter the document lacks, a body or answer it does not document, and any JSON field the client's types send or decode that the schema leaves out; `TestDeclared` confirms every API path written in the client's code is declared. On the manager's side, `CheckAnswer` validates a real handler answer against its documented schema. Types with their own `MarshalJSON`, and maps, are checked by what they encode. |
 | `apiregister` | Registers a manager's API document with AIManager at startup (`PUT /api/internal/api-catalogue/{module}`), in the background and retried until AIManager takes it; a refusal of the document (400, 409) is logged and not retried. |
+| `apimcp` | A manager's MCP server generated from its API document (PA-MCP-01 to -06): one tool per operation marked `x-mcp`, named by its `operationId` and described by its summary, description, parameters and answer fields (without `x-bridge-hidden` ones or what the bridge binds); a call is replayed as the API call through the manager's router with the caller's credentials, and the answer cut to the documented fields. `New` refuses a document whose MCP operation needs a bridge-bound parameter. `Check` is the test every manager runs on its real router (PA-MCP-03): `tools/list` offers exactly the marked operations (`Marked`), and a signed-in user reaches each of them. ToolManager builds the chat's tools from the same code. |
+| `listquery` | Reads the optional parameters a manager's list operation offers to order and cut its answer: `sort` (a field from the operation's own list, each with the SQL expression it sorts by), `order` (`asc`/`desc`, default ascending for text, descending for numbers and times) and `limit` (1–`MaxLimit`, 500), plus a bounded whole-number parameter (`Int`) and `Thin`, which cuts a series to at most n evenly spread points keeping the first and the last. A bad value is an `*Error` naming what is allowed (answered with 400), never ignored; a sort value only looks up a field and is never written into SQL. `SortStable`/`Cut` do the same in Go for a list that is not sorted in its query. Used by AssetManager, ActionManager, ResourceManager and SystemManager, so the chat's tools generated from their operations can ask for "the 25 most severe". |
 | `aiclient/claude` | Client for the Anthropic (Claude) Messages API. |
 | `aiclient/openai` | Client for OpenAI-compatible APIs (OpenAI, Mistral, Google OpenAI-compat, self-hosted). |
 | `aiclient/ollama` | Client for the Ollama API (optional Bearer auth for fronted installs). |
@@ -102,16 +104,16 @@ All twelve service modules depend on this library:
 |--------|---------------|
 | ActionExecutor | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
 | ActionGenerator | `logger`, `heartbeat`, `aimwatcher`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
-| ActionManager | `logger` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
-| AIManager | `logger`, `textextract`, `aiclient/*`, `apicatalogue`, `apiregister` (its request type), `apibridge` (the dry run of bridge routines) |
-| AssetManager | `logger`, `systemmanager`, `apiregister`, `apicatalogue` and `apibridge` (in tests) |
+| ActionManager | `logger`, `listquery`, `apimcp` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
+| AIManager | `logger`, `textextract`, `aiclient/*`, `apicatalogue`, `apimcp`, `apiregister` (its request type), `apibridge` (the dry run of bridge routines) |
+| AssetManager | `logger`, `systemmanager`, `listquery`, `apimcp`, `apiregister`, `apicatalogue` and `apibridge` (in tests) |
 | ChatAI | `logger`, `aimwatcher`, `providererr` |
-| ResourceManager | `logger`, `systemmanager`, `proxyrelease` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
+| ResourceManager | `logger`, `systemmanager`, `proxyrelease`, `listquery`, `apimcp` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 | SourceAnalyser | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
 | SourceImporter | `logger`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
-| SystemManager | `logger` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
+| SystemManager | `logger`, `listquery`, `apimcp` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 | TachyonikProxy | `logger` (and `proxyrelease` in a test, to check both copies of the release key agree) |
-| ToolManager | `logger`, `aimwatcher`, `providererr` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
+| ToolManager | `logger`, `aimwatcher`, `providererr`, `apimcp` (its own MCP server and the chat's generated tools) — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 
 ## Versioning
 

@@ -455,3 +455,21 @@ func TestDebounceDefaultIsFiveSeconds(t *testing.T) {
 		t.Error("the default URL does not target /ws")
 	}
 }
+
+// A catalogue change is dispatched, and a (re)connect counts as one: the
+// watcher may have missed it.
+func TestCatalogueUpdateIsDispatched(t *testing.T) {
+	f := newFakeAIManager(t, func(conn *websocket.Conn) {
+		send(t, conn, "API_CATALOGUE_UPDATED", map[string]any{"fingerprint": "x"})
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	var fired counter
+	w := New(f.srv.URL, "", Handlers{OnAPICatalogueUpdated: fired.inc})
+	w.Start()
+	defer w.Close()
+	waitFor(t, 3*time.Second, "the catalogue event", func() bool { return fired.get() >= 2 })
+}
