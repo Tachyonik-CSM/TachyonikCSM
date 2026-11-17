@@ -144,6 +144,10 @@ type Schema struct {
 	Description string
 	Deprecated  bool
 	Bound       string // a body field the bridge sets (PA-CAT-05)
+	// Hidden marks an answer field routines do not get (x-bridge-hidden,
+	// PA-CAT-11): documented, because the manager sends it, but dropped by
+	// the bridge, not shown to the AI, and a violation to read.
+	Hidden bool
 }
 
 // Nullable reports whether the schema allows null.
@@ -358,7 +362,8 @@ func (s *Schema) validate(v interface{}, path string) error {
 	return nil
 }
 
-// Filter returns v with only the fields the schema documents (PA-BR-04). A
+// Filter returns v with only the fields the schema documents (PA-BR-04),
+// without those marked hidden from routines (PA-CAT-11). A
 // schema without properties keeps an object as it is.
 func (s *Schema) Filter(v interface{}) interface{} {
 	if s == nil {
@@ -371,6 +376,9 @@ func (s *Schema) Filter(v interface{}) interface{} {
 		}
 		out := make(map[string]interface{}, len(s.Properties))
 		for name, ps := range s.Properties {
+			if ps.Hidden {
+				continue
+			}
 			if fv, ok := x[name]; ok {
 				out[name] = ps.Filter(fv)
 			}
@@ -407,7 +415,7 @@ func (s *Schema) HasPath(path string) bool {
 			return true
 		}
 		next, ok := cur.Properties[part]
-		if !ok {
+		if !ok || next.Hidden {
 			return false
 		}
 		cur = next

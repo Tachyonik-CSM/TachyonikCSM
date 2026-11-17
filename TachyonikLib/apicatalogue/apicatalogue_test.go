@@ -243,3 +243,40 @@ func TestScenariosMatchTheSpecification(t *testing.T) {
 		t.Errorf("docs/specs/mock-scenarios.md names %v, the code %v", names, Scenarios)
 	}
 }
+
+// PA-CAT-11: a field marked x-bridge-hidden is documented — it validates —
+// but routines do not get it and may not read it.
+func TestHiddenFields(t *testing.T) {
+	d, err := Parse([]byte(`openapi: 3.1.0
+info: { title: T, version: "1" }
+paths:
+  /api/tools:
+    get:
+      operationId: tools.list
+      x-bridge: read
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  hostKey: { type: string, x-bridge-hidden: true }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := d.Operation("tools.list").Response
+	v := map[string]interface{}{"name": "n", "hostKey": "ssh-ed25519 AAAA"}
+	if err := s.Validate(v); err != nil {
+		t.Errorf("a hidden field is still documented: %v", err)
+	}
+	if got := s.Filter(v); !reflect.DeepEqual(got, map[string]interface{}{"name": "n"}) {
+		t.Errorf("Filter = %v", got)
+	}
+	if s.HasPath("hostKey") || !s.HasPath("name") {
+		t.Error("a hidden field must not be readable by routines")
+	}
+}

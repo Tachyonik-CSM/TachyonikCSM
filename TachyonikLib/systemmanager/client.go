@@ -36,16 +36,19 @@ func NewClient(baseURL, internalServiceKey string) *Client {
 	}
 }
 
+// auditEventRequest is the body of an audit event report.
+type auditEventRequest struct {
+	UserID  int64  `json:"userId"`
+	Level   string `json:"level"`
+	Module  string `json:"module"`
+	Message string `json:"message"`
+}
+
 // CreateAuditEvent reports an audit-trail event to SystemManager. Best-effort:
 // returns an error so the caller can log it, but emitters should not fail
 // their primary operation just because the audit POST failed.
 func (c *Client) CreateAuditEvent(userID int64, level, module, message string) error {
-	body, err := json.Marshal(map[string]interface{}{
-		"userId":  userID,
-		"level":   level,
-		"module":  module,
-		"message": message,
-	})
+	body, err := json.Marshal(auditEventRequest{UserID: userID, Level: level, Module: module, Message: message})
 	if err != nil {
 		return fmt.Errorf("failed to marshal audit event: %w", err)
 	}

@@ -139,3 +139,19 @@ func TestGapsNameWhatRoutinesLack(t *testing.T) {
 		t.Error("an unreachable manager's operations are offered to the AI")
 	}
 }
+
+// PA-CAT-11: the AI is not shown a field routines do not get.
+func TestRenderLeavesOutHiddenFields(t *testing.T) {
+	h := New(map[string]Endpoint{"assetmanager": {BaseURL: "http://127.0.0.1:1"}}, apibridge.ReadOnly, apibridge.Options{})
+	doc := strings.Replace(document(), "n: { type: integer, description: How many. }",
+		"n: { type: integer, description: How many. }, secret: { type: string, x-bridge-hidden: true }", 1)
+	if doc == document() {
+		t.Fatal("the test document changed shape; adjust the replacement")
+	}
+	if err := h.Load("fp", []Document{{Module: "assetmanager", Document: doc}}); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.Render(); strings.Contains(r, "secret") || !strings.Contains(r, "n: integer") {
+		t.Errorf("render:\n%s", r)
+	}
+}

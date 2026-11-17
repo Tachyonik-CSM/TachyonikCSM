@@ -231,6 +231,7 @@ func (r *resolver) schema(v interface{}, depth int) (*Schema, error) {
 	s.Description, _ = m["description"].(string)
 	s.Deprecated, _ = m["deprecated"].(bool)
 	s.Bound, _ = m["x-bridge-bound"].(string)
+	s.Hidden, _ = m["x-bridge-hidden"].(bool)
 	if enum, ok := m["enum"].([]interface{}); ok {
 		s.Enum = enum
 	}

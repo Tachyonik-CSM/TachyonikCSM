@@ -289,8 +289,10 @@ func renderSchema(b *strings.Builder, s *apicatalogue.Schema, indent string, dep
 		return
 	}
 	names := make([]string, 0, len(s.Properties))
-	for n := range s.Properties {
-		names = append(names, n)
+	for n, p := range s.Properties {
+		if !p.Hidden { // not for routines (PA-CAT-11)
+			names = append(names, n)
+		}
 	}
 	sort.Strings(names)
 	for _, n := range names {
