@@ -17,20 +17,24 @@ import (
 	"time"
 )
 
-// A routine that offers two options, one of them conditional.
-const optionRoutine = `
+// A routine that offers two options, one for a user with a stale thing and
+// one for a user without.
+const optionRoutine = `var routineContract = 2;
+function hasStale(api) {
+  return api.things.list().things.filter(function (t) { return t.stale; }).length > 0;
+}
 var rules = [
   {
     name: "missing-hosts",
     ruleId: 8,
-    check: function(ctx) { return true; },
-    createAction: function(ctx) {
+    check: function(api) { return true; },
+    createAction: function(api) {
       return { title: "Identify missing host assets", type: "Fix", description: "d",
                status: "New", priority: 91, assignedTo: "User", issuedBy: "ActionGenerator" };
     },
     options: {
-      "5": function(ctx) { return ctx.capabilities.automated.indexOf("Host detection") === -1; },
-      "16": function(ctx) { return ctx.capabilities.automated.indexOf("Host detection") !== -1; }
+      "5": function(api) { return !hasStale(api); },
+      "16": function(api) { return hasStale(api); }
     }
   }
 ];
@@ -45,149 +49,124 @@ func executorWith(t *testing.T, code string) *JSRuleExecutor {
 	return e
 }
 
-// ctxWithCapabilities is the smallest context these conditions read.
-func ctxWithCapabilities(automated ...string) RuleContext {
-	ctx := RuleContext{
-		User:         map[string]interface{}{"id": int64(1)},
-		Organisation: EmptyOrganisation(),
-		Settings:     EmptySettings(),
-		Capabilities: CapabilitySet{Automated: automated, Manual: []string{}},
+// raised evaluates e for one user whose things.list answers things, and
+// returns the one action it must raise.
+func raised(t *testing.T, e *JSRuleExecutor, things string) *[]int64 {
+	t.Helper()
+	b, _ := thingsBridge(t, 200, `{"things":`+things+`}`)
+	actions, unknown, err := e.EvaluateBridge(b.NewPass(), 1, false)
+	if err != nil || unknown {
+		t.Fatalf("evaluate: unknown=%v err=%v", unknown, err)
 	}
-	if ctx.Capabilities.Automated == nil {
-		ctx.Capabilities.Automated = []string{}
+	if len(actions) != 1 {
+		t.Fatalf("got %d actions, want 1", len(actions))
 	}
-	return ctx
+	return actions[0].HiddenOptions
 }
 
-// The condition decides which options come back as hidden.
+// AG-EVAL-16: the condition decides which options come back as hidden.
 func TestOptionConditionsDecideWhatIsHidden(t *testing.T) {
 	e := executorWith(t, optionRoutine)
 
-	t.Run("no automated tool", func(t *testing.T) {
-		actions, err := e.EvaluateRules(ctxWithCapabilities(), false)
-		if err != nil {
-			t.Fatalf("evaluate: %v", err)
-		}
-		if len(actions) != 1 {
-			t.Fatalf("got %d actions, want 1", len(actions))
-		}
-		if actions[0].HiddenOptions == nil {
+	t.Run("nothing stale", func(t *testing.T) {
+		h := raised(t, e, `[]`)
+		if h == nil {
 			t.Fatal("no option set evaluated at all")
 		}
-		hidden := *actions[0].HiddenOptions
-		// Option 5 ("install a tool") applies; option 16 ("use your automated
-		// tool") does not.
-		if len(hidden) != 1 || hidden[0] != 16 {
+		if hidden := *h; len(hidden) != 1 || hidden[0] != 16 {
 			t.Errorf("hidden = %v, want [16]", hidden)
 		}
 	})
 
-	t.Run("automated tool present", func(t *testing.T) {
-		actions, err := e.EvaluateRules(ctxWithCapabilities("Host detection"), false)
-		if err != nil {
-			t.Fatalf("evaluate: %v", err)
-		}
-		hidden := *actions[0].HiddenOptions
-		if len(hidden) != 1 || hidden[0] != 5 {
+	t.Run("a stale thing", func(t *testing.T) {
+		if hidden := *raised(t, e, `[{"id":1,"stale":true}]`); len(hidden) != 1 || hidden[0] != 5 {
 			t.Errorf("hidden = %v, want [5]", hidden)
 		}
 	})
 }
 
-// A routine that declares no conditions hides nothing — which is every routine
-// generated before this feature, and every rule whose options carry no prompt.
+// AG-IF-14: a routine that declares no conditions hides nothing — every rule
+// whose options carry no prompt.
 func TestRoutineWithoutConditionsHidesNothing(t *testing.T) {
-	e := executorWith(t, `
+	e := executorWith(t, `var routineContract = 2;
 var rules = [
   { name: "r", ruleId: 1,
-    check: function(ctx) { return true; },
-    createAction: function(ctx) {
+    check: function(api) { return true; },
+    createAction: function(api) {
       return { title: "T", type: "Fix", description: "d", status: "New", priority: 50,
                assignedTo: "User", issuedBy: "ActionGenerator" };
     } }
 ];`)
 
-	actions, err := e.EvaluateRules(ctxWithCapabilities(), false)
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	if actions[0].HiddenOptions != nil {
-		t.Errorf("HiddenOptions = %v, want nil so that every option is shown", *actions[0].HiddenOptions)
+	if h := raised(t, e, `[]`); h != nil {
+		t.Errorf("HiddenOptions = %v, want nil so that every option is shown", *h)
 	}
 }
 
-// A condition that throws leaves its option visible. Hiding a step the user may
-// need because a generated line was wrong is the worse failure.
+// AG-EVAL-17: a condition that throws leaves its option visible. Hiding a step
+// the user may need because a generated line was wrong is the worse failure.
 func TestThrowingConditionLeavesTheOptionVisible(t *testing.T) {
-	e := executorWith(t, `
+	e := executorWith(t, `var routineContract = 2;
 var rules = [
   { name: "r", ruleId: 1,
-    check: function(ctx) { return true; },
-    createAction: function(ctx) {
+    check: function(api) { return true; },
+    createAction: function(api) {
       return { title: "T", type: "Fix", description: "d", status: "New", priority: 50,
                assignedTo: "User", issuedBy: "ActionGenerator" };
     },
     options: {
-      "7": function(ctx) { return ctx.nothing.here; },
-      "8": function(ctx) { return false; }
+      "7": function(api) { return api.things.nothing().here; },
+      "8": function(api) { return false; }
     } }
 ];`)
 
-	actions, err := e.EvaluateRules(ctxWithCapabilities(), false)
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	hidden := *actions[0].HiddenOptions
-	if len(hidden) != 1 || hidden[0] != 8 {
+	if hidden := *raised(t, e, `[]`); len(hidden) != 1 || hidden[0] != 8 {
 		t.Errorf("hidden = %v, want [8] — the throwing condition must not hide its option", hidden)
 	}
 }
 
-// The order is stable, so an unchanged answer compares equal and the action is
-// not rewritten and re-broadcast on every evaluation.
+// AG-EVAL-18: the order is stable, so an unchanged answer compares equal and
+// the action is not rewritten and re-broadcast on every evaluation.
 func TestHiddenOptionsAreSorted(t *testing.T) {
-	e := executorWith(t, `
+	e := executorWith(t, `var routineContract = 2;
 var rules = [
   { name: "r", ruleId: 1,
-    check: function(ctx) { return true; },
-    createAction: function(ctx) {
+    check: function(api) { return true; },
+    createAction: function(api) {
       return { title: "T", type: "Fix", description: "d", status: "New", priority: 50,
                assignedTo: "User", issuedBy: "ActionGenerator" };
     },
     options: {
-      "30": function(ctx) { return false; },
-      "4":  function(ctx) { return false; },
-      "17": function(ctx) { return false; }
+      "30": function(api) { return false; },
+      "4":  function(api) { return false; },
+      "17": function(api) { return false; }
     } }
 ];`)
 
 	for i := 0; i < 5; i++ {
-		actions, err := e.EvaluateRules(ctxWithCapabilities(), false)
-		if err != nil {
-			t.Fatalf("evaluate: %v", err)
-		}
-		hidden := *actions[0].HiddenOptions
+		hidden := *raised(t, e, `[]`)
 		if len(hidden) != 3 || hidden[0] != 4 || hidden[1] != 17 || hidden[2] != 30 {
 			t.Fatalf("hidden = %v, want [4 17 30] every time", hidden)
 		}
 	}
 }
 
-// A malformed options member is a fault in the routine, not something to shrug
-// off: the effect of ignoring it would be an option silently never shown.
+// AG-IF-08: a malformed options member is a fault in the routine, not
+// something to shrug off: the effect of ignoring it would be an option
+// silently never shown.
 func TestMalformedOptionsMemberIsRefused(t *testing.T) {
 	for _, tc := range []struct{ name, code string }{
-		{"key is not an id", `options: { "upload": function(ctx) { return true; } }`},
+		{"key is not an id", `options: { "upload": function(api) { return true; } }`},
 		{"value is not a function", `options: { "5": true }`},
 		{"not an object", `options: 42`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := New(5 * time.Second)
-			err := e.LoadFromString(`
+			err := e.LoadFromString(`var routineContract = 2;
 var rules = [
   { name: "r", ruleId: 1,
-    check: function(ctx) { return true; },
-    createAction: function(ctx) { return {}; },
+    check: function(api) { return true; },
+    createAction: function(api) { return {}; },
     ` + tc.code + ` }
 ];`)
 			if err == nil {
@@ -197,27 +176,26 @@ var rules = [
 	}
 }
 
-// A rule with no trigger of its own validates.
+// AG-EVAL-15: a rule with no trigger of its own validates.
 //
 // Its check() is a plain `return false` — the system prompt says to write it
 // that way — which the always-false judgement otherwise refuses as a condition
 // that could never fire. For an ordinary rule that refusal is right; for this
-// one it means the rule cannot be regenerated at all, which is how rule 7 came
-// to be running a routine that predates the check.
+// one it means the rule cannot be regenerated at all.
 func TestOnDemandRuleValidates(t *testing.T) {
-	const routine = `
+	const routine = `var routineContract = 2;
 var rules = [
   { name: "reduce-host-assets", ruleId: 7,
-    check: function(ctx) { return false; },
-    createAction: function(ctx) {
+    check: function(api) { return false; },
+    createAction: function(api) {
       return { title: "Reduce host assets", type: "Fix", description: "d", status: "New",
                priority: 30, assignedTo: "User", issuedBy: "ActionGenerator" };
     } }
 ];`
+	b, _ := thingsBridge(t, 200, `{}`)
 
 	t.Run("refused for an ordinary rule", func(t *testing.T) {
-		e := executorWith(t, routine)
-		report := e.ValidateWithMockCtxReport()
+		report := executorWith(t, routine).ValidateBridge(b)
 		if len(report.Errors) == 0 {
 			t.Error("a check() that can never fire was accepted for a rule that has a trigger")
 		}
@@ -226,7 +204,7 @@ var rules = [
 	t.Run("accepted for an on-demand rule", func(t *testing.T) {
 		e := executorWith(t, routine)
 		e.SetOnDemand(true)
-		report := e.ValidateWithMockCtxReport()
+		report := e.ValidateBridge(b)
 		if len(report.Errors) > 0 {
 			t.Errorf("an on-demand rule's routine was refused: %v", report.Errors)
 		}

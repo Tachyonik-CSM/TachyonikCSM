@@ -11,35 +11,41 @@
 # The config file location can be overridden with ACTIONGENERATOR_CONFIG
 # (default: ./config.yaml).
 
-# Assets and their aggregate statistics are retrieved from AssetManager for the
-# rule context, which is the only purpose. No data is sent.
+# Each manager below except AIManager is reached for two things: the routines
+# read its API through the platform API bridge (read-only, for the user being
+# evaluated), and its WebSocket change messages trigger re-evaluation.
+
+# AssetManager: assets, their statistics and findings, read by the routines
+# through the API bridge. No data is sent.
 assetmanager:
   url: http://localhost:8081  # AssetManager API URL (default: http://localhost:8081)
                               # Env: ASSETMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AssetManager's internal_service_key
                                                             # Env: ASSETMANAGER_INTERNAL_SERVICE_KEY
 
-# SystemManager is used in both directions: the users to generate for, and per
-# user the organisation record, settings and AI assignments, are retrieved; the
-# liveness heartbeat is sent. It also reports the workspace mode, which decides
-# whether rules are evaluated once per user or once for the whole instance.
+# SystemManager is used in both directions: the users to generate for are
+# retrieved, and the routines read the organisation record and user settings
+# through the API bridge; the liveness heartbeat is sent. It also reports the
+# workspace mode, which decides whether rules are evaluated once per user or
+# once for the whole instance.
 systemmanager:
   url: http://localhost:8083  # SystemManager API URL (default: http://localhost:8083)
                               # Env: SYSTEMMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match SystemManager's internal_service_key
                                                             # Env: SYSTEMMANAGER_INTERNAL_SERVICE_KEY
 
-# Sources, tools and the source count against quota are retrieved from
-# ResourceManager for the rule context, which is the only purpose. No data is sent.
+# ResourceManager: sources, tools and proxies, read by the routines through the
+# API bridge. No data is sent.
 resourcemanager:
   url: http://localhost:8080  # ResourceManager API URL (default: http://localhost:8080)
                               # Env: RESOURCEMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ResourceManager's internal_service_key
                                                             # Env: RESOURCEMANAGER_INTERNAL_SERVICE_KEY
 
-# Actions are created in ActionManager, which is the only purpose. Existing
-# actions are read back so a rule does not raise the same action twice, and the
-# outstanding "New" actions of a rule that stopped matching are withdrawn.
+# Actions are created in ActionManager. Existing actions are read back so a rule
+# does not raise the same action twice, and the outstanding "New" actions of a
+# rule that stopped matching are withdrawn. Routines may read the actions
+# through the API bridge too.
 actionmanager:
   url: http://localhost:8082  # ActionManager API URL (default: http://localhost:8082)
                               # Env: ACTIONMANAGER_URL
@@ -55,8 +61,8 @@ toolmanager:
                                                             # Env: TOOLMANAGER_INTERNAL_SERVICE_KEY
 
 # AIManager holds the action rules, the JavaScript routines generated from them,
-# and this module's AI assignment and system prompt — all retrieved at runtime
-# and refreshed live. Generated routines are stored back here, so this is the
+# this module's AI assignment and system prompt, and the platform API catalogue
+# the routines read through — all retrieved at runtime and refreshed live. Generated routines are stored back here, so this is the
 # one manager the daemon both reads and writes.
 ai_manager:
   url: http://localhost:8085  # AIManager API URL (default: http://localhost:8085)

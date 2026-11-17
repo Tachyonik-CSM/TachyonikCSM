@@ -5,8 +5,7 @@
 // Package aimanager is the client for the AIManager internal API. It supplies
 // the action rules and their generated routines, the per-module AI assignment
 // and system prompt, the AI provider entries a rule may name to override the
-// module default, and the enabled tool rules and capabilities that the rule
-// context exposes.
+// module default, and the platform API catalogue the routines read through.
 //
 // The request mechanics live in TachyonikLib's restclient; what stays here is
 // this service's wire types, its paths, and the status each call treats as
@@ -18,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"tachyonik/lib/restclient"
@@ -160,7 +158,7 @@ type Routine struct {
 	UpdatedAt   string `json:"updatedAt"`
 	// What a bridge routine was generated against (PA-RT-04): the API
 	// catalogue's fingerprint, and the operations it calls as a JSON array.
-	// Empty for a context routine.
+	// Empty for a context routine, which is no longer run.
 	APIFingerprint string `json:"apiFingerprint"`
 	APIOperations  string `json:"apiOperations"`
 }
@@ -276,106 +274,4 @@ func (c *Client) GetAIByID(id int64) (*AIEntry, error) {
 func (c *Client) GetAIByName(name string) (*AIEntry, error) {
 	return c.getAI("/api/internal/ais/by-name/"+name,
 		fmt.Sprintf("AI with name %q not found in AIManager", name))
-}
-
-// EnabledToolRule is the subset of tool_rule fields needed to map a
-// user's tool overviews to the capabilities Tachyonik can actually
-// drive (i.e. the "Automated Capabilities" column in
-// Resources/Tools). Returned by GetEnabledToolRules.
-//
-// /api/internal/tool-rules already filters out disabled rules, so any
-// entry here is genuinely driveable. ToolOverviewID is non-nil for
-// rules created via the normal flow; nil only when a rule was created
-// without an overview link (data bug).
-type EnabledToolRule struct {
-	ID                     int64   `json:"id"`
-	ToolOverviewID         *int64  `json:"toolOverviewId"`
-	AutomatedCapabilityIDs []int64 `json:"automatedCapabilityIds"`
-}
-
-// GetEnabledToolRules fetches the enabled tool rules.
-func (c *Client) GetEnabledToolRules() ([]EnabledToolRule, error) {
-	var result struct {
-		Tools []EnabledToolRule `json:"tools"`
-	}
-	if err := c.rc.JSON("GET", "/api/internal/tool-rules", nil, &result, http.StatusOK); err != nil {
-		return nil, err
-	}
-	return result.Tools, nil
-}
-
-// ToolOverviewEntry is the subset of tool_overview fields the rule context
-// needs: a tool's name, its "Manual Capabilities" (the overview's
-// manualCapabilityIds list), and whether it needs a credential.
-type ToolOverviewEntry struct {
-	ID                  int64   `json:"id"`
-	Name                string  `json:"name"`
-	ManualCapabilityIDs []int64 `json:"manualCapabilityIds"`
-	// CredentialType is what a tool of this kind needs to authenticate, ""
-	// when nothing.
-	CredentialType string `json:"credentialType"`
-}
-
-// GetToolOverviews fetches the tool catalogue.
-func (c *Client) GetToolOverviews() ([]ToolOverviewEntry, error) {
-	var result struct {
-		Overviews []ToolOverviewEntry `json:"overviews"`
-	}
-	if err := c.rc.JSON("GET", "/api/internal/tool-overviews", nil, &result, http.StatusOK); err != nil {
-		return nil, err
-	}
-	return result.Overviews, nil
-}
-
-// ToolCapabilityEntry is the id+name mapping needed to render the
-// "Manual Capabilities" set as names rather than IDs.
-type ToolCapabilityEntry struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-}
-
-// GetToolCapabilities fetches the capability catalogue.
-func (c *Client) GetToolCapabilities() ([]ToolCapabilityEntry, error) {
-	var result struct {
-		ToolCapabilities []ToolCapabilityEntry `json:"toolCapabilities"`
-	}
-	if err := c.rc.JSON("GET", "/api/internal/tool-capabilities", nil, &result, http.StatusOK); err != nil {
-		return nil, err
-	}
-	return result.ToolCapabilities, nil
-}
-
-// CountPersonalAIs reports how many AI providers the user owns, which a rule
-// reads to tell "has none" from "has some, none assigned".
-func (c *Client) CountPersonalAIs(userID int64) (int, error) {
-	var result struct {
-		Count int `json:"count"`
-	}
-	if err := c.rc.JSON("GET", fmt.Sprintf("/api/internal/users/%d/ais/count", userID), nil, &result, http.StatusOK); err != nil {
-		return 0, err
-	}
-	return result.Count, nil
-}
-
-// GetCapabilityNamesForToolRules resolves tool-rule IDs to capability names.
-// An empty list is answered without a request: asking for the capabilities of
-// nothing is not a call worth making.
-func (c *Client) GetCapabilityNamesForToolRules(toolRuleIDs []int64) ([]string, error) {
-	if len(toolRuleIDs) == 0 {
-		return []string{}, nil
-	}
-
-	parts := make([]string, len(toolRuleIDs))
-	for i, id := range toolRuleIDs {
-		parts[i] = fmt.Sprintf("%d", id)
-	}
-
-	var result struct {
-		Capabilities []string `json:"capabilities"`
-	}
-	path := "/api/internal/tool-rule-capabilities?ids=" + strings.Join(parts, ",")
-	if err := c.rc.JSON("GET", path, nil, &result, http.StatusOK); err != nil {
-		return nil, err
-	}
-	return result.Capabilities, nil
 }

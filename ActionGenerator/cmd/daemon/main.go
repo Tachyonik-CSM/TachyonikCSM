@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Command actiongenerator is the ActionGenerator daemon entry point. It loads
-// configuration, sets up logging, builds the AIManager/AssetManager/
-// ActionManager/ResourceManager/SystemManager clients, resolves the configured
+// configuration, sets up logging, builds the AIManager/ActionManager/
+// SystemManager clients and the platform API bridge, resolves the configured
 // AI chat client, and wires up the AIActionGenerator and the Generator. It then
-// starts the watchers (asset and system changes, live action-rule changes) and
-// the SystemManager heartbeat, and runs the loop that evaluates rules until it
-// receives SIGINT/SIGTERM.
+// starts the watchers (the managers' change messages, live action-rule
+// changes) and the SystemManager heartbeat, and runs the loop that evaluates
+// rules until it receives SIGINT/SIGTERM.
 //
 // The AI is needed only to *generate* a rule routine. Evaluating an
 // already-generated routine is plain JavaScript, so the daemon keeps producing
@@ -29,11 +29,9 @@ import (
 	"tachyonik/actiongenerator/internal/actionrulewatcher"
 	"tachyonik/actiongenerator/internal/aigenerator"
 	"tachyonik/actiongenerator/internal/aimanager"
-	"tachyonik/actiongenerator/internal/assetmanager"
 	"tachyonik/actiongenerator/internal/codegen"
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/actiongenerator/internal/generator"
-	"tachyonik/actiongenerator/internal/resourcemanager"
 	"tachyonik/actiongenerator/internal/systemmanager"
 	"tachyonik/actiongenerator/internal/version"
 	"tachyonik/actiongenerator/internal/watcher"
@@ -154,8 +152,7 @@ func runDaemon(cfg *config.Config) {
 	logConfiguration(cfg)
 
 	c := newClients(cfg)
-	systemMgrClient, resourceMgrClient := c.systemMgr, c.resourceMgr
-	assetMgrClient, actionMgrClient, aiMgrClient := c.assetMgr, c.actionMgr, c.aiMgr
+	systemMgrClient, actionMgrClient, aiMgrClient := c.systemMgr, c.actionMgr, c.aiMgr
 
 	// Fetch initial AI settings from AIManager
 	moduleSetting, err := aiMgrClient.GetModuleAISetting("actiongenerator")
@@ -176,7 +173,7 @@ func runDaemon(cfg *config.Config) {
 	}
 
 	// Initialize generator
-	gen := generator.New(systemMgrClient, resourceMgrClient, assetMgrClient, actionMgrClient, aiMgrClient)
+	gen := generator.New(systemMgrClient, actionMgrClient)
 	logger.Info("Generator initialized")
 
 	// Create AIActionGenerator — always created for rule loading and evaluation.
@@ -190,14 +187,14 @@ func runDaemon(cfg *config.Config) {
 		logger.Info("No AI configured — rule evaluation works, but code generation is disabled")
 	}
 
-	// The platform API catalogue, and the bridge built from it, for bridge
-	// routines (docs/specs/01-platform-api-catalogue.md). Loaded before the
-	// rules, so a bridge routine is checked against it as it is loaded.
+	// The platform API catalogue, and the bridge built from it, that the
+	// routines read through (docs/specs/01-platform-api-catalogue.md). Loaded
+	// before the rules, so a routine is checked against it as it is loaded.
 	apiCatalogue := newAPICatalogue(cfg)
 	loadAPICatalogue := func() {
 		cat, err := aiMgrClient.GetAPICatalogue()
 		if err != nil {
-			logger.Warnf("The platform API catalogue cannot be read yet, bridge routines do not run until it can: %v", err)
+			logger.Warnf("The platform API catalogue cannot be read yet, no routine runs until it can: %v", err)
 			return
 		}
 		docs := make([]apiholder.Document, len(cat.Documents))
@@ -216,9 +213,9 @@ func runDaemon(cfg *config.Config) {
 	aiGen.SetCatalogue(apiCatalogue)
 	gen.SetCatalogue(apiCatalogue)
 
-	// The message types an active bridge routine's answers depend on
-	// (PA-RT-07), recomputed whenever the rules or the catalogue change and
-	// read by every watcher on every message.
+	// The message types an active routine's answers depend on (PA-RT-07),
+	// recomputed whenever the rules or the catalogue change and read by every
+	// watcher on every message.
 	var triggers atomic.Value
 	triggers.Store(map[string]bool{})
 	refreshTriggers := func() { triggers.Store(aiGen.Triggers()) }
@@ -330,7 +327,7 @@ func runDaemon(cfg *config.Config) {
 				logger.Errorf("Error processing rules after the API catalogue changed: %v", err)
 			}
 		})
-		// AIManager's own messages that invalidate a bridge routine's answers —
+		// AIManager's own messages that invalidate a routine's answers —
 		// the tool catalogue's, for instance.
 		arw.SetOtherMessageHandler(func(messageType string) {
 			if extraTrigger(messageType) {
@@ -348,67 +345,35 @@ func runDaemon(cfg *config.Config) {
 		logger.Errorf("Error processing rules: %v", err)
 	}
 
-	// Start WebSocket watcher for AssetManager events
-	w, err := watcher.New(cfg.AssetManager.URL, cfg.AssetManager.InternalServiceKey, onChange)
-	if err != nil {
-		logger.Fatalf("Failed to create watcher: %v", err)
-	}
-	defer w.Close()
-	w.SetExtraTriggers(extraTrigger)
-
-	w.Start()
-	logger.Info("AssetManager WebSocket watcher started")
-
-	// Start WebSocket watcher for SystemManager events.
+	// WebSocket watchers for the managers' change messages. What a routine
+	// reads is decided by the operations it calls, so what re-evaluates is the
+	// x-invalidated-by of those operations (PA-RT-07, AG-IF-24), plus, from
+	// SystemManager, a user appearing or going — which changes whom the rules
+	// are evaluated for (AG-IF-18). All share onChange, so messages arriving
+	// together collapse into one debounced re-evaluation, and each re-evaluates
+	// on (re)connect.
 	//
-	// A rule's context is not only assets. It reads the organisation record and
-	// the user's own settings, and neither of those produces an AssetManager
-	// event — so a rule that had matched went on matching after the thing it
-	// tested changed. Assigning an AI provider to Research left the action
-	// telling you to assign one, until something unrelated happened to wake the
-	// daemon.
-	//
-	// Shares onChange with the asset watcher, so events arriving together
-	// collapse into one debounced re-evaluation.
-	sw, err := watcher.NewFor("SystemManager", cfg.SystemManager.URL,
-		cfg.SystemManager.InternalServiceKey, watcher.SystemTriggers, onChange)
-	if err != nil {
-		logger.Errorf("Failed to create SystemManager watcher: %v", err)
-	} else {
-		defer sw.Close()
-		sw.SetExtraTriggers(extraTrigger)
-		sw.Start()
-		logger.Info("SystemManager WebSocket watcher started")
-	}
-
-	// Start WebSocket watcher for ResourceManager events: the user's tools,
-	// credentials and proxies, which ctx.tools and ctx.proxies are built from.
-	// Linking a credential to a tool must withdraw the action asking for it.
-	// Same onChange, so it debounces together with the other watchers.
-	rw, err := watcher.NewFor("ResourceManager", cfg.ResourceManager.URL,
-		cfg.ResourceManager.InternalServiceKey, watcher.ResourceTriggers, onChange)
-	if err != nil {
-		logger.Errorf("Failed to create ResourceManager watcher: %v", err)
-	} else {
-		defer rw.Close()
-		rw.SetExtraTriggers(extraTrigger)
-		rw.Start()
-		logger.Info("ResourceManager WebSocket watcher started")
-	}
-
-	// ActionManager's messages matter only to bridge routines that read the
-	// actions (actions.list): it has no fixed triggers, only those the
-	// catalogue names. ActionGenerator's own creating and withdrawing is
-	// announced there too; the pass that follows finds nothing to change.
-	aw, err := watcher.NewFor("ActionManager", cfg.ActionManager.URL,
-		cfg.ActionManager.InternalServiceKey, nil, onChange)
-	if err != nil {
-		logger.Errorf("Failed to create ActionManager watcher: %v", err)
-	} else {
-		defer aw.Close()
-		aw.SetExtraTriggers(extraTrigger)
-		aw.Start()
-		logger.Info("ActionManager WebSocket watcher started")
+	// ActionGenerator's own creating and withdrawing is announced by
+	// ActionManager too; the pass that follows finds nothing to change.
+	for _, m := range []struct {
+		name     string
+		svc      config.ServiceConfig
+		triggers []watcher.MessageType
+	}{
+		{"AssetManager", cfg.AssetManager, nil},
+		{"SystemManager", cfg.SystemManager, watcher.SystemTriggers},
+		{"ResourceManager", cfg.ResourceManager, nil},
+		{"ActionManager", cfg.ActionManager, nil},
+	} {
+		w, err := watcher.NewFor(m.name, m.svc.URL, m.svc.InternalServiceKey, m.triggers, onChange)
+		if err != nil {
+			logger.Errorf("Failed to create %s watcher: %v", m.name, err)
+			continue
+		}
+		defer w.Close()
+		w.SetExtraTriggers(extraTrigger)
+		w.Start()
+		logger.Infof("%s WebSocket watcher started", m.name)
 	}
 
 	// Start liveness heartbeat to SystemManager.
@@ -464,11 +429,9 @@ func logConfiguration(cfg *config.Config) {
 
 // clients are this daemon's handles on the platform's services.
 type clients struct {
-	systemMgr   *systemmanager.Client
-	resourceMgr *resourcemanager.Client
-	assetMgr    *assetmanager.Client
-	actionMgr   *actionmanager.Client
-	aiMgr       *aimanager.Client
+	systemMgr *systemmanager.Client
+	actionMgr *actionmanager.Client
+	aiMgr     *aimanager.Client
 }
 
 // newClients builds them all. Constructing a client performs no I/O, so there
@@ -476,11 +439,9 @@ type clients struct {
 // missing key shows up.
 func newClients(cfg *config.Config) *clients {
 	c := &clients{
-		systemMgr:   systemmanager.NewClient(cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey),
-		resourceMgr: resourcemanager.NewClient(cfg.ResourceManager.URL, cfg.ResourceManager.InternalServiceKey),
-		assetMgr:    assetmanager.NewClient(cfg.AssetManager.URL, cfg.AssetManager.InternalServiceKey),
-		actionMgr:   actionmanager.NewClient(cfg.ActionManager.URL, cfg.ActionManager.InternalServiceKey),
-		aiMgr:       aimanager.NewClient(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey),
+		systemMgr: systemmanager.NewClient(cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey),
+		actionMgr: actionmanager.NewClient(cfg.ActionManager.URL, cfg.ActionManager.InternalServiceKey),
+		aiMgr:     aimanager.NewClient(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey),
 	}
 	logger.Info("API clients initialized")
 	return c
@@ -515,7 +476,7 @@ func newDebouncedProcessor(gen *generator.Generator) func() {
 			processing = true
 			mu.Unlock()
 
-			logger.Info("Asset/Vulnerability change detected, processing rules...")
+			logger.Info("Change detected, processing rules...")
 			if err := gen.ProcessRules(); err != nil {
 				logger.Errorf("Error processing rules: %v", err)
 			}

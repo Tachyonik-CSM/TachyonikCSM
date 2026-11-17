@@ -10,6 +10,7 @@
 package jsruntime
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,10 +67,20 @@ paths:
 func thingsBridge(t *testing.T, status int, answer string) (*apibridge.Bridge, *[]string) {
 	t.Helper()
 	var users []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	b := thingsBridgeFunc(t, func(r *http.Request) (int, string) {
 		users = append(users, r.Header.Get("X-User-ID"))
+		return status, answer
+	})
+	return b, &users
+}
+
+// thingsBridgeFunc is a bridge whose things.list is answered by answer.
+func thingsBridgeFunc(t *testing.T, answer func(r *http.Request) (int, string)) *apibridge.Bridge {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status, body := answer(r)
 		w.WriteHeader(status)
-		w.Write([]byte(answer))
+		w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 	b, err := apibridge.New([]apibridge.Module{{Name: "things", Document: thingsDocument(t), BaseURL: srv.URL, ServiceKey: "k"}},
@@ -77,7 +88,15 @@ func thingsBridge(t *testing.T, status int, answer string) (*apibridge.Bridge, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	return b, &users
+	return b
+}
+
+// noThings is a pass whose things.list answers with none — for routines that
+// call nothing, or whose answer does not matter.
+func noThings(t *testing.T) *apibridge.Pass {
+	t.Helper()
+	b, _ := thingsBridge(t, 200, `{"things":[]}`)
+	return b.NewPass()
 }
 
 const staleThingsRoutine = `var routineContract = 2;
@@ -107,9 +126,28 @@ func TestABridgeRoutineIsRecognisedByItsContract(t *testing.T) {
 	if !loadBridgeRoutine(t, staleThingsRoutine).IsBridge() {
 		t.Error("routineContract = 2 is a bridge routine")
 	}
-	ctxRoutine := `var rules = [{name: "r", ruleId: 1, check: function (ctx) { return false; }, createAction: function () { return {}; }}];`
-	if loadBridgeRoutine(t, ctxRoutine).IsBridge() {
+	if loadBridgeRoutine(t, contextRoutine).IsBridge() {
 		t.Error("a routine without routineContract is a context routine")
+	}
+}
+
+// contextRoutine is a routine as earlier versions generated it: no
+// routineContract, written for a ctx.
+const contextRoutine = `var rules = [{name: "r", ruleId: 1,
+  check: function (ctx) { return true; },
+  createAction: function (ctx) { return {title: "From the context", type: "Info", priority: 10}; }}];`
+
+// AG-IF-22: a context routine is neither run nor passed.
+func TestAContextRoutineIsNotRun(t *testing.T) {
+	e := loadBridgeRoutine(t, contextRoutine)
+	actions, unknown, err := e.EvaluateBridge(noThings(t), 1, false)
+	if !errors.Is(err, ErrContextRoutine) || !unknown || len(actions) != 0 {
+		t.Errorf("actions=%v unknown=%v err=%v, want none, unknown and ErrContextRoutine", actions, unknown, err)
+	}
+	b, _ := thingsBridge(t, 200, `{}`)
+	report := e.ValidateBridge(b)
+	if len(report.Errors) != 1 || !strings.Contains(report.Errors[0].Error(), "must begin with var routineContract = 2;") {
+		t.Errorf("validation errors = %v", report.Errors)
 	}
 }
 

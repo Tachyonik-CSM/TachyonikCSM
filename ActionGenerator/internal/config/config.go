@@ -6,8 +6,8 @@
 // precedence, built-in defaults, config.yaml and environment variables.
 //
 // It covers the endpoints ActionGenerator talks to (AIManager, AssetManager,
-// ActionManager, ResourceManager, SystemManager) with their internal service
-// keys, the SystemManager heartbeat, the JS execution budget, and logging. The AI
+// ActionManager, ResourceManager, SystemManager, ToolManager) with their
+// internal service keys, the SystemManager heartbeat, the JS execution budget, and logging. The AI
 // section holds only what a bootstrap needs: the authoritative AI assignment and
 // system prompt are fetched from AIManager at startup and refreshed live.
 package config

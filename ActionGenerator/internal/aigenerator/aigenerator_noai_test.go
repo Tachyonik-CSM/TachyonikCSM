@@ -19,32 +19,32 @@ import (
 
 // sampleActionRoutine is a minimal, hand-written action routine. It mirrors the
 // shape produced by AI code generation (a `rules` array whose entries expose
-// `check(ctx)` and `createAction(ctx)` functions) but needs no AI to exist —
-// evaluating a routine is pure JS.
+// `check(api)` and `createAction(api)` functions) but needs no AI to exist —
+// evaluating a routine is JS reading through the API bridge.
 //
 // The field values are the real vocabulary — type "Info", not the "task" this
 // fixture used to carry. Nothing checked it before, so the fixture described an
 // action the platform has no way to render; the output validation in jsruntime
 // is what noticed.
-const sampleActionRoutine = `
+const sampleActionRoutine = `var routineContract = 2;
 var rules = [
   {
     name: "always-fires",
     ruleId: 1,
-    check: function (ctx) { return true; },
-    createAction: function (ctx) {
+    check: function (api) { return true; },
+    createAction: function (api) {
       return { title: "Investigate", type: "Info", description: "auto", priority: 50 };
     }
   }
 ];
 `
 
-// TestEvaluateRules_NoAIClient_ExecutesLoadedRoutine verifies that an
+// TestEvaluate_NoAIClient_ExecutesLoadedRoutine verifies that an
 // AIActionGenerator constructed without a chat client (i.e. AI unset/disabled)
 // still exposes its loaded executor and that the executor evaluates rules. This
 // guards the documented contract that rule evaluation works with AI off; only
 // code generation requires a chat client.
-func TestEvaluateRules_NoAIClient_ExecutesLoadedRoutine(t *testing.T) {
+func TestEvaluate_NoAIClient_ExecutesLoadedRoutine(t *testing.T) {
 	ag := New(nil, nil, &config.Config{}) // nil chatClient == no AI configured
 
 	exec := jsruntime.New(5 * time.Second)
@@ -58,9 +58,10 @@ func TestEvaluateRules_NoAIClient_ExecutesLoadedRoutine(t *testing.T) {
 		t.Fatalf("expected 1 executor available with AI unset, got %d", len(execs))
 	}
 
-	actions, err := execs[1].EvaluateRules(jsruntime.RuleContext{}, false)
-	if err != nil {
-		t.Fatalf("EvaluateRules returned error: %v", err)
+	b, _ := thingsCatalogue(t).Bridge()
+	actions, unknown, err := execs[1].EvaluateBridge(b.NewPass(), 1, false)
+	if err != nil || unknown {
+		t.Fatalf("EvaluateBridge: unknown=%v err=%v", unknown, err)
 	}
 	if len(actions) != 1 || actions[0].Title != "Investigate" {
 		t.Fatalf("unexpected actions: %+v", actions)
@@ -74,7 +75,8 @@ func TestGenerateForRule_NoAIClient_ReturnsError(t *testing.T) {
 	// A non-empty system prompt ensures codegen does not bail early on that
 	// check, so the nil-client guard is the only thing preventing a panic on
 	// the nil ChatClient.
-	ag := New(nil, nil, &config.Config{AI: config.AIConfig{SystemPrompt: "test prompt"}})
+	ag := New(nil, nil, &config.Config{AI: config.AIConfig{SystemPrompt: "test prompt " + APICataloguePlaceholder}})
+	ag.SetCatalogue(thingsCatalogue(t))
 
 	_, err := ag.GenerateForRule(&aimanager.ActionRule{ID: 1, Title: "test"})
 	if err == nil {

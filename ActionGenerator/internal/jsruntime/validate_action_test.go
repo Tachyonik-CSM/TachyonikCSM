@@ -167,23 +167,24 @@ func TestTruncationDoesNotSplitCharacters(t *testing.T) {
 }
 
 // An invalid action is skipped; the rules around it still produce theirs.
-func TestEvaluateRulesSkipsAnInvalidAction(t *testing.T) {
+func TestEvaluationSkipsAnInvalidAction(t *testing.T) {
 	e := New(5 * time.Second)
 	if err := e.LoadFromString(`
+		var routineContract = 2;
 		var rules = [
 			{ name: "bad-type", ruleId: 1,
-			  check: function (ctx) { return true; },
-			  createAction: function (ctx) { return {title: "x", type: "task", status: "New", priority: 10}; } },
+			  check: function (api) { return true; },
+			  createAction: function (api) { return {title: "x", type: "task", status: "New", priority: 10}; } },
 			{ name: "good", ruleId: 2,
-			  check: function (ctx) { return true; },
-			  createAction: function (ctx) { return {title: "Fine", type: "Info", status: "New", priority: 20}; } }
+			  check: function (api) { return true; },
+			  createAction: function (api) { return {title: "Fine", type: "Info", status: "New", priority: 20}; } }
 		];`); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
-	actions, err := e.EvaluateRules(RuleContext{}, false)
+	actions, _, err := e.EvaluateBridge(noThings(t), 1, false)
 	if err != nil {
-		t.Fatalf("EvaluateRules: %v", err)
+		t.Fatalf("EvaluateBridge: %v", err)
 	}
 	if len(actions) != 1 || actions[0].Title != "Fine" {
 		t.Errorf("actions = %+v, want only the valid one", actions)
@@ -201,20 +202,22 @@ func TestEvaluateRulesSkipsAnInvalidAction(t *testing.T) {
 func TestRunawayRecursionIsRejected(t *testing.T) {
 	e := New(60 * time.Second)
 	err := e.LoadFromString(`
+		var routineContract = 2;
 		function boom(n) { return boom(n + 1); }
 		var rules = [{ name: "deep", ruleId: 1,
-			check: function (ctx) { return boom(0); },
-			createAction: function (ctx) { return {}; } }];`)
+			check: function (api) { return boom(0); },
+			createAction: function (api) { return {}; } }];`)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
+	pass := noThings(t)
 	started := time.Now()
-	actions, err := e.EvaluateRules(RuleContext{}, false)
+	actions, _, err := e.EvaluateBridge(pass, 1, false)
 	elapsed := time.Since(started)
 
 	if err != nil {
-		t.Fatalf("EvaluateRules: %v", err)
+		t.Fatalf("EvaluateBridge: %v", err)
 	}
 	if len(actions) != 0 {
 		t.Errorf("a rule that recurses forever produced %d action(s)", len(actions))

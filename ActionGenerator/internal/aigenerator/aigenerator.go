@@ -7,9 +7,11 @@
 // rule, and asks the configured AI to write a routine for a rule when an
 // administrator requests one — storing the result back in AIManager with its version, model and checksum.
 //
-// A generated routine is not trusted on arrival: it must name exactly the rule
-// it was generated for, and it must pass evaluation against mock contexts before
-// being marked usable. Nor is it trusted on the way back in — the stored
+// A generated routine is not trusted on arrival: it must be a bridge routine
+// (`var routineContract = 2;`), name exactly the rule it was generated for, and
+// pass evaluation against the API documents' mock answers before being marked
+// usable. A context routine — written for the rule context earlier versions
+// built — is neither generated nor loaded any more. Nor is it trusted on the way back in — the stored
 // checksum is verified when a routine is loaded, so code that changed in the
 // database since it was validated is refused rather than run. The rule watcher calls in here when a rule changes, so a
 // running daemon picks up new and edited rules live.
@@ -51,17 +53,20 @@ type AIActionGenerator struct {
 	rules             map[int64]*aimanager.ActionRule     // by ID
 	executors         map[int64]*jsruntime.JSRuleExecutor // by rule ID
 	mu                sync.RWMutex
-	// catalogue is the platform API catalogue bridge routines are generated
-	// against, validated against and checked against; nil: context routines
-	// only.
+	// catalogue is the platform API catalogue routines are generated
+	// against, validated against and checked against; nil: none can be
+	// generated or validated.
 	catalogue *apiholder.Holder
 }
 
 // APICataloguePlaceholder is where the system prompt wants the catalogue's
 // operations: replaced, at generation, with what the routine may call
-// (PA-RT-05). A system prompt without it generates context routines, as
-// before — applying a prompt with it is what switches generation over.
+// (PA-RT-05). A system prompt without it predates the platform API — it asks
+// for context routines — and is refused before the AI is called.
 const APICataloguePlaceholder = "{{API_CATALOGUE}}"
+
+// errPromptPredatesAPI is why a generation with such a prompt fails.
+var errPromptPredatesAPI = fmt.Errorf("the ActionGenerator system prompt predates the platform API (it has no %s) and must be replaced with prompts/actiongenerator.txt", APICataloguePlaceholder)
 
 // SetCatalogue gives the generator the platform API catalogue.
 func (ag *AIActionGenerator) SetCatalogue(c *apiholder.Holder) {
@@ -70,8 +75,8 @@ func (ag *AIActionGenerator) SetCatalogue(c *apiholder.Holder) {
 	ag.catalogue = c
 }
 
-// Triggers are the WebSocket message types after which an active bridge
-// routine's answers may differ: the x-invalidated-by of every operation it
+// Triggers are the WebSocket message types after which an active routine's
+// answers may differ: the x-invalidated-by of every operation it
 // calls (PA-RT-07).
 func (ag *AIActionGenerator) Triggers() map[string]bool {
 	ag.mu.RLock()
@@ -149,23 +154,32 @@ func (ag *AIActionGenerator) loadActiveRoutine(rule *aimanager.ActionRule) {
 		return
 	}
 
-	// A bridge routine runs only while the catalogue still offers what it
-	// calls (PA-RT-06): one that lost an operation would fail on every
-	// evaluation; it is held back and said so instead.
-	if executor.IsBridge() {
-		ops := routine.Operations()
-		executor.SetOperations(ops)
-		if ag.catalogue != nil && ag.catalogue.Loaded() {
-			if missing := ag.catalogue.Missing(ops); len(missing) > 0 {
-				logger.Errorf("Holding back routine %d of action rule %d (%s): it calls %s, which the API catalogue no longer has — regenerate the routine",
-					routine.ID, rule.ID, rule.Title, strings.Join(missing, ", "))
-				delete(ag.executors, rule.ID)
-				return
-			}
-			if dep := ag.catalogue.Deprecated(ops); len(dep) > 0 {
-				logger.Warnf("Routine %d of action rule %d (%s) calls deprecated operations %s — regenerate it before they go",
-					routine.ID, rule.ID, rule.Title, strings.Join(dep, ", "))
-			}
+	// A context routine — no routineContract — was written for the rule
+	// context, which this version no longer builds. It is held back: not
+	// evaluated, so its rule's actions are neither created nor withdrawn
+	// (AG-EVAL-24), as for an unknown outcome (PA-RT-03).
+	if !executor.IsBridge() {
+		logger.Warnf("action rule %d: routine %d is a context routine, which this version no longer runs — generate the rule anew",
+			rule.ID, routine.ID)
+		delete(ag.executors, rule.ID)
+		return
+	}
+
+	// A routine runs only while the catalogue still offers what it calls
+	// (PA-RT-06): one that lost an operation would fail on every evaluation;
+	// it is held back and said so instead.
+	ops := routine.Operations()
+	executor.SetOperations(ops)
+	if ag.catalogue != nil && ag.catalogue.Loaded() {
+		if missing := ag.catalogue.Missing(ops); len(missing) > 0 {
+			logger.Errorf("Holding back routine %d of action rule %d (%s): it calls %s, which the API catalogue no longer has — regenerate the routine",
+				routine.ID, rule.ID, rule.Title, strings.Join(missing, ", "))
+			delete(ag.executors, rule.ID)
+			return
+		}
+		if dep := ag.catalogue.Deprecated(ops); len(dep) > 0 {
+			logger.Warnf("Routine %d of action rule %d (%s) calls deprecated operations %s — regenerate it before they go",
+				routine.ID, rule.ID, rule.Title, strings.Join(dep, ", "))
 		}
 	}
 
@@ -281,11 +295,16 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for action rule %d with %s", rule.ID, choice.Describe())
 
-	// A system prompt asking for the catalogue gets it: the operations a
-	// bridge routine may call, rendered from the managers' documents.
+	// The system prompt gets the catalogue: the operations a routine may
+	// call, rendered from the managers' documents. A prompt without the
+	// placeholder was written for context routines, and the AI is not asked
+	// to write one; an empty prompt is codegen's to refuse.
 	systemPrompt := choice.SystemPrompt
-	bridgePrompt := strings.Contains(systemPrompt, APICataloguePlaceholder)
-	if bridgePrompt {
+	if strings.TrimSpace(systemPrompt) != "" {
+		if !strings.Contains(systemPrompt, APICataloguePlaceholder) {
+			logger.Errorf("Cannot generate the routine for action rule %d: %v (the operator applies it)", rule.ID, errPromptPredatesAPI)
+			return nil, fmt.Errorf("cannot generate the routine for rule %d: %w", rule.ID, errPromptPredatesAPI)
+		}
 		ag.mu.RLock()
 		cat := ag.catalogue
 		ag.mu.RUnlock()
@@ -329,6 +348,13 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 		return nil, fmt.Errorf("syntax validation failed for rule %d: %w", rule.ID, err)
 	}
 
+	// Only a bridge routine runs (AG-GEN-11): a model that wrote a context
+	// routine all the same has written one that would never be evaluated.
+	if !tempExecutor.IsBridge() {
+		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", fmt.Sprintf("Validation failed: %v", jsruntime.ErrContextRoutine))
+		return nil, fmt.Errorf("validation failed for rule %d: %w", rule.ID, jsruntime.ErrContextRoutine)
+	}
+
 	// Validate rule ID matches
 	if err := codegen.ValidateRuleID(tempExecutor.RuleIDs(), rule.ID); err != nil {
 		ag.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, "failed", fmt.Sprintf("Rule ID validation failed: %v", err))
@@ -340,24 +366,20 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 	// the only routine such a rule can have.
 	tempExecutor.SetOnDemand(strings.TrimSpace(rule.TriggerPrompt) == "")
 
-	// Validate runtime behavior with mock contexts. The report's log goes into
-	// the routine either way: for a failure it says why, and for a pass it
-	// records what each scenario decided and which fields were read, so a
-	// routine that never fires can be understood without re-running anything.
-	var report jsruntime.ValidationReport
+	// Validate runtime behaviour against the API documents' mock answers. The
+	// report's log goes into the routine either way: for a failure it says
+	// why, and for a pass it records what each scenario decided and what was
+	// read, so a routine that never fires can be understood without re-running
+	// anything.
+	var b *apibridge.Bridge
 	var fingerprint string
-	if tempExecutor.IsBridge() {
-		var b *apibridge.Bridge
-		ag.mu.RLock()
-		cat := ag.catalogue
-		ag.mu.RUnlock()
-		if cat != nil {
-			b, fingerprint = cat.Bridge()
-		}
-		report = tempExecutor.ValidateBridge(b)
-	} else {
-		report = tempExecutor.ValidateWithMockCtxReport()
+	ag.mu.RLock()
+	cat := ag.catalogue
+	ag.mu.RUnlock()
+	if cat != nil {
+		b, fingerprint = cat.Bridge()
 	}
+	report := tempExecutor.ValidateBridge(b)
 	for _, note := range report.Notes {
 		logger.Infof("  Validation note for rule %d: %s", rule.ID, note)
 	}

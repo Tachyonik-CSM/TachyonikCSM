@@ -87,36 +87,6 @@ func TestGetUser(t *testing.T) {
 	}
 }
 
-func TestGetOrganisationForUser(t *testing.T) {
-	c, got := serve(t, http.StatusOK, `{"name":"Acme","assetsHosts":12,"score":66,"naceCode":"62.01"}`)
-
-	org, err := c.GetOrganisationForUser(52)
-	if err != nil {
-		t.Fatalf("GetOrganisationForUser: %v", err)
-	}
-	if org.Name != "Acme" || org.AssetsHosts != 12 || org.NaceCode != "62.01" {
-		t.Errorf("org = %+v", org)
-	}
-	if got.path != "/api/internal/organisation" || got.query != "userId=52" {
-		t.Errorf("request = %s?%s", got.path, got.query)
-	}
-}
-
-func TestGetUserSettings(t *testing.T) {
-	c, got := serve(t, http.StatusOK, `{"ai":{"research":"personal","chat":"internal","dashboard":"internal"},"language":"de"}`)
-
-	settings, err := c.GetUserSettings(52)
-	if err != nil {
-		t.Fatalf("GetUserSettings: %v", err)
-	}
-	if settings.AI.Research != "personal" || settings.Language != "de" {
-		t.Errorf("settings = %+v", settings)
-	}
-	if got.path != "/api/internal/users/52/settings" {
-		t.Errorf("path = %q", got.path)
-	}
-}
-
 func TestGetWorkspace(t *testing.T) {
 	c, got := serve(t, http.StatusOK, `{"instanceMode":"appliance","primaryUserId":52}`)
 
@@ -127,7 +97,7 @@ func TestGetWorkspace(t *testing.T) {
 	if ws.PrimaryUserID != 52 {
 		t.Errorf("workspace = %+v", ws)
 	}
-	// The mode is what decides whether every user shares one context, so the
+	// The mode is what decides whether the rules are evaluated once for the workspace, so the
 	// derived answer is part of the contract, not just the raw field.
 	if !ws.IsAppliance() {
 		t.Errorf("instanceMode %q did not read as an appliance", ws.InstanceMode)
@@ -142,7 +112,7 @@ func TestRejectsNonOK(t *testing.T) {
 	if _, err := c.GetAllUsers(); err == nil {
 		t.Error("a 401 was accepted")
 	}
-	if _, err := c.GetOrganisationForUser(52); err == nil {
-		t.Error("a 401 was accepted by GetOrganisationForUser")
+	if _, err := c.GetUser(52); err == nil {
+		t.Error("a 401 was accepted by GetUser")
 	}
 }

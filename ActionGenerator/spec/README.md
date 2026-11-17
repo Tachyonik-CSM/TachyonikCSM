@@ -14,15 +14,15 @@ authoritative.
 | 1 | [Purpose and scope](01-purpose-and-scope.md) | What is ActionGenerator for, and what is it not for? | Draft |
 | 2 | [Evaluation and actions](02-evaluation-and-actions.md) | When are rules evaluated, and what happens to the actions? | Draft |
 | 3 | [Routine generation and validation](03-generation-and-validation.md) | How does a rule become a routine that may run? | Draft |
-| 4 | [Interfaces](04-interfaces.md) | What do routines see and return, and how does ActionGenerator talk to the other services? | Draft |
+| 4 | [Interfaces](04-interfaces.md) | What do routines read and return, and how does ActionGenerator talk to the other services? | Draft |
 | 5 | [Security and containment](05-security-and-containment.md) | Whose data reaches whom, and how is generated code kept in bounds? | Accepted |
 | 6 | [Operation](06-operation.md) | What does an operator rely on? | Draft |
 
 ActionGenerator has no HTTP API of its own, and must not get one (project
 rule, see CLAUDE.md). There is therefore no `openapi.yaml` here: its contract
-with the rest of the platform is the rule context it hands to routines, the
-action requests it sends, and the WebSocket messages it reacts to, all in
-[4. Interfaces](04-interfaces.md).
+with the rest of the platform is the routine contract and the API bridge it
+hands to routines, the action requests it sends, and the WebSocket messages it
+reacts to, all in [4. Interfaces](04-interfaces.md).
 
 Topics that hold for every TachyonikCSM service — sessions and
 authentication, tenancy, migration and versioning policy — belong to the

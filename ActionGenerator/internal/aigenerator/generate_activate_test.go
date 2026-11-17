@@ -21,23 +21,12 @@ import (
 	"tachyonik/actiongenerator/internal/config"
 )
 
-// A routine that passes validation: its check depends on the context, so it
-// answers differently across the mock scenarios.
-const generatedActionRoutine = `
-var rules = [{
-  name: "has-assets",
-  ruleId: 1,
-  check: function (ctx) { return ctx.assetCount > 0; },
-  createAction: function (ctx) {
-    return { title: "Review your assets", type: "Info", status: "New", priority: 50, description: "You have " + ctx.assetCount + " assets." };
-  }
-}];
-`
-
+// fakeChat answers every generation with the bridge routine of bridge_test.go,
+// which passes validation against thingsCatalogue.
 type fakeChat struct{}
 
 func (fakeChat) Chat(model, systemPrompt, userPrompt string) (string, error) {
-	return generatedActionRoutine, nil
+	return bridgeRoutine, nil
 }
 
 func generateThroughEvent(t *testing.T, activate bool) map[string]any {
@@ -69,7 +58,8 @@ func generateThroughEvent(t *testing.T, activate bool) map[string]any {
 	}))
 	t.Cleanup(srv.Close)
 
-	ag := New(aimanager.NewClient(srv.URL, "k"), fakeChat{}, &config.Config{AI: config.AIConfig{SystemPrompt: "p", Model: "m", JSExecTimeoutSeconds: 5}})
+	ag := New(aimanager.NewClient(srv.URL, "k"), fakeChat{}, &config.Config{AI: config.AIConfig{SystemPrompt: "p " + APICataloguePlaceholder, Model: "m", JSExecTimeoutSeconds: 5}})
+	ag.SetCatalogue(thingsCatalogue(t))
 	ag.HandleRuleChange(actionrulewatcher.RuleChangeEvent{Type: "updated", RuleID: 1})
 	mu.Lock()
 	defer mu.Unlock()

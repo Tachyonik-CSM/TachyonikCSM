@@ -12,19 +12,22 @@
 package jsruntime
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 )
 
-// A rule that remembers the last user it saw, and says so in its action.
-const remembersLastUser = `var lastUser = "nobody";
+// A rule that remembers the last user it saw, and says so in its action. The
+// things it is answered with carry the user's id.
+const remembersLastUser = `var routineContract = 2;
+var lastUser = "nobody";
 var rules = [{
 	name: "remembers", ruleId: 3,
-	check: function (ctx) { return true; },
-	createAction: function (ctx) {
+	check: function (api) { return true; },
+	createAction: function (api) {
 		var seen = lastUser;
-		lastUser = ctx.user.username;
+		lastUser = "user " + api.things.list().things[0].id;
 		return { title: "Previous: " + seen, type: "Info", status: "New", priority: 10 };
 	}
 }];`
@@ -34,13 +37,17 @@ func TestAnEvaluationSeesNothingOfAnotherUsers(t *testing.T) {
 	if err := e.LoadFromString(remembersLastUser); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	for _, user := range []string{"alice", "bob"} {
-		actions, err := e.EvaluateRules(RuleContext{User: map[string]interface{}{"username": user}}, false)
-		if err != nil || len(actions) != 1 {
-			t.Fatalf("%s: %+v, %v", user, actions, err)
+	b := thingsBridgeFunc(t, func(r *http.Request) (int, string) {
+		return 200, `{"things":[{"id":` + r.Header.Get("X-User-ID") + `,"stale":false}]}`
+	})
+	pass := b.NewPass()
+	for _, user := range []int64{41, 42} {
+		actions, unknown, err := e.EvaluateBridge(pass, user, false)
+		if err != nil || unknown || len(actions) != 1 {
+			t.Fatalf("user %d: %+v, unknown=%v, %v", user, actions, unknown, err)
 		}
-		if strings.Contains(actions[0].Title, "alice") {
-			t.Errorf("%s's action reads %q — alice's evaluation leaked into it", user, actions[0].Title)
+		if strings.Contains(actions[0].Title, "user 41") {
+			t.Errorf("user %d's action reads %q — user 41's evaluation leaked into it", user, actions[0].Title)
 		}
 	}
 }

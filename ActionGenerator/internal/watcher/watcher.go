@@ -5,11 +5,15 @@
 // Package watcher wakes the daemon when the data its rules reason about
 // changes, over the /ws endpoint any manager exposes to internal services.
 //
-// There is no periodic sweep to fall back on: an asset appearing or a system
-// setting changing is what triggers a fresh evaluation, so an event this
-// package does not subscribe to is a change no rule ever sees. Each connection
-// subscribes to its own set of message types, and reconnects on its own when it
-// drops.
+// There is no periodic sweep to fall back on: a change message is what
+// triggers a fresh evaluation, so a message this package does not react to is
+// a change no rule ever sees. Which messages matter follows from the routines:
+// the x-invalidated-by of every API operation an active routine calls
+// (PA-RT-07), decided when the message arrives (SetExtraTriggers). The only
+// fixed triggers are SystemManager's users appearing and going, which change
+// whom the rules are evaluated for rather than what a routine reads. Every
+// connection also re-evaluates when it is (re)established, and reconnects on
+// its own when it drops.
 //
 // The connection itself lives in TachyonikLib's wswatcher, shared with the
 // rule watchers. What is here is the part that differs: which events matter to
@@ -25,67 +29,14 @@ import (
 type MessageType string
 
 const (
-	TypeAssetCreated         MessageType = "ASSET_CREATED"
-	TypeAssetUpdated         MessageType = "ASSET_UPDATED"
-	TypeAssetDeleted         MessageType = "ASSET_DELETED"
-	TypeVulnerabilityCreated MessageType = "VULNERABILITY_CREATED"
-	TypeVulnerabilityUpdated MessageType = "VULNERABILITY_UPDATED"
-	TypeVulnerabilityDeleted MessageType = "VULNERABILITY_DELETED"
-
-	// A rule's context is not only assets: it reads the organisation record
-	// and the user's own settings, and neither produces an AssetManager event.
-	// Without these a rule that had matched went on matching after the thing it
-	// tested had already moved on — an action saying no Research provider was
-	// configured survived configuring one.
-	TypeUserCreated         MessageType = "USER_CREATED"
-	TypeUserUpdated         MessageType = "USER_UPDATED"
-	TypeUserDeleted         MessageType = "USER_DELETED"
-	TypeOrganisationUpdated MessageType = "ORGANISATION_UPDATED"
-
-	// ctx.tools and ctx.proxies come from ResourceManager. Without these an
-	// action about a tool without its credential outlived linking one, and an
-	// action about an offline proxy outlived the proxy coming back.
-	TypeToolCreated       MessageType = "TOOL_CREATED"
-	TypeToolUpdated       MessageType = "TOOL_UPDATED"
-	TypeToolDeleted       MessageType = "TOOL_DELETED"
-	TypeCredentialCreated MessageType = "CREDENTIAL_CREATED"
-	TypeCredentialUpdated MessageType = "CREDENTIAL_UPDATED"
-	TypeCredentialDeleted MessageType = "CREDENTIAL_DELETED"
-	TypeProxyCreated      MessageType = "PROXY_CREATED"
-	TypeProxyUpdated      MessageType = "PROXY_UPDATED"
-	TypeProxyDeleted      MessageType = "PROXY_DELETED"
-	// A new TachyonikProxy release makes proxies outdated that were current.
-	TypeProxyReleaseUpdated MessageType = "PROXY_RELEASE_UPDATED"
+	TypeUserCreated MessageType = "USER_CREATED"
+	TypeUserDeleted MessageType = "USER_DELETED"
 )
 
-// DefaultTriggers is what the AssetManager connection reacts to.
-var DefaultTriggers = []MessageType{
-	TypeAssetCreated, TypeAssetUpdated, TypeAssetDeleted,
-	TypeVulnerabilityCreated, TypeVulnerabilityUpdated, TypeVulnerabilityDeleted,
-}
-
-// SystemTriggers is what the SystemManager connection reacts to.
-//
-// USER_UPDATED is the broad one: SystemManager emits it for a role change, a
-// quota change and — since preference writes stopped being silent — for a
-// change to the user's own settings. The daemon cannot tell which from the
-// event, and does not need to: it re-reads the context either way.
-var SystemTriggers = []MessageType{
-	TypeUserCreated, TypeUserUpdated, TypeUserDeleted, TypeOrganisationUpdated,
-}
-
-// ResourceTriggers is what the ResourceManager connection reacts to.
-//
-// TOOL_ACTIVITY is deliberately absent: it fires on every tool call, and a
-// call changes nothing a rule reads. PROXY_UPDATED fires on enrolment, edits
-// and a status flip — the liveness monitor announces only an actual change,
-// not every heartbeat.
-var ResourceTriggers = []MessageType{
-	TypeToolCreated, TypeToolUpdated, TypeToolDeleted,
-	TypeCredentialCreated, TypeCredentialUpdated, TypeCredentialDeleted,
-	TypeProxyCreated, TypeProxyUpdated, TypeProxyDeleted,
-	TypeProxyReleaseUpdated,
-}
+// SystemTriggers is what the SystemManager connection reacts to whatever the
+// routines read: a user created or deleted changes whom the rules are
+// evaluated for (AG-EVAL-06), which no API operation's answer announces.
+var SystemTriggers = []MessageType{TypeUserCreated, TypeUserDeleted}
 
 // Watcher reacts to one manager's events by calling onChange.
 type Watcher struct {
@@ -95,16 +46,11 @@ type Watcher struct {
 	triggers   map[MessageType]bool
 	onChange   func()
 	// extra decides about message types the fixed set does not name: those
-	// the API catalogue lists as invalidating what an active bridge routine
-	// reads (PA-RT-07). Nil: none.
+	// the API catalogue lists as invalidating what an active routine reads
+	// (PA-RT-07). Nil: none.
 	extra func(messageType string) bool
 
 	ws *wswatcher.Watcher
-}
-
-// New creates a watcher for AssetManager's asset and vulnerability events.
-func New(assetManagerURL, internalServiceKey string, onChange func()) (*Watcher, error) {
-	return NewFor("AssetManager", assetManagerURL, internalServiceKey, DefaultTriggers, onChange)
 }
 
 // NewFor creates a watcher for any manager, reacting to the named triggers.
@@ -151,8 +97,8 @@ func (w *Watcher) resync() {
 }
 
 // dispatch reacts to any subscribed event. Which one it was does not matter:
-// every one of them means the context may have moved, and the answer is always
-// to read it again.
+// every one of them means what a routine reads may have moved, and the answer
+// is always to evaluate again.
 func (w *Watcher) dispatch(msg wswatcher.Message) {
 	if w.onChange == nil {
 		return

@@ -2,73 +2,43 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package generator is the evaluation engine. For each user it assembles a
-// context — assets and their statistics, sources and tools, the organisation
-// record, the user's own settings and AI assignments, the capabilities their
-// enabled tools provide — runs every loaded rule routine against it, and creates
-// the actions the routines return in ActionManager.
+// Package generator is the evaluation engine. For each user it runs every
+// loaded rule routine through one pass of the platform API bridge — the
+// routine reads what it needs from the managers' APIs, for that user — and
+// creates the actions the routines return in ActionManager.
 //
 // A rule that no longer triggers has its outstanding "New" actions withdrawn, so
-// an action disappears once the user has done the thing it asked for.
+// an action disappears once the user has done the thing it asked for. A rule
+// that could not be decided — a bridge call failed — keeps them (PA-RT-03).
 //
-// In shared-workspace mode the rules are evaluated once against the aggregate of
-// every user rather than once per user, so a team sees one action rather than
-// one each.
+// In shared-workspace mode the rules are evaluated once, for the primary owner,
+// whose answers cover the whole workspace (PA-BR-07), rather than once per user,
+// so a team sees one action rather than one each.
 package generator
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 
 	"tachyonik/actiongenerator/internal/actionmanager"
-	"tachyonik/actiongenerator/internal/aimanager"
-	"tachyonik/actiongenerator/internal/assetmanager"
 	"tachyonik/actiongenerator/internal/jsruntime"
-	"tachyonik/actiongenerator/internal/resourcemanager"
 	"tachyonik/actiongenerator/internal/systemmanager"
 	"tachyonik/lib/apibridge"
 	"tachyonik/lib/apiholder"
 	"tachyonik/lib/logger"
 )
 
-// sortedDistinct returns a sorted slice with duplicates removed.
-// Empty input → []string{} (never nil) so the JS context always sees an
-// array, never undefined.
-func sortedDistinct(in []string) []string {
-	if len(in) == 0 {
-		return []string{}
-	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s == "" {
-			continue
-		}
-		if _, dup := seen[s]; dup {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // Generator handles the action generation logic
 type Generator struct {
-	systemMgr   *systemmanager.Client
-	resourceMgr *resourcemanager.Client
-	assetMgr    *assetmanager.Client
-	actionMgr   *actionmanager.Client
-	aiMgr       *aimanager.Client
-	executors   map[int64]*jsruntime.JSRuleExecutor
+	systemMgr *systemmanager.Client
+	actionMgr *actionmanager.Client
+	executors map[int64]*jsruntime.JSRuleExecutor
 	// Rules that fire only when asked for by name; see SetOnDemandRules.
 	// Guarded by executorMu, which already covers the rule set it belongs to.
 	onDemandRules map[int64]bool
 	executorMu    sync.RWMutex
-	// catalogue holds the API bridge bridge routines read through; nil runs
-	// context routines only.
+	// catalogue holds the API bridge the routines read through; without it
+	// no rule can be decided.
 	catalogue *apiholder.Holder
 }
 
@@ -88,51 +58,29 @@ func (g *Generator) newPass() *apibridge.Pass {
 	return nil
 }
 
-// evaluate runs one routine for one user: a bridge routine through the pass,
-// a context routine against the context ctx builds on first use. unknown is
-// true when the outcome could not be decided, in which case nothing is
-// created or withdrawn for the rule (PA-RT-03).
+// evaluate runs one routine for one user through the pass. unknown is true
+// when the outcome could not be decided, in which case nothing is created or
+// withdrawn for the rule (PA-RT-03) — also for a context routine, which
+// aigenerator refuses to load and which would have nothing to read here.
 func (g *Generator) evaluate(executor *jsruntime.JSRuleExecutor, pass *apibridge.Pass, userID int64,
-	ctx func() jsruntime.RuleContext, force bool) (actions []actionmanager.CreateActionRequest, unknown bool, err error) {
-	if executor.IsBridge() {
-		if pass == nil {
-			logger.Warnf("A bridge routine cannot be evaluated for user %d: the platform API catalogue is not loaded", userID)
-			return nil, true, nil
-		}
-		return executor.EvaluateBridge(pass, userID, force)
+	force bool) (actions []actionmanager.CreateActionRequest, unknown bool, err error) {
+	if !executor.IsBridge() {
+		logger.Warnf("A context routine cannot be evaluated for user %d: this version runs bridge routines only", userID)
+		return nil, true, nil
 	}
-	actions, err = executor.EvaluateRules(ctx(), force)
-	return actions, false, err
-}
-
-// lazyContext builds a context at most once, when a context routine asks for
-// it: a pass of only bridge routines builds none.
-func lazyContext(build func() jsruntime.RuleContext) func() jsruntime.RuleContext {
-	var ctx *jsruntime.RuleContext
-	return func() jsruntime.RuleContext {
-		if ctx == nil {
-			c := build()
-			ctx = &c
-		}
-		return *ctx
+	if pass == nil {
+		logger.Warnf("A routine cannot be evaluated for user %d: the platform API catalogue is not loaded", userID)
+		return nil, true, nil
 	}
+	return executor.EvaluateBridge(pass, userID, force)
 }
 
 // New creates a new Generator instance
-func New(
-	systemMgr *systemmanager.Client,
-	resourceMgr *resourcemanager.Client,
-	assetMgr *assetmanager.Client,
-	actionMgr *actionmanager.Client,
-	aiMgr *aimanager.Client,
-) *Generator {
+func New(systemMgr *systemmanager.Client, actionMgr *actionmanager.Client) *Generator {
 	return &Generator{
-		systemMgr:   systemMgr,
-		resourceMgr: resourceMgr,
-		assetMgr:    assetMgr,
-		actionMgr:   actionMgr,
-		aiMgr:       aiMgr,
-		executors:   make(map[int64]*jsruntime.JSRuleExecutor),
+		systemMgr: systemMgr,
+		actionMgr: actionMgr,
+		executors: make(map[int64]*jsruntime.JSRuleExecutor),
 	}
 }
 
@@ -215,8 +163,9 @@ func (g *Generator) ProcessRules() error {
 	// Appliance mode is a single shared workspace: every non-anonymous user sees
 	// the same data, so generating one action set per user surfaces as duplicates
 	// in the shared Actions view. When the instance reports appliance mode with a
-	// primary owner, evaluate each rule ONCE against the aggregate of all users'
-	// data and create the actions under that one owner. SaaS keeps per-user
+	// primary owner, evaluate each rule ONCE for that owner — the managers answer
+	// with the whole workspace's data (PA-BR-07) — and create the actions under
+	// them. SaaS keeps per-user
 	// generation. A lookup failure falls back to per-user (safe default).
 	shared := false
 	var primaryID int64
@@ -279,14 +228,13 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 		return 0, fmt.Errorf("no executor loaded for rule %d", ruleID)
 	}
 
-	user, err := g.systemMgr.GetUser(userID)
-	if err != nil {
+	// The user must exist: the request names one, and an action for an
+	// account SystemManager does not know would belong to nobody.
+	if _, err := g.systemMgr.GetUser(userID); err != nil {
 		return 0, fmt.Errorf("failed to get user %d: %w", userID, err)
 	}
 
-	ctx := lazyContext(func() jsruntime.RuleContext { return g.buildJSRuleContext(user) })
-
-	actions, unknown, err := g.evaluate(executor, g.newPass(), userID, ctx, force)
+	actions, unknown, err := g.evaluate(executor, g.newPass(), userID, force)
 	if err != nil {
 		return 0, fmt.Errorf("error evaluating rule %d for user %d: %w", ruleID, userID, err)
 	}
@@ -355,11 +303,10 @@ func (g *Generator) processJSRules(users []systemmanager.User, executors map[int
 
 	for i := range users {
 		user := users[i]
-		ctx := lazyContext(func() jsruntime.RuleContext { return g.buildJSRuleContext(&user) })
 
 		// Evaluate each per-rule executor
 		for ruleID, executor := range executors {
-			actions, unknown, err := g.evaluate(executor, pass, user.ID, ctx, false)
+			actions, unknown, err := g.evaluate(executor, pass, user.ID, false)
 			if err != nil {
 				logger.Errorf("Error evaluating JS rules for user %d (rule executor %d): %v", user.ID, ruleID, err)
 				continue
@@ -368,7 +315,7 @@ func (g *Generator) processJSRules(users []systemmanager.User, executors map[int
 				continue
 			}
 
-			// Rule did not match the user's current context. Garbage-collect any
+			// Rule did not match the user's current data. Garbage-collect any
 			// New-status action this rule had previously created for the user —
 			// it's stale. Actions the user already acted on (Acknowledged,
 			// InProgress, Done) are preserved by the server-side filter.
@@ -422,34 +369,32 @@ func (g *Generator) processJSRules(users []systemmanager.User, executors map[int
 	return actionsCreated, nil
 }
 
-// processSharedWorkspace evaluates every rule ONCE against the aggregate of all
-// (non-anonymous) users' data and creates the resulting actions under a single
-// primary owner. This is the Appliance-mode counterpart of processJSRules: the
+// processSharedWorkspace evaluates every rule ONCE, for the primary owner, whose
+// answers the managers give for the whole workspace (PA-BR-07), and creates the
+// resulting actions under that owner. This is the Appliance-mode counterpart of processJSRules: the
 // whole instance is one shared workspace, so one action set — not one per user —
 // is correct. Owning everything under the primary user makes the existing
 // per-(owner,rule) dedup collapse to one-per-rule automatically, and lets us
 // consolidate away the per-user duplicates that earlier per-user generation left.
 func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor, primaryID int64) (int, error) {
-	var primary *systemmanager.User
+	found := false
 	for i := range users {
 		if users[i].ID == primaryID {
-			primary = &users[i]
+			found = true
 			break
 		}
 	}
-	if primary == nil {
+	if !found {
 		return 0, fmt.Errorf("primary user %d not found among users", primaryID)
 	}
 
-	// A context routine sees the merged context; a bridge routine is
-	// evaluated for the primary owner, and the managers answer with the
+	// Evaluated for the primary owner; the managers answer with the
 	// workspace's data (PA-BR-07).
-	ctx := lazyContext(func() jsruntime.RuleContext { return g.buildSharedContext(users, primary) })
 	pass := g.newPass()
 	actionsCreated := 0
 
 	for ruleID, executor := range executors {
-		actions, unknown, err := g.evaluate(executor, pass, primaryID, ctx, false)
+		actions, unknown, err := g.evaluate(executor, pass, primaryID, false)
 		if err != nil {
 			logger.Errorf("Error evaluating shared JS rule %d: %v", ruleID, err)
 			continue
@@ -458,7 +403,7 @@ func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors
 			continue
 		}
 
-		// Rule no longer matches the shared context — garbage-collect every
+		// Rule no longer matches the workspace's data — garbage-collect every
 		// New-status action it previously created, for any owner.
 		if len(actions) == 0 {
 			// As in the per-user path: an on-demand rule answering "no actions"
@@ -509,545 +454,4 @@ func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors
 	}
 
 	return actionsCreated, nil
-}
-
-// buildSharedContext builds a single RuleContext representing the whole shared
-// workspace: the aggregate of every non-anonymous user's data. It reuses
-// buildJSRuleContext per user and merges the results — concatenating collections
-// and summing counts/stats, mirroring what the shared Actions/Assets views show.
-// The User/organisation identity is taken from the primary owner.
-func (g *Generator) buildSharedContext(users []systemmanager.User, primary *systemmanager.User) jsruntime.RuleContext {
-	merged := jsruntime.RuleContext{
-		Sources:      []map[string]interface{}{},
-		Proxies:      []map[string]interface{}{},
-		Tools:        []map[string]interface{}{},
-		Assets:       []map[string]interface{}{},
-		Actions:      []map[string]interface{}{},
-		Capabilities: jsruntime.CapabilitySet{Automated: []string{}, Manual: []string{}},
-	}
-	statKeys := []string{"critical", "high", "medium", "low", "noThreat", "unmanaged", "total",
-		"hostsSeen30d", "hostsSeen180d", "hostsSeenOlder"}
-	statSum := make(map[string]int, len(statKeys))
-	autoSet := map[string]struct{}{}
-	manualSet := map[string]struct{}{}
-	var highest map[string]interface{}
-	highestScore := -1
-
-	for i := range users {
-		u := &users[i]
-		if u.Role == "anonymous" {
-			continue // anonymous sessions are not part of the shared workspace
-		}
-		ctx := g.buildJSRuleContext(u)
-		if u.ID == primary.ID {
-			merged.User = ctx.User // primary identity + legacy organisation aliases
-			// One shared workspace is one organisation, so the primary owner's
-			// record IS the workspace's. Settings follow the same owner: they
-			// are per-user, and merging them would invent a person who has
-			// everyone's configuration at once.
-			merged.Organisation = ctx.Organisation
-			merged.Settings = ctx.Settings
-			// The questionnaires and policies belong to the organisation, so
-			// they follow it.
-			merged.Questionnaires = ctx.Questionnaires
-			merged.Policies = ctx.Policies
-		}
-		merged.Sources = append(merged.Sources, ctx.Sources...)
-		merged.Proxies = append(merged.Proxies, ctx.Proxies...)
-		// The release is the same for every user; take any known one.
-		if v, _ := ctx.ProxyRelease["latestVersion"].(string); v != "" {
-			merged.ProxyRelease = ctx.ProxyRelease
-		}
-		merged.Tools = append(merged.Tools, ctx.Tools...)
-		merged.SourceCount += ctx.SourceCount
-		if ctx.SourceMax > merged.SourceMax {
-			merged.SourceMax = ctx.SourceMax
-		}
-		merged.Assets = append(merged.Assets, ctx.Assets...)
-		merged.AssetCount += ctx.AssetCount
-		merged.Actions = append(merged.Actions, ctx.Actions...)
-		merged.ActionCount += ctx.ActionCount
-		if ctx.HighestScoreAsset != nil {
-			if s := toInt(ctx.HighestScoreAsset["score"]); s > highestScore {
-				highestScore, highest = s, ctx.HighestScoreAsset
-			}
-		}
-		for _, k := range statKeys {
-			statSum[k] += toInt(ctx.AssetStats[k])
-		}
-		for _, c := range ctx.Capabilities.Automated {
-			autoSet[c] = struct{}{}
-		}
-		for _, c := range ctx.Capabilities.Manual {
-			manualSet[c] = struct{}{}
-		}
-	}
-
-	if merged.User == nil {
-		// Primary was filtered out or absent — fall back to a minimal identity.
-		merged.User = map[string]interface{}{
-			"id": primary.ID, "username": primary.Username, "email": primary.Email, "role": primary.Role,
-		}
-	}
-	// Same fallback for the two objects that follow the primary owner: present
-	// and empty rather than missing, so a rule reads a zero value instead of
-	// failing on undefined.
-	if merged.Organisation == nil {
-		merged.Organisation = jsruntime.EmptyOrganisation()
-	}
-	if merged.Settings == nil {
-		merged.Settings = jsruntime.EmptySettings()
-	}
-	if merged.Questionnaires == nil {
-		merged.Questionnaires = jsruntime.EmptyQuestionnaires()
-	}
-	if merged.Policies == nil {
-		merged.Policies = jsruntime.EmptyPolicies()
-	}
-	merged.HighestScoreAsset = highest
-	stats := make(map[string]interface{}, len(statKeys))
-	for _, k := range statKeys {
-		stats[k] = statSum[k]
-	}
-	merged.AssetStats = stats
-	merged.Capabilities.Automated = setToSorted(autoSet)
-	merged.Capabilities.Manual = setToSorted(manualSet)
-	return merged
-}
-
-// toInt coerces a JSON-decoded numeric (int/int64/float64) to int; 0 otherwise.
-func toInt(v interface{}) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	default:
-		return 0
-	}
-}
-
-// setToSorted returns the set's keys as a sorted, distinct slice (never nil).
-func setToSorted(set map[string]struct{}) []string {
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	return sortedDistinct(out)
-}
-
-// buildJSRuleContext creates a JS RuleContext for a user by fetching all raw data
-// buildJSRuleContext assembles everything a rule may read about one user.
-//
-// Each section below fetches from one service and maps the answer in. They are
-// deliberately independent: a service that is down costs its own fields and
-// nothing else, because rules are told these fields always exist and a
-// half-built context is worse than an empty one.
-func (g *Generator) buildJSRuleContext(user *systemmanager.User) jsruntime.RuleContext {
-	ctx := jsruntime.RuleContext{
-		User: map[string]interface{}{
-			"id":            user.ID,
-			"username":      user.Username,
-			"email":         user.Email,
-			"role":          user.Role,
-			"maxHostAssets": user.MaxHostAssets,
-			"createdAt":     user.CreatedAt,
-		},
-	}
-
-	g.addOrganisation(&ctx, user)
-	g.addSettings(&ctx, user)
-	g.addSources(&ctx, user)
-	g.addProxies(&ctx, user)
-	g.addAssets(&ctx, user)
-	g.addAssetStats(&ctx, user)
-	// Fetched once: the tool records and the capabilities both come from it.
-	tools, toolsErr := g.resourceMgr.GetToolsForUser(user.ID)
-	if toolsErr != nil {
-		logger.Warnf("Could not fetch tools for user %d: %v", user.ID, toolsErr)
-		tools = nil
-	}
-	g.addTools(&ctx, tools)
-	ctx.Capabilities = g.resolveCapabilities(user, tools)
-	logger.Infof("Context user=%d assetStats=%+v capabilities=automated=%v manual=%v", user.ID, ctx.AssetStats, ctx.Capabilities.Automated, ctx.Capabilities.Manual)
-	g.addActions(&ctx, user)
-
-	return ctx
-}
-
-// addOrganisation fills the organisation record and the questionnaire summary,
-// plus the three legacy ctx.user.organisation* aliases older routines read.
-func (g *Generator) addOrganisation(ctx *jsruntime.RuleContext, user *systemmanager.User) {
-	// Fetch organisation data for the user.
-	//
-	// Set unconditionally, including when the fetch fails: rules are told these
-	// fields are always defined, and a rule doing arithmetic on an undefined
-	// host-asset count silently produces NaN rather than failing visibly.
-	ctx.Organisation = jsruntime.EmptyOrganisation()
-	ctx.Questionnaires = jsruntime.EmptyQuestionnaires()
-	ctx.Policies = jsruntime.EmptyPolicies()
-	org, err := g.systemMgr.GetOrganisationForUser(user.ID)
-	if err != nil {
-		logger.Warnf("Could not fetch organisation for user %d: %v", user.ID, err)
-	} else {
-		ctx.Organisation = jsruntime.OrganisationToMap(org)
-		// Arrives with the organisation; nil when SystemManager could not
-		// compute it, which keeps the empty shape set above.
-		if org.Questionnaires != nil {
-			ctx.Questionnaires = jsruntime.QuestionnairesToMap(org.Questionnaires)
-			logger.Infof("Context user=%d questionnaires: impact=%d%%/%q readiness=%d%%/%q strategy=%d%%",
-				user.ID, org.Questionnaires.NIS2Impact.Progress, org.Questionnaires.NIS2Impact.Level,
-				org.Questionnaires.NIS2Readiness.Progress, org.Questionnaires.NIS2Readiness.Level,
-				org.Questionnaires.CyberStrategy.Progress)
-		}
-		// Arrive with the organisation too; nil keeps "not checked".
-		if org.Policies != nil {
-			ctx.Policies = jsruntime.PoliciesToMap(org.Policies)
-		}
-		logger.Infof("Context user=%d organisation: name=%q assetsHosts=%d score=%v nace=%q homepage=%q itProviders=%d",
-			user.ID, org.Name, org.AssetsHosts, org.Score, org.NaceCode, org.HomepageURL, len(org.ITProviders))
-	}
-	// Legacy aliases. Routines already generated against the old context read
-	// these three, so they stay — but ctx.organisation is what new code uses,
-	// and the prompt says so.
-	ctx.User["organisationHostAssets"] = ctx.Organisation["assetsHosts"]
-	ctx.User["organisationName"] = ctx.Organisation["name"]
-	ctx.User["organisationScore"] = ctx.Organisation["score"]
-
-}
-
-// addSettings fills what the user has configured for themselves.
-func (g *Generator) addSettings(ctx *jsruntime.RuleContext, user *systemmanager.User) {
-	// Fetch what the user has configured for themselves. Two services own the
-	// answer between them: SystemManager holds the assignments, AIManager knows
-	// how many providers the user actually owns.
-	settings, err := g.systemMgr.GetUserSettings(user.ID)
-	if err != nil {
-		logger.Warnf("Could not fetch settings for user %d: %v", user.ID, err)
-		ctx.Settings = jsruntime.EmptySettings()
-	} else {
-		ctx.Settings = jsruntime.SettingsToMap(settings)
-	}
-	if count, cerr := g.aiMgr.CountPersonalAIs(user.ID); cerr != nil {
-		logger.Warnf("Could not count personal AI providers for user %d: %v", user.ID, cerr)
-	} else if ai, ok := ctx.Settings["ai"].(map[string]interface{}); ok {
-		ai["personalProviderCount"] = count
-	}
-
-}
-
-// addSources fills the source list and the account's source limit.
-func (g *Generator) addSources(ctx *jsruntime.RuleContext, user *systemmanager.User) {
-	// Fetch sources and source limits
-	sourceCount, sourceMax, err := g.resourceMgr.GetSourceCount(user.ID)
-	if err != nil {
-		logger.Errorf("Error getting source count for user %d: %v", user.ID, err)
-	} else {
-		ctx.SourceCount = sourceCount
-		ctx.SourceMax = sourceMax
-	}
-
-	sources, err := g.resourceMgr.GetSourcesForUser(user.ID)
-	if err != nil {
-		logger.Errorf("Error getting sources for user %d: %v", user.ID, err)
-	} else {
-		ctx.Sources = make([]map[string]interface{}, len(sources))
-		for i, s := range sources {
-			// Always a timestamp: a row without one has not been seen
-			// since it was created.
-			lastSeen := s.CreatedAt
-			if s.LastSeenAt != nil && *s.LastSeenAt != "" {
-				lastSeen = *s.LastSeenAt
-			}
-			ctx.Sources[i] = map[string]interface{}{
-				"id":         s.ID,
-				"filename":   s.Filename,
-				"sourceType": s.SourceType,
-				"status":     s.Status,
-				"createdAt":  s.CreatedAt,
-				"lastSeen":   lastSeen,
-			}
-		}
-	}
-
-}
-
-// addProxies fills the user's TachyonikProxy installations. An empty list,
-// not a missing one, when ResourceManager cannot be reached: a rule about
-// offline proxies then finds none and stays quiet, rather than failing — or
-// firing — on a lookup that did not happen.
-//
-// The latest proxy release comes with them: unknown ("") when ResourceManager
-// does not know it or cannot be reached, so no proxy is reported outdated.
-func (g *Generator) addProxies(ctx *jsruntime.RuleContext, user *systemmanager.User) {
-	ctx.Proxies = []map[string]interface{}{}
-	ctx.ProxyRelease = jsruntime.ProxyReleaseToMap("")
-	proxies, latest, err := g.resourceMgr.GetProxiesForUser(user.ID)
-	if err != nil {
-		logger.Errorf("Error getting proxies for user %d: %v", user.ID, err)
-		return
-	}
-	ctx.ProxyRelease = jsruntime.ProxyReleaseToMap(latest)
-	for _, p := range proxies {
-		ctx.Proxies = append(ctx.Proxies, jsruntime.ProxyToMap(p.ID, p.Name, p.Status, p.ConnectionMode, p.Version, p.LastSeen, p.UpdateAvailable))
-	}
-}
-
-// stringOrNil and intOrNil turn an optional value into what a rule sees: the
-// value, or null. A typed nil pointer would not reach JS as null.
-func stringOrNil(v *string) interface{} {
-	if v == nil {
-		return nil
-	}
-	return *v
-}
-
-func intOrNil(v *int) interface{} {
-	if v == nil {
-		return nil
-	}
-	return *v
-}
-
-// addAssets fills the asset list and derives the highest-scoring one.
-func (g *Generator) addAssets(ctx *jsruntime.RuleContext, user *systemmanager.User) {
-	// Fetch all assets, derive highestScoreAsset locally
-	assets, err := g.assetMgr.GetAssetsForUser(user.ID)
-	if err != nil {
-		logger.Errorf("Error getting assets for user %d: %v", user.ID, err)
-	} else {
-		logger.Infof("Context user=%d assets fetched: count=%d", user.ID, len(assets))
-		ctx.Assets = make([]map[string]interface{}, len(assets))
-		ctx.AssetCount = len(assets)
-		var highest *assetmanager.Asset
-		for i := range assets {
-			a := &assets[i]
-			ctx.Assets[i] = map[string]interface{}{
-				"id":         a.ID,
-				"name":       a.Name,
-				"type":       a.Type,
-				"source":     a.Source,
-				"severity":   a.Severity,
-				"score":      a.Score,
-				"createdAt":  a.CreatedAt,
-				"modifiedAt": a.ModifiedAt,
-				"lastSeen":   a.LastSeen,
-				// Null rather than left out when not known, so a rule can
-				// test for "not set" and validation sees the field exists.
-				"lastScanned":                  stringOrNil(a.LastScanned),
-				"lastScanCoverageVerification": stringOrNil(a.LastScanCoverageVerification),
-				"scanCoverageIntervalDays":     intOrNil(a.ScanCoverageIntervalDays),
-			}
-			if a.Score > 0 && (highest == nil || a.Score > highest.Score) {
-				highest = a
-			}
-		}
-		if highest != nil {
-			ctx.HighestScoreAsset = map[string]interface{}{
-				"id":       highest.ID,
-				"name":     highest.Name,
-				"type":     highest.Type,
-				"source":   highest.Source,
-				"severity": highest.Severity,
-				"score":    highest.Score,
-				"lastSeen": highest.LastSeen,
-			}
-		}
-	}
-
-}
-
-// addAssetStats fills the severity buckets and the host assets by last seen.
-// The zeroed shape on failure is
-// deliberate: a rule doing arithmetic on an absent count produces NaN silently.
-func (g *Generator) addAssetStats(ctx *jsruntime.RuleContext, user *systemmanager.User) {
-	// Fetch asset stats (severity buckets + unmanaged/noThreat counts)
-	stats, err := g.assetMgr.GetAssetStats(user.ID)
-	if err != nil {
-		logger.Warnf("Could not fetch asset stats for user %d: %v", user.ID, err)
-		ctx.AssetStats = map[string]interface{}{
-			"critical": 0, "high": 0, "medium": 0, "low": 0,
-			"noThreat": 0, "unmanaged": 0, "total": 0,
-			"hostsSeen30d": 0, "hostsSeen180d": 0, "hostsSeenOlder": 0,
-		}
-	} else {
-		ctx.AssetStats = map[string]interface{}{
-			"critical":  stats.Critical,
-			"high":      stats.High,
-			"medium":    stats.Medium,
-			"low":       stats.Low,
-			"noThreat":  stats.NoThreat,
-			"unmanaged": stats.Unmanaged,
-			"total":     stats.Total,
-
-			"hostsSeen30d":   stats.HostsSeen30d,
-			"hostsSeen180d":  stats.HostsSeen180d,
-			"hostsSeenOlder": stats.HostsSeenOlder,
-		}
-	}
-
-}
-
-// resolveCapabilities works out what the user's tools can do, split the way the
-// Resources/Tools page splits them.
-func (g *Generator) resolveCapabilities(user *systemmanager.User, tools []resourcemanager.Tool) jsruntime.CapabilitySet {
-	capabilities := jsruntime.CapabilitySet{Automated: []string{}, Manual: []string{}}
-	// Resolve the user's tools' capabilities, mirroring the
-	// Resources/Tools page: split into "automated" (covered by an
-	// enabled tool_rule) and "manual" (listed in manualCapabilityIds
-	// on the tool's ToolOverview). Both sets are distinct + sorted.
-	if len(tools) > 0 && g.aiMgr != nil {
-		// Set of overview IDs the user owns. Skip unmanaged rows
-		// (ToolID nil) — no overview, nothing to resolve.
-		ownedOverviewIDs := make(map[int64]struct{}, len(tools))
-		for _, t := range tools {
-			if t.ToolID == nil {
-				continue
-			}
-			ownedOverviewIDs[*t.ToolID] = struct{}{}
-		}
-
-		if len(ownedOverviewIDs) > 0 {
-			// Automated: enabled tool_rules whose toolOverviewId is owned.
-			// Pass their IDs to the existing capability-name resolver.
-			rules, rerr := g.aiMgr.GetEnabledToolRules()
-			if rerr != nil {
-				logger.Warnf("Could not fetch enabled tool rules for user %d: %v", user.ID, rerr)
-			} else {
-				ownedRuleIDs := make([]int64, 0, len(rules))
-				for _, r := range rules {
-					if r.ToolOverviewID == nil {
-						continue
-					}
-					if _, ok := ownedOverviewIDs[*r.ToolOverviewID]; ok {
-						ownedRuleIDs = append(ownedRuleIDs, r.ID)
-					}
-				}
-				if len(ownedRuleIDs) > 0 {
-					autoNames, capErr := g.aiMgr.GetCapabilityNamesForToolRules(ownedRuleIDs)
-					if capErr != nil {
-						logger.Warnf("Could not resolve automated capabilities for user %d: %v", user.ID, capErr)
-					} else {
-						capabilities.Automated = sortedDistinct(autoNames)
-					}
-				}
-			}
-
-			// Manual: union of manualCapabilityIds across owned
-			// overviews → name lookup via tool_capabilities.
-			overviews, oerr := g.aiMgr.GetToolOverviews()
-			if oerr != nil {
-				logger.Warnf("Could not fetch tool overviews for user %d: %v", user.ID, oerr)
-			} else {
-				caps, cerr := g.aiMgr.GetToolCapabilities()
-				nameByID := make(map[int64]string, len(caps))
-				if cerr != nil {
-					logger.Warnf("Could not fetch tool capabilities for user %d: %v", user.ID, cerr)
-				} else {
-					for _, c := range caps {
-						nameByID[c.ID] = c.Name
-					}
-				}
-				manualSet := make(map[string]struct{})
-				for _, o := range overviews {
-					if _, ok := ownedOverviewIDs[o.ID]; !ok {
-						continue
-					}
-					for _, capID := range o.ManualCapabilityIDs {
-						if name, ok := nameByID[capID]; ok && name != "" {
-							manualSet[name] = struct{}{}
-						}
-					}
-				}
-				if len(manualSet) > 0 {
-					manualNames := make([]string, 0, len(manualSet))
-					for name := range manualSet {
-						manualNames = append(manualNames, name)
-					}
-					capabilities.Manual = sortedDistinct(manualNames)
-				}
-			}
-		}
-	}
-	return capabilities
-}
-
-// addTools fills the user's tool records, each with what its kind needs to
-// authenticate and whether a credential is linked — so a rule can find a tool
-// that cannot be used for want of one. Named as the Tools view names them, and
-// with the proxy's name taken from ctx.proxies, which must be filled first.
-//
-// When the catalogue cannot be read, a managed tool keeps its record name and
-// an empty credentialType: the rule then sees no tool missing a credential,
-// which is quiet rather than wrong in the other direction.
-func (g *Generator) addTools(ctx *jsruntime.RuleContext, tools []resourcemanager.Tool) {
-	ctx.Tools = []map[string]interface{}{}
-	if len(tools) == 0 {
-		return
-	}
-	overviews := map[int64]aimanager.ToolOverviewEntry{}
-	if g.aiMgr != nil {
-		list, err := g.aiMgr.GetToolOverviews()
-		if err != nil {
-			logger.Warnf("Could not fetch tool overviews for the tool context: %v", err)
-		}
-		for _, o := range list {
-			overviews[o.ID] = o
-		}
-	}
-	proxyNames := map[int64]string{}
-	for _, p := range ctx.Proxies {
-		if id, ok := p["id"].(int64); ok {
-			proxyNames[id], _ = p["name"].(string)
-		}
-	}
-	for _, t := range tools {
-		name, credentialType := t.Command, ""
-		if t.ToolID != nil {
-			if o, ok := overviews[*t.ToolID]; ok {
-				name, credentialType = o.Name, o.CredentialType
-			} else if t.Name != "" {
-				name = t.Name
-			}
-		}
-		if name == "" {
-			name = fmt.Sprintf("#%d", t.ID)
-		}
-		// Used without a credential by the user's choice: this installation
-		// needs none, so "credential missing" rules do not count it.
-		if t.CredentialDeclined {
-			credentialType = ""
-		}
-		ctx.Tools = append(ctx.Tools, jsruntime.ToolToMap(t.ID, name, t.ProxyID, proxyNames[t.ProxyID],
-			t.Host, credentialType, t.CredentialID != nil, t.CredentialDeclined))
-	}
-}
-
-// addActions fills the actions the user already has, so a rule can avoid
-// raising one it has raised before.
-func (g *Generator) addActions(ctx *jsruntime.RuleContext, user *systemmanager.User) {
-	// Fetch all actions
-	actions, err := g.actionMgr.GetActionsForUser(user.ID)
-	if err != nil {
-		logger.Errorf("Error getting actions for user %d: %v", user.ID, err)
-	} else {
-		ctx.Actions = make([]map[string]interface{}, len(actions))
-		ctx.ActionCount = len(actions)
-		for i, a := range actions {
-			ctx.Actions[i] = map[string]interface{}{
-				"id":         a.ID,
-				"title":      a.Title,
-				"type":       a.Type,
-				"status":     a.Status,
-				"priority":   a.Priority,
-				"assignedTo": a.AssignedTo,
-				"issuedBy":   a.IssuedBy,
-				"trigger":    a.Trigger,
-				"createdAt":  a.CreatedAt,
-			}
-		}
-	}
-
 }

@@ -51,24 +51,29 @@ func TestLoadFromStringInterruptsARunawayRoutine(t *testing.T) {
 
 // A rule whose check() loops forever is reported and skipped; the rules that
 // come after it still run.
-func TestEvaluateRulesInterruptsARunawayCheck(t *testing.T) {
+func TestEvaluationInterruptsARunawayCheck(t *testing.T) {
 	e := New(200 * time.Millisecond)
 	if err := e.LoadFromString(`
+		var routineContract = 2;
 		var rules = [
 			{ name: "runaway", ruleId: 1,
-			  check: function (ctx) { while (true) {} },
-			  createAction: function (ctx) { return {title: "never"}; } },
+			  check: function (api) { while (true) {} },
+			  createAction: function (api) { return {title: "never"}; } },
 			{ name: "well behaved", ruleId: 2,
-			  check: function (ctx) { return true; },
-			  createAction: function (ctx) { return {title: "ok", type: "Info", priority: 50}; } }
+			  check: function (api) { return true; },
+			  createAction: function (api) { return {title: "ok", type: "Info", priority: 50}; } }
 		];`); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
+	pass := noThings(t)
 	runsWithin(t, 5*time.Second, func() {
-		actions, err := e.EvaluateRules(RuleContext{}, false)
+		actions, unknown, err := e.EvaluateBridge(pass, 1, false)
 		if err != nil {
-			t.Fatalf("EvaluateRules: %v", err)
+			t.Fatalf("EvaluateBridge: %v", err)
+		}
+		if !unknown {
+			t.Error("the runaway rule could not be decided, which must be reported as unknown")
 		}
 		if len(actions) != 1 || actions[0].Title != "ok" {
 			t.Errorf("actions = %+v, want only the well-behaved rule's action", actions)
@@ -81,14 +86,16 @@ func TestEvaluateRulesInterruptsARunawayCheck(t *testing.T) {
 func TestValidationInterruptsARunawayRule(t *testing.T) {
 	e := New(200 * time.Millisecond)
 	if err := e.LoadFromString(`
+		var routineContract = 2;
 		var rules = [{ name: "runaway", ruleId: 1,
-			check: function (ctx) { while (true) {} },
-			createAction: function (ctx) { return {title: "never"}; } }];`); err != nil {
+			check: function (api) { while (true) {} },
+			createAction: function (api) { return {title: "never"}; } }];`); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
+	b, _ := thingsBridge(t, 200, `{}`)
 	runsWithin(t, 15*time.Second, func() {
-		report := e.ValidateWithMockCtxReport()
+		report := e.ValidateBridge(b)
 		if len(report.Errors) == 0 {
 			t.Error("a rule that never terminates passed validation")
 		}
@@ -101,20 +108,22 @@ func TestValidationInterruptsARunawayRule(t *testing.T) {
 func TestInterruptDoesNotLeakIntoTheNextExecution(t *testing.T) {
 	e := New(200 * time.Millisecond)
 	if err := e.LoadFromString(`
+		var routineContract = 2;
 		var rules = [
 			{ name: "runaway", ruleId: 1,
-			  check: function (ctx) { while (true) {} },
-			  createAction: function (ctx) { return {title: "never"}; } },
+			  check: function (api) { while (true) {} },
+			  createAction: function (api) { return {title: "never"}; } },
 			{ name: "after", ruleId: 2,
-			  check: function (ctx) { return true; },
-			  createAction: function (ctx) { return {title: "after", type: "Info", priority: 10}; } }
+			  check: function (api) { return true; },
+			  createAction: function (api) { return {title: "after", type: "Info", priority: 10}; } }
 		];`); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
+	pass := noThings(t)
 	runsWithin(t, 10*time.Second, func() {
 		for i := 0; i < 3; i++ {
-			actions, err := e.EvaluateRules(RuleContext{}, false)
+			actions, _, err := e.EvaluateBridge(pass, 1, false)
 			if err != nil {
 				t.Fatalf("pass %d: %v", i, err)
 			}
@@ -130,9 +139,9 @@ func TestInterruptDoesNotLeakIntoTheNextExecution(t *testing.T) {
 func TestZeroBudgetRunsUnguarded(t *testing.T) {
 	e := New(0)
 	runsWithin(t, 5*time.Second, func() {
-		if err := e.LoadFromString(`var rules = [{ name: "fine", ruleId: 1,
-			check: function (ctx) { return false; },
-			createAction: function (ctx) { return {}; } }];`); err != nil {
+		if err := e.LoadFromString(`var routineContract = 2; var rules = [{ name: "fine", ruleId: 1,
+			check: function (api) { return false; },
+			createAction: function (api) { return {}; } }];`); err != nil {
 			t.Errorf("a terminating routine was rejected with the guard off: %v", err)
 		}
 	})

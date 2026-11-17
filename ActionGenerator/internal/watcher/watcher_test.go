@@ -5,11 +5,11 @@
 // Tests which events wake the daemon.
 //
 // The connection machinery is wswatcher's and is tested there. What is tested
-// here is the trigger set: that an asset event wakes the AssetManager watcher,
-// that a user or organisation event wakes the SystemManager one, and that
-// neither reacts to the other's — the two connections share one callback, and a
-// watcher reacting to everything would re-evaluate on every broadcast in the
-// platform.
+// here is the trigger set: that a message the active routines' operations are
+// invalidated by wakes a watcher, that SystemManager's users appearing and
+// going always do, and that nothing else does — the connections share one
+// callback, and a watcher reacting to everything would re-evaluate on every
+// broadcast in the platform.
 
 package watcher
 
@@ -67,23 +67,30 @@ func waitFor(t *testing.T, limit time.Duration, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// The connect resync fires once; each subscribed event adds one more.
-func TestAssetEventsWakeTheDaemon(t *testing.T) {
-	srv := fakeManager(t, []string{"ASSET_CREATED", "VULNERABILITY_UPDATED"})
+// AG-IF-24: the connect resync fires once; each message the extra triggers
+// name adds one more, and nothing else does.
+func TestTheRoutinesTriggersWakeTheDaemon(t *testing.T) {
+	srv := fakeManager(t, []string{"ASSET_CREATED", "TOOL_ACTIVITY", "VULNERABILITY_UPDATED"})
 
 	var fired counter
-	w, err := New(srv.URL, "k", fired.inc)
+	w, err := NewFor("AssetManager", srv.URL, "k", nil, fired.inc)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewFor: %v", err)
 	}
+	w.SetExtraTriggers(func(m string) bool { return m == "ASSET_CREATED" || m == "VULNERABILITY_UPDATED" })
 	w.Start()
 	defer w.Close()
 
 	waitFor(t, 3*time.Second, "resync + two events", func() bool { return fired.get() >= 3 })
+	time.Sleep(150 * time.Millisecond)
+	if n := fired.get(); n != 3 {
+		t.Errorf("callback fired %d times, want 3: a message no routine depends on must not wake the daemon", n)
+	}
 }
 
-func TestSystemEventsWakeTheDaemon(t *testing.T) {
-	srv := fakeManager(t, []string{"USER_UPDATED", "ORGANISATION_UPDATED"})
+// AG-IF-18: a user appearing or going re-evaluates whatever the routines read.
+func TestUsersAppearingAndGoingWakeTheDaemon(t *testing.T) {
+	srv := fakeManager(t, []string{"USER_CREATED", "USER_DELETED"})
 
 	var fired counter
 	w, err := NewFor("SystemManager", srv.URL, "k", SystemTriggers, fired.inc)
@@ -96,33 +103,14 @@ func TestSystemEventsWakeTheDaemon(t *testing.T) {
 	waitFor(t, 3*time.Second, "resync + two events", func() bool { return fired.get() >= 3 })
 }
 
-// Tool, credential and proxy changes wake the daemon; a tool call does not.
-func TestResourceEventsWakeTheDaemon(t *testing.T) {
-	srv := fakeManager(t, []string{"TOOL_UPDATED", "TOOL_ACTIVITY", "CREDENTIAL_DELETED", "PROXY_UPDATED", "PROXY_RELEASE_UPDATED"})
-
-	var fired counter
-	w, err := NewFor("ResourceManager", srv.URL, "k", ResourceTriggers, fired.inc)
-	if err != nil {
-		t.Fatalf("NewFor: %v", err)
-	}
-	w.Start()
-	defer w.Close()
-
-	waitFor(t, 3*time.Second, "resync + four events", func() bool { return fired.get() >= 5 })
-	time.Sleep(150 * time.Millisecond)
-	if n := fired.get(); n != 5 {
-		t.Errorf("callback fired %d times, want 5: TOOL_ACTIVITY must not wake the daemon", n)
-	}
-}
-
-// A watcher must ignore what it did not subscribe to. The AssetManager and
-// SystemManager connections share one callback, so a watcher reacting to
-// everything would double every re-evaluation.
+// A watcher must ignore what it did not subscribe to. The connections share
+// one callback, so a watcher reacting to everything would multiply every
+// re-evaluation.
 func TestUnsubscribedEventsAreIgnored(t *testing.T) {
 	srv := fakeManager(t, []string{"USER_UPDATED", "ORGANISATION_UPDATED", "SOMETHING_ELSE"})
 
 	var fired counter
-	w, _ := New(srv.URL, "", fired.inc) // asset triggers only
+	w, _ := NewFor("SystemManager", srv.URL, "", SystemTriggers, fired.inc) // no extra triggers
 	w.Start()
 	defer w.Close()
 
@@ -154,7 +142,7 @@ func TestResyncsOnConnect(t *testing.T) {
 	defer srv.Close()
 
 	var fired counter
-	w, _ := New(srv.URL, "", fired.inc)
+	w, _ := NewFor("AssetManager", srv.URL, "", nil, fired.inc)
 	w.Start()
 	defer w.Close()
 
@@ -163,7 +151,7 @@ func TestResyncsOnConnect(t *testing.T) {
 
 func TestCloseIsIdempotentAndSafeBeforeStart(t *testing.T) {
 	srv := fakeManager(t, nil)
-	w, _ := New(srv.URL, "", func() {})
+	w, _ := NewFor("AssetManager", srv.URL, "", nil, func() {})
 	w.Start()
 	time.Sleep(50 * time.Millisecond)
 	if err := w.Close(); err != nil {
@@ -173,7 +161,7 @@ func TestCloseIsIdempotentAndSafeBeforeStart(t *testing.T) {
 		t.Errorf("second Close: %v", err)
 	}
 
-	unstarted, _ := New("http://127.0.0.1:1", "", func() {})
+	unstarted, _ := NewFor("AssetManager", "http://127.0.0.1:1", "", nil, func() {})
 	if err := unstarted.Close(); err != nil {
 		t.Errorf("Close without Start: %v", err)
 	}

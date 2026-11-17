@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # ActionGenerator
 
-What ActionGenerator must and must not do is specified in [spec/](spec/README.md), including the rule context routines read and the routine contract. This README covers building, configuring and running it; where the two disagree, the specification wins.
+What ActionGenerator must and must not do is specified in [spec/](spec/README.md), including the API bridge routines read through and the routine contract. This README covers building, configuring and running it; where the two disagree, the specification wins.
 
 ActionGenerator is a daemon that turns the state of a user's installation into
 **actions** — the concrete next steps shown in the Actions view.
@@ -14,7 +14,8 @@ ActionGenerator is a daemon that turns the state of a user's installation into
 What counts as a next step is not hard-coded. An administrator describes a
 situation in plain language as an **action rule** in AIManager; an AI turns that
 description into a small JavaScript routine; ActionGenerator evaluates those
-routines against each user's context and creates the actions they return.
+routines for each user — the routines read the user's situation through the
+platform's APIs — and creates the actions they return.
 Adding a new kind of advice means writing a rule, not changing this code.
 
 ## Table of Contents
@@ -36,12 +37,13 @@ Adding a new kind of advice means writing a rule, not changing this code.
 ActionGenerator holds the loaded rule routines in memory and re-evaluates them
 whenever the data they reason about changes. For each user it:
 
-1. Assembles the rule context — organisation, settings, assets and their
-   statistics, sources, tools and capabilities, existing actions
-2. Runs every loaded routine's `check(ctx)` against it
-3. Calls `createAction(ctx)` for each rule that matches
+1. Starts one pass of the platform API bridge for the user
+2. Runs every loaded routine's `check(api)`; the routine reads what it needs —
+   assets, the organisation, tools, existing actions — through `api`
+3. Calls `createAction(api)` for each rule that matches
 4. Creates the resulting action in ActionManager, unless the user already has it
-5. Withdraws the outstanding `New` actions of a rule that has stopped matching
+5. Withdraws the outstanding `New` actions of a rule that has stopped matching,
+   and leaves them alone for a rule that could not be decided
 
 Step 5 is what makes an action disappear once the user has done what it asked,
 rather than lingering as stale advice.
@@ -67,7 +69,7 @@ actions with no AI configured — only code generation is refused.
 The daemon reads the instance operating mode from SystemManager (`GET /api/internal/workspace`) and adapts how it generates:
 
 - **SaaS mode** — each user has private data, so rules are evaluated per user and actions are owned by that user (the behavior above).
-- **Appliance mode** — the whole instance is one shared workspace: every non-anonymous user sees the same data, so generating one action set per user would surface as duplicates in the shared Actions view. Instead, each rule is evaluated **once** against the aggregate of all users' data, and the resulting actions are created under a single **primary owner** (the oldest admin, reported as `primaryUserId`). Any per-user duplicates left by earlier generation are consolidated away under that owner. If the mode can't be determined, the daemon falls back to per-user generation.
+- **Appliance mode** — the whole instance is one shared workspace: every non-anonymous user sees the same data, so generating one action set per user would surface as duplicates in the shared Actions view. Instead, each rule is evaluated **once**, for a single **primary owner** (the oldest admin, reported as `primaryUserId`), whose API answers the managers give for the whole workspace, and the resulting actions are created under that owner. Any per-user duplicates left by earlier generation are consolidated away under that owner. If the mode can't be determined, the daemon falls back to per-user generation.
 
 ## Building
 
@@ -101,7 +103,7 @@ Managed via `go.mod`:
 
 | Dependency | Purpose |
 |------------|---------|
-| `tachyonik/lib` | Shared logger, REST client, heartbeat, AIManager watcher, WebSocket watcher, generated-code cleanup, JS context tracing (local `replace`) |
+| `tachyonik/lib` | Shared logger, REST client, heartbeat, AIManager watcher, WebSocket watcher, generated-code cleanup, the platform API catalogue and bridge (local `replace`) |
 | `github.com/dop251/goja` | Embedded ES5.1 JavaScript runtime that executes rule routines |
 | `github.com/gorilla/websocket` | The manager event connections |
 | `gopkg.in/yaml.v3` | YAML configuration |
@@ -171,15 +173,15 @@ Default configuration file: `./config.yaml`, overridable with
 environment variable and what the block is for. In outline:
 
 ```yaml
-assetmanager:     # assets and statistics for the rule context (read-only)
+assetmanager:     # read by routines through the API bridge; change messages
   url: http://localhost:8081
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
-systemmanager:    # users, organisation, settings, workspace mode; heartbeat out
+systemmanager:    # users, workspace mode, the API bridge; heartbeat out
   url: http://localhost:8083
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
-resourcemanager:  # sources, tools, source quota (read-only)
+resourcemanager:  # read by routines through the API bridge; change messages
   url: http://localhost:8080
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
@@ -187,11 +189,11 @@ actionmanager:    # where actions are created and withdrawn
   url: http://localhost:8082
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
-toolmanager:      # capabilities.get, for bridge routines
+toolmanager:      # capabilities.get, through the API bridge
   url: http://localhost:8086
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
-ai_manager:       # rules, routines, AI assignment and system prompt
+ai_manager:       # rules, routines, AI assignment, system prompt, API catalogue
   url: http://localhost:8085
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
@@ -235,7 +237,7 @@ Environment variables override configuration file values:
 | `ACTIONMANAGER_URL` | ActionManager API URL | `http://localhost:8082` |
 | `ACTIONMANAGER_INTERNAL_SERVICE_KEY` | ActionManager service key | - |
 | `ACTIONGENERATOR_AI_MANAGER_URL` | AIManager API URL | `http://localhost:8085` |
-| `TOOLMANAGER_URL` | ToolManager API URL (bridge routines) | `http://localhost:8086` |
+| `TOOLMANAGER_URL` | ToolManager API URL (the API bridge) | `http://localhost:8086` |
 | `TOOLMANAGER_INTERNAL_SERVICE_KEY` | ToolManager service key | - |
 | `AIMANAGER_INTERNAL_SERVICE_KEY` | AIManager service key | - |
 | `ACTIONGENERATOR_AI_TIMEOUT_SECONDS` | HTTP timeout for AI code-generation requests | `300` |
@@ -317,9 +319,10 @@ the Edit Action Rule dialog): ActionGenerator then names a passed routine the
 active one as it clears the request, and reloads the active routines on
 AIManager's update. A failed routine never replaces the active one.
 
-A routine is an array of rule objects, each with a `check(ctx)` that decides
-whether the rule applies and a `createAction(ctx)` that describes the action to
-raise.
+A routine declares `var routineContract = 2;` and is an array of rule objects,
+each with a `check(api)` that decides whether the rule applies and a
+`createAction(api)` that describes the action to raise. `api` is the platform
+API bridge (see [What a routine reads](#what-a-routine-reads)).
 
 ### When rules are re-evaluated
 
@@ -330,111 +333,27 @@ triggered by:
 | Trigger | Fires on |
 | --- | --- |
 | Startup | daemon start |
-| AssetManager WebSocket | asset / vulnerability changes (2s debounce) |
-| SystemManager WebSocket | user, organisation and settings changes (2s debounce) |
-| ResourceManager WebSocket | tool, credential and proxy changes (`TOOL_*` except `TOOL_ACTIVITY`, `CREDENTIAL_*`, `PROXY_*`, `PROXY_RELEASE_UPDATED`; 2s debounce) |
-| Action-rule watcher | a rule created, edited or deleted; an evaluation request; a feed import |
+| Manager WebSockets (AssetManager, SystemManager, ResourceManager, ActionManager, AIManager) | a message an API operation an active routine calls lists as `x-invalidated-by` (2s debounce); and on every (re)connect |
+| SystemManager WebSocket | `USER_CREATED`, `USER_DELETED`, whatever the routines read — they change whom the rules are evaluated for (2s debounce) |
+| Action-rule watcher | a rule created, edited or deleted; an evaluation request; a feed import; an API catalogue change |
 
 There is deliberately **no periodic sweep**: staleness is fixed by watching the
-data the context is built from, not by re-running on a timer. The consequence is
-that a context source with no watcher goes stale silently, so adding a field to
-`RuleContext` means asking where its change events come from. Currently
-unwatched: sources (ResourceManager), the tool catalogue — capabilities, tool
-rules and what a tool kind needs to authenticate (AIManager; it changes through
-a feed import, which does trigger) — and existing actions (ActionManager). A
-rule reading those is re-evaluated only when one of the triggers above happens
-to fire.
+data the routines read, not by re-running on a timer. The triggers follow from
+the routines: the message types after which an operation's answer may differ
+are part of its manager's API document (`x-invalidated-by`), and ActionGenerator
+recomputes the set whenever the rules or the catalogue change. A message no
+active routine depends on — `TOOL_ACTIVITY`, say — wakes nothing.
 
-### Rule context
+### What a routine reads
 
-Every rule is a JavaScript object with `check(ctx)` and `createAction(ctx)`, and `ctx` is
-assembled per user by `buildJSRuleContext`. It carries:
-
-| Field | What it is |
-| --- | --- |
-| `ctx.user` | id, username, email, role, createdAt, maxHostAssets |
-| `ctx.organisation` | The organisation record: name, assetsHosts, score, homepageUrl, naceCode, employees, employeesAffiliated, the postal address, companyLegalName, vatNumber, vatNumberValid, itStaffHourlyCost, currency, and `itProviders` |
-| `ctx.organisation.itProviders` | The IT service providers the organisation recorded: an array of `{name, homepageUrl, contactEmail, types}`, where `types` is an array of `"cybersecurity"`, `"network_infrastructure"`, `"general_it_support"`. Notes and logos are not included |
-| `ctx.questionnaires` | Progress and verdicts of the three organisation questionnaires, computed by SystemManager from the stored answers: `nis2Impact` (progress, complete, level `red`/`orange`/`yellow`/`green`, size, expired, …), `nis2Readiness` (progress, complete, score, level `red`/`yellow`/`green`, gaps, reportingCritical, …) and `cyberStrategy` (progress, complete, missingRequired, expired). Levels are `""` until complete; the strategy's `complete` means all required parts, not progress 100 |
-| `ctx.policies` | The organisation's policies (Organisation → Policies) from SystemManager: `cyberStrategy`, `nis2Impact` and `nis2Readiness`, each `{status, note}` with status `mandatory`, `recommended`, `not_applicable` or `not_checked` — whether the policy concerns the organisation |
-| `ctx.settings` | What the user configured for themselves: `ai.{research,chat,dashboard}` as a state (`personal` / `internal` / `disabled` / `none`), `ai.personalProviderCount`, and `language` |
-| `ctx.sources`, `ctx.sourceCount`, `ctx.sourceMax` | Uploaded sources and the user's limit. Each source is `{id, filename, sourceType, status, createdAt, lastSeen}`; `lastSeen` is when its content last arrived — the creation date, moved forward when a tool delivers identical output again — and is always set |
-| `ctx.proxies` | The user's TachyonikProxy installations from ResourceManager's `/api/internal/proxies`: an array of `{id, name, status, connectionMode, version, lastSeen, updateAvailable}`. `status` is `online`, `offline` or `pending_enrollment`; `lastSeen` is `""` for a proxy that never connected. `updateAvailable` is whether a newer TachyonikProxy release exists than `version`, compared numerically by ResourceManager; `false` while the latest release or the proxy's version is not known. `[]` when the user has none or ResourceManager cannot be reached |
-| `ctx.proxyRelease` | The latest TachyonikProxy release: `{latestVersion}`, from the signed manifest the proxies update from (ResourceManager, see its README). `latestVersion` is `""` while it is not known — the check is off, or the manifest could not be read or verified |
-| `ctx.tools` | The user's tool records from ResourceManager: an array of `{id, name, proxyId, proxyName, host, credentialType, hasCredential, credentialDeclined}`. `name` is the tool as the Tools view names it (the catalogue name, or the command for an unmanaged tool). `credentialType` is what the tool's kind needs to authenticate (AIManager's catalogue, e.g. `"username-password"`), `""` when nothing or unmanaged; `hasCredential` is whether one is linked; `credentialDeclined` is the user's choice to use the tool by hand only, without a credential — `credentialType` is then `""`, so a rule about missing credentials leaves the tool alone without knowing about the choice. A tool that cannot be used for want of a credential is `credentialType !== "" && !hasCredential`, the Tools view's "none — required". `[]` when the user has none or ResourceManager cannot be reached |
-| `ctx.assets`, `ctx.assetCount`, `ctx.highestScoreAsset` | Assets, and the highest-scoring one (or `null`). Each asset is `{id, name, type, source, severity, score, createdAt, modifiedAt, lastSeen, lastScanned, lastScanCoverageVerification, scanCoverageIntervalDays}`; the last three are `null` when not known. `type` is `"Host"`, the only asset type. `source` is always `""`: AssetManager's assets carry their sources as a list (`sources`, `sourcesLabel`), which the context does not pass on, so a rule cannot tell an asset's source from it. `scanCoverageIntervalDays` and `lastScanCoverageVerification` are only ever set by an import, so `null` means no source has reported a scheduled vulnerability scan for the asset |
-| `ctx.assetStats` | Severity buckets from AssetManager's `/api/assets/stats`, plus the host assets by last seen: `hostsSeen30d` (≤ 30 days), `hostsSeen180d` (31–180 days), `hostsSeenOlder` (> 180 days or unreadable) |
-| `ctx.capabilities` | `{automated, manual}` capability names covered by the user's configured **tools** |
-| `ctx.actions`, `ctx.actionCount` | Existing actions |
-
-Two distinctions the rules depend on:
-
-- **`ctx.settings` is not `ctx.capabilities`.** Capabilities are what a user's *tools* can do —
-  scanning, detection. AI features (Research, Chat, Dashboard) are configuration and live in
-  `ctx.settings`. A rule about an unconfigured AI provider that searches `ctx.capabilities` will
-  never fire, because no capability is named after an AI feature.
-- **`ctx.organisation` is a top-level object.** `ctx.user` also carries `organisationName`,
-  `organisationScore` and `organisationHostAssets` as legacy aliases, kept so routines generated
-  before `ctx.organisation` existed keep working. New rules use `ctx.organisation`.
-
-Every field is always defined — strings default to `""`, numbers to `0`, booleans to `false`,
-arrays to `[]` (`itProviders`, and each provider's `types`), including when the backing service
-call fails. `ctx.highestScoreAsset` is the one exception: it is `null` when no asset is scored,
-because that is a real state a rule must test for. When the questionnaire summary cannot be fetched
-a rule sees every questionnaire as not started, and when the policies cannot be fetched (or one is
-missing) every such policy as `not_checked`. `ctx.questionnaires.nis2Readiness.reportingScore`
-is `0` rather than `null` when unanswered — `null < 50` is true in JavaScript — with
-`reportingAnswered` to tell the cases apart.
-
-### Validating generated routines
-
-Before a generated routine is stored as `passed`, `ValidateWithMockCtxReport` runs every rule
-against seven mock scenarios (`jsruntime.MockScenarios`): an anonymous user with nothing configured,
-an admin with no data, and a registered user with everything filled in, five times over with
-different questionnaire states, so that every Impact and Readiness level appears in some scenario and
-not in another. The policy statuses vary too — the last scenario has the Impact assessment under way
-while the NIS-2 Impact policy is recommended, the first has it under way but not checked — so a rule
-that combines a questionnaire with a policy decides differently between them.
-
-The context each rule sees is traced (`tachyonik/lib/jsctxtrace`), so validation judges a rule by what
-it decided **and** what it read:
-
-| What the rule did | Outcome |
-| --- | --- |
-| Read a field that exists in no scenario | Rejected, naming the field: *reads ctx.x.levle, which does not exist* |
-| Same answer everywhere, reading nothing that differs between scenarios (`return false`) | Rejected |
-| Always false, but reading fields that do differ | Accepted, with a note: no scenario happens to meet its condition |
-| Always true | Rejected — it would fire for every user and its action could never be withdrawn |
-
-The routine log records, for passed and failed routines alike, what `check()` returned in each
-scenario and which fields it read, so a routine that never fires explains itself.
-
-The scenarios are generated into `WebUI/src/generated/actionRuleMockContexts.json`, which the
-routine dialog's Test and Context tabs use, and `TestMockContextsFileIsCurrent` fails when that file
-is stale. After changing the scenarios or the context shape, regenerate it:
-
-```bash
-UPDATE_MOCK_CONTEXTS=1 go test ./internal/jsruntime/ -run TestMockContextsFileIsCurrent
-```
-
-One copy of the context shape is still kept by hand: AIManager's dry-run defaults
-(`AIManager/internal/dryrun`, `actionContextDefaults`), which fill in fields a dry-run context omits. A field added to
-`RuleContext` belongs there too. The AI writes rules from a system prompt stored in AIManager
-(Settings → ActionGenerator → System Prompt) that documents this context — a field the prompt does
-not mention is a field no generated rule will use, however well it is populated.
-
-### Bridge routines
-
-A routine can also read the platform's data through the **API bridge**
-instead of a rule context
+A routine reads the platform's data through the **API bridge**
 ([docs/specs/01-platform-api-catalogue.md](../docs/specs/01-platform-api-catalogue.md)).
-Such a routine declares `var routineContract = 2;`, and its `check(api)`,
-`createAction(api)` and option conditions call
+Its `check(api)`, `createAction(api)` and option conditions call
 `api.<namespace>.<verb>({…})`: for example `api.assets.stats()` or
 `api.capabilities.get()`. Each call goes to the manager for the user being
-evaluated.
-
-Context routines and bridge routines run side by side.
+evaluated, and returns the documented fields of the answer, nothing else.
+What exists is what the managers' API documents (`*/spec/openapi.yaml`) mark
+`x-bridge: read`; there is no field list here to keep in step.
 
 - **Catalogue.** At startup ActionGenerator reads the platform API catalogue
   from AIManager and builds the bridge from it, read-only. It does so again
@@ -446,26 +365,70 @@ Context routines and bridge routines run side by side.
   left out (PA-RT-09). Reading a name `api` does not have throws an error
   naming it and what exists, e.g. "api.assets does not exist in the platform
   API: its namespaces are: …" (PA-BR-11).
-- **Generation.** A system prompt containing `{{API_CATALOGUE}}` gets the
-  catalogue's operations in its place: names, parameters, answer fields and
-  descriptions. Applying such a prompt (`prompts/actiongenerator.txt`) is what
-  switches generation to bridge routines. Without the placeholder, routines
-  are generated as context routines, as before.
-- **Validation.** Every rule runs against the managers' mock answers for each
-  scenario. A routine fails when it calls an operation it may not, passes an
-  argument the operation doesn't have, or reads a field the answer doesn't
-  have. The routine is stored with the operations it called and the catalogue
-  fingerprint.
 - **Evaluation.**
   - One bridge pass per evaluation pass: the same call is answered once.
   - In a shared workspace, the rule runs once for the primary owner, and the
     managers answer with the workspace's data.
   - A rule whose `check()` or `createAction()` throws, typically because a
     call failed, is left **undecided**: nothing is created and nothing is
-    withdrawn.
-- **Triggers.** A bridge routine is re-evaluated on the messages its
-  operations list as `x-invalidated-by`, from any manager. For that,
-  ActionGenerator also connects to ActionManager's WebSocket.
+    withdrawn. The same holds for every rule while the catalogue is not
+    loaded.
+
+### Context routines are no longer run
+
+Earlier versions handed routines a hand-built rule context, `ctx`, instead of
+`api`. A routine written for it — one without `var routineContract = 2;` — is
+a *context routine*, and this version does not run it. Wherever the rules are
+loaded (startup, a rule change, a feed import, a catalogue change) such an
+active routine is held back, with a warning:
+
+```
+[WARN] action rule 12: routine 345 is a context routine, which this version no longer runs — generate the rule anew
+```
+
+The rule is then not evaluated at all: its existing actions are neither
+created nor withdrawn, as for an undecided rule. Generating the rule anew,
+with the current system prompt, fixes it.
+
+### Generating routines
+
+The module's system prompt (Settings → ActionGenerator → System Prompt) must
+contain `{{API_CATALOGUE}}`: at generation it is replaced with the catalogue's
+read operations — names, parameters, answer fields and descriptions. A system
+prompt without it predates the platform API; generation is then refused
+before the AI is asked, with the error that the prompt must be replaced with
+`prompts/actiongenerator.txt` (see `scripts/extract-prompts.sh` at the repo
+root). Applying it to AIManager is the operator's step.
+
+### Validating generated routines
+
+Before a generated routine is stored as `passed`:
+
+1. It must load and declare `var routineContract = 2;` — otherwise it fails with
+   "the routine must begin with var routineContract = 2;" — and declare exactly
+   the rule's id.
+2. Every rule runs in each of the platform's mock scenarios
+   (`docs/specs/mock-scenarios.md`), with the bridge answering from the mock
+   answers the managers' API documents give per scenario. What each rule
+   called and read is recorded, and it is judged on what it decided **and**
+   what it read:
+
+| What the rule did | Outcome |
+| --- | --- |
+| Called an operation it may not, passed an argument the operation does not have, or read a field the answer does not have | Rejected, naming it: *reads things[].stael* |
+| Same answer everywhere, reading nothing that differs between scenarios (`return false`) | Rejected (a note for an on-demand rule) |
+| Always false, but reading answers that do differ | Accepted, with a note: no scenario happens to meet its condition |
+| Always true | Rejected — it would fire for every user and its action could never be withdrawn |
+
+The routine log records, for passed and failed routines alike, what `check()`
+returned in each scenario, which operations and fields it read, and the
+operations it called; the routine is stored with those operations and the
+catalogue fingerprint.
+
+The routine dialog's Test and Context tabs show the same evidence: they run
+the routine through AIManager's dry run (`POST /api/dry-run`) in each mock
+scenario, against the same mock answers, and show what each rule decided,
+the answers it was given and what it read of them.
 
 ### Adding a new rule
 
@@ -512,19 +475,20 @@ and compiled into the rule's routine along with everything else:
 {
   name: "identify-missing-host-assets",
   ruleId: 8,
-  check: function(ctx) { ... },
-  createAction: function(ctx) { ... },
+  check: function(api) { ... },
+  createAction: function(api) { ... },
   // optional; an option with no entry here always applies
   options: {
-    "5": function(ctx) { return ctx.capabilities.automated.indexOf("Host detection") === -1 &&
-                                ctx.capabilities.manual.indexOf("Host detection") === -1; }
+    "5": function(api) { var c = api.capabilities.get();
+                         return c.automated.indexOf("Host detection") === -1 &&
+                                c.manual.indexOf("Host detection") === -1; }
   }
 }
 ```
 
-The functions return **true when the option applies**, read the same `ctx` as
-`check()`, and run at the moment an action is raised — which is the only place
-the context exists. The options that do *not* apply are recorded on the action
+The functions return **true when the option applies**, are given the same
+`api` — and the same bridge pass — as `check()`, and run at the moment an
+action is raised, so the options are decided on the data the condition saw. The options that do *not* apply are recorded on the action
 as `hiddenOptions`, and the UI offers the rest.
 
 The exclusions are stored rather than the inclusions, so an option added to a
@@ -579,46 +543,43 @@ input on both sides.
   requests one, and stores the result back with its version, model and checksum.
 - **codegen** — prompts the AI provider with the module system prompt and checks
   that what comes back declares exactly the rule ID it was asked for.
-- **jsruntime** — the goja runtime: builds the context, runs the routines under
-  the execution guard, and validates both generated routines and the actions
-  they return.
-- **generator** — the evaluation engine: assembles each user's context, runs
-  every rule, creates matching actions and withdraws stale ones.
-- **Watchers** — five WebSocket connections, all authenticated with the internal
+- **jsruntime** — the goja runtime: runs the routines through the API bridge
+  under the execution guard, and validates both generated routines (against
+  the catalogue's mock answers) and the actions they return.
+- **generator** — the evaluation engine: one bridge pass per evaluation, runs
+  every rule for every user (or once for a shared workspace), creates matching
+  actions and withdraws stale ones.
+- **Watchers** — WebSocket connections, all authenticated with the internal
   service key:
-  - **AssetManager** — asset and vulnerability changes.
-  - **SystemManager** — user, organisation and settings changes (`USER_*`,
-    `ORGANISATION_UPDATED`). A rule's context is not only assets, so a change to
-    the organisation record or to a user's own settings must wake the daemon too.
-  - **ResourceManager** — tool, credential and proxy changes, which `ctx.tools`
-    and `ctx.proxies` are built from, and a new proxy release
-    (`PROXY_RELEASE_UPDATED`), which makes proxies outdated that were current. Linking a credential to a tool must
-    withdraw the action asking for one. `TOOL_ACTIVITY`, sent on every tool
-    call, is ignored.
+  - **AssetManager, SystemManager, ResourceManager, ActionManager** — the
+    messages the active routines' operations are invalidated by; from
+    SystemManager also `USER_CREATED` and `USER_DELETED`.
   - **Action rules** — rules created, edited or deleted; explicit evaluation
-    requests from the UI; feed imports. Debounced per rule, so saving a rule
-    several times in quick succession triggers one regeneration.
+    requests from the UI; feed imports; API catalogue changes; and AIManager's
+    own messages the routines' operations are invalidated by. Debounced per
+    rule, so saving a rule several times in quick succession triggers one
+    regeneration.
   - **Module AI settings** — the AI assignment and system prompt, re-resolved
     live when an administrator changes them.
-- **API clients** — AIManager (rules, routines, AI settings, tool rules),
-  SystemManager (users, organisation, settings, workspace mode), AssetManager
-  (assets and statistics), ResourceManager (sources, tools, quota), ActionManager
-  (create, check and withdraw actions).
+- **API clients** — AIManager (rules, routines, AI settings, the API
+  catalogue), SystemManager (users, workspace mode), ActionManager (create,
+  check and withdraw actions); everything a routine reads goes through the
+  API bridge (TachyonikLib `apibridge`, `apiholder`).
 
 ### Processing Flow
 
 ```
 Manager event → Watcher → 2s debounce → Generator → for each user:
-                                                      1. Build ctx (SystemManager,
-                                                         AssetManager, ResourceManager,
-                                                         AIManager)
-                                                      2. Run every routine's check(ctx)
-                                                      3. createAction(ctx) where it matched
+                                                      1. Start a bridge pass
+                                                      2. Run every routine's check(api),
+                                                         which calls the managers' APIs
+                                                      3. createAction(api) where it matched
                                                       4. Validate the action
                                                       5. Create it in ActionManager,
                                                          unless it already exists
                                                       6. Withdraw stale New actions of
-                                                         rules that no longer match
+                                                         rules that no longer match (not
+                                                         of rules left undecided)
 ```
 
 ### Event-Driven Operation
@@ -651,6 +612,7 @@ Manager event → Watcher → 2s debounce → Generator → for each user:
 [INFO] AssetManager WebSocket watcher started
 [INFO] SystemManager WebSocket watcher started
 [INFO] ResourceManager WebSocket watcher started
+[INFO] ActionManager WebSocket watcher started
 [INFO] ActionGenerator daemon is running. Press Ctrl+C to stop.
 ```
 
@@ -663,7 +625,7 @@ With no AI assigned, startup continues and says so:
 ### Rule Processing
 
 ```
-[INFO] Asset/Vulnerability change detected, processing rules...
+[INFO] Change detected, processing rules...
 [INFO] Processing action rules...
 [INFO] Checking rules for 5 users
 [INFO] Using 12 per-rule executors with 12 total rules
@@ -683,14 +645,20 @@ With no AI assigned, startup continues and says so:
    - ActionManager (port 8082)
    - SystemManager (port 8083)
    - AIManager (port 8085)
+   - ToolManager (port 8086)
 
 2. Check that the internal service keys match the ones those services expect.
 
 3. Check that rules have an active routine. `No JS rules loaded, skipping rule
-   processing` means no rule has one — either none has been generated, or
-   generation failed.
+   processing` means no rule has one that runs — none has been generated,
+   generation failed, or the active routines are context routines (`routine …
+   is a context routine, which this version no longer runs`), which need
+   generating anew.
 
-4. Raise the log level:
+4. Check that the API catalogue is loaded (`API catalogue loaded: …`). Until it
+   is, no rule can be decided.
+
+5. Raise the log level:
 
    ```bash
    ACTIONGENERATOR_LOG_LEVEL=DEBUG ./tachyonik-actiongenerator
@@ -699,10 +667,11 @@ With no AI assigned, startup continues and says so:
 ### A rule never fires
 
 - Check the routine log in the rule dialog. Validation records what `check()`
-  returned in each mock scenario and which context fields it read, so a routine
-  that never fires explains itself.
-- Check that the field the rule reads is one the system prompt documents, and
-  that the rule reads `ctx.organisation`, not `ctx.user.organisation`.
+  returned in each mock scenario and which operations and fields it read, so a
+  routine that never fires explains itself.
+- Check that the operation the rule reads is in the catalogue and lists the
+  messages that change its answer as `x-invalidated-by` — otherwise nothing
+  re-evaluates the rule when that data changes.
 
 ### A routine keeps timing out
 
@@ -730,10 +699,11 @@ generation fault, not a configuration one.
 
 ```
 AssetManager ─┐
-SystemManager ─┼─ (WebSocket events) ─→ ActionGenerator ─→ ActionManager ─→ Actions view
-ResourceManager ┘                            ↑
-                                        AIManager
-                                   (rules, routines, AI)
+SystemManager ─┤   (WebSocket events;
+ResourceManager┼─   API bridge reads)  ─→ ActionGenerator ─→ ActionManager ─→ Actions view
+ActionManager ─┤                               ↑
+ToolManager ───┘                           AIManager
+                                (rules, routines, AI, API catalogue)
 ```
 
 ### Workflow
@@ -743,7 +713,8 @@ ResourceManager ┘                            ↑
    it becomes the rule's active routine when picked, or right away when the
    request asked for that
 3. A user's data changes; the managers broadcast it
-4. ActionGenerator re-evaluates every rule against every user's context
+4. ActionGenerator re-evaluates every rule for every user, the routines
+   reading through the API bridge
 5. Matching rules create actions in ActionManager; rules that stopped matching
    have their outstanding actions withdrawn
 6. Users see the result in their Actions view

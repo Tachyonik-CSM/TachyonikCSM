@@ -3,21 +3,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Bridge routines: routines that read the platform's data through the API
-// bridge instead of a rule context (docs/specs/01-platform-api-catalogue.md).
+// bridge (docs/specs/01-platform-api-catalogue.md). They are the only routines
+// this version runs.
 //
 // A routine declares itself one with a top-level `var routineContract = 2;`
-// (PA-RT-01). Its rules are the same objects as a context routine's — name,
-// ruleId, check, createAction, options — but each function is given `api`
-// instead of `ctx`: one function per bridge operation, which calls the
-// manager for the user the evaluation is for. Both kinds run side by side
-// (PA-MIG-01); nothing here changes how a context routine runs.
+// (PA-RT-01). Each of its rules — name, ruleId, check, createAction, options —
+// is given `api`: one function per bridge operation, which calls the manager
+// for the user the evaluation is for. A routine without the declaration is a
+// context routine, written for the rule context earlier versions built; it is
+// refused where it is loaded (see aigenerator) and EvaluateBridge does not run
+// it.
 //
-// Two things differ in how an evaluation is judged:
+// Two things decide how an evaluation is judged:
 //
 //   - A rule whose check() or createAction() throws — above all because a
 //     bridge call failed — has an UNKNOWN outcome: it raises nothing, and its
-//     actions are not withdrawn either (PA-RT-03). A context routine's failure
-//     counts as "does not match", which withdraws (AG EVAL question 1).
+//     actions are not withdrawn either (PA-RT-03).
 //   - Validation runs every rule against the mock answers the managers'
 //     documents give per scenario, and judges what it called and read against
 //     those documents (PA-VAL-02).
@@ -39,6 +40,10 @@ import (
 
 // ContractBridge is the routineContract value of a bridge routine.
 const ContractBridge = 2
+
+// ErrContextRoutine is the reason a routine without the bridge declaration is
+// refused, as validation reports it and as a generation failure reads.
+var ErrContextRoutine = fmt.Errorf("the routine must begin with var routineContract = %d;", ContractBridge)
 
 // routineContract reads a routine's declared contract: 2 for a bridge
 // routine, 1 for anything else.
@@ -114,6 +119,9 @@ func (e *JSRuleExecutor) EvaluateBridge(pass *apibridge.Pass, userID int64, forc
 	if e.code == "" || len(e.rules) == 0 {
 		return nil, false, nil
 	}
+	if e.contract != ContractBridge {
+		return nil, true, ErrContextRoutine
+	}
 	vm, rules, err := e.instance()
 	if err != nil {
 		return nil, true, fmt.Errorf("instantiate routine: %w", err)
@@ -158,8 +166,12 @@ func (e *JSRuleExecutor) EvaluateBridge(pass *apibridge.Pass, userID int64, forc
 func (e *JSRuleExecutor) ValidateBridge(b *apibridge.Bridge) ValidationReport {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	report := ValidationReport{Bridge: true}
+	var report ValidationReport
 	if e.code == "" || len(e.rules) == 0 {
+		return report
+	}
+	if e.contract != ContractBridge {
+		report.Errors = append(report.Errors, ErrContextRoutine)
 		return report
 	}
 	if b == nil {
@@ -313,7 +325,7 @@ func (e *JSRuleExecutor) ValidateBridge(b *apibridge.Bridge) ValidationReport {
 
 // bridgeVaryingReads returns the reads ("operation:path") whose value differs
 // between the scenarios' mock answers. A path through an array is compared at
-// the array, as varyingPaths does for a context.
+// the array itself, since that is the value the rule's reading depends on.
 func bridgeVaryingReads(b *apibridge.Bridge, reads []string) []string {
 	var out []string
 	for _, r := range reads {

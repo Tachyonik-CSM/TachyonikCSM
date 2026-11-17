@@ -15,30 +15,34 @@ WebSocket connection it opens, MUST carry that service's internal service key.
 key. They are refused without it.*
 
 **AG-SEC-02** The service keys and the AI's API keys MUST NOT be logged, nor be
-put into a context, a routine or an action.
+put into a routine, an answer a routine reads, or an action.
 *Reason: the log is read in support cases and shipped to log collectors; a key
 in it is a key handed out.*
 
 ## 2. Whose data goes where
 
-**AG-SEC-03** In a SaaS installation, a user's context MUST hold only that
-user's data, and the actions raised from it MUST be created for that user.
-*Reason: users' data is private to them. A context mixing two users would let
-one user's assets appear in another's advice.*
+**AG-SEC-03** In a SaaS installation, an evaluation for a user MUST read only
+that user's data — the bridge sets the user, and refuses one the routine
+passes (PA-BR-03) — and the actions raised from it MUST be created for that
+user.
+*Reason: users' data is private to them. An evaluation reading two users'
+data would let one user's assets appear in another's advice.*
 
-**AG-SEC-04** A shared context MUST be built only in a shared workspace
-(AG-EVAL-07), and MUST NOT include anonymous sessions.
+**AG-SEC-04** A rule MUST be evaluated for a whole workspace only in a shared
+workspace (AG-EVAL-07). What the workspace includes — not anonymous sessions —
+is the managers' to answer (PA-BR-07).
 *Reason: only on an appliance do all registered users see the same data. An
 anonymous session is not part of the workspace.*
 
-**AG-SEC-05** The context MUST NOT contain secrets: no credential, password,
-key or certificate. Of a tool's credential it carries only whether one is
-linked, and what kind its tool needs.
+**AG-SEC-05** What a routine reads MUST NOT contain secrets: no credential,
+password, key or certificate. The bridge passes on only the fields an
+operation's schema documents (PA-BR-04); of a tool's credential, what is
+documented is whether one is linked and what kind its tool needs.
 *Reason: a routine needs to know that a credential is missing, never what it
-is. What the context holds, a routine can put into an action's text.*
+is. What a routine reads, it can put into an action's text.*
 
-**AG-SEC-06** ActionGenerator MUST NOT send a context, or anything from one,
-outside the platform.
+**AG-SEC-06** ActionGenerator MUST NOT send what a routine read, or anything
+from it, outside the platform.
 *Reason: it describes an organisation's weaknesses. The actions it leads to go
 to ActionManager, and through it only to those entitled to them.*
 
@@ -52,11 +56,12 @@ text is the WebUI's part.*
 ## 3. What reaches the AI
 
 **AG-SEC-08** What ActionGenerator sends to an AI MUST be limited to the system
-prompt and the rule with its option conditions (AG-GEN-07). No context, no
-user, organisation, asset or other record of any user, and no action MUST be
+prompt with the API catalogue (AG-GEN-18) and the rule with its option
+conditions (AG-GEN-07). No answer of an API operation, no user, organisation, asset or other record of any user, and no action MUST be
 sent.
 *Reason: the AI may be an external provider. A rule is an administrator's
-text about situations in general; a context is one organisation's data.*
+text about situations in general, and the catalogue describes the data's
+shape; an answer is one organisation's data.*
 
 ## 4. Containing generated code
 
@@ -77,10 +82,13 @@ recursion fails as an error.
 *Reason: the budget stops a loop; recursion exhausts memory, and can do so
 faster than the timer fires.*
 
-**AG-SEC-11** A routine MUST be given nothing but the context: no access to
-the network, files, processes, the services, or functions of the daemon.
+**AG-SEC-11** A routine MUST be given nothing but the read-only API bridge
+(PA-BR-08): no access to the network, files, processes, or functions of the
+daemon, and to the services only through the calls the catalogue documents
+(PA-BR-02).
 *Reason: a routine needs to decide, not to act. Whatever is not handed in
-cannot be misused.*
+cannot be misused; the bridge carries the service key, so the routine must
+not choose the request.*
 
 **AG-SEC-12** Every evaluation of a routine — for each user, the shared
 workspace, and each mock scenario — MUST run in a fresh JavaScript engine.

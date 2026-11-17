@@ -2,21 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package jsruntime executes the AI-generated action rules in an embedded
-// JavaScript engine (goja) and builds the context they are evaluated against.
+// Package jsruntime executes the AI-generated action routines in an embedded
+// JavaScript engine (goja).
 //
-// A routine is an array of rules, each a check(ctx) that decides whether the
-// rule applies and a createAction(ctx) that describes the action to raise. The
-// context carries what the rule may reason about: the user, their organisation,
-// their settings and per-purpose AI assignments, their assets, sources, tools
-// and tool capabilities. Its shape is fixed and every key is always present —
-// a rule reading something the installation has not recorded must see an empty
-// value rather than undefined.
-//
-// ValidateWithMockCtxReport gates a newly generated routine before it is ever
-// trusted: it runs every rule against mock contexts and rejects routines that
-// throw, and routines that are degenerate — a check() answering the same way
-// whatever it is given is not a trigger, however plausible its code looks.
+// A routine is an array of rules, each a check(api) that decides whether the
+// rule applies, a createAction(api) that describes the action to raise, and
+// optionally one condition per action option. `api` is the platform API
+// bridge (TachyonikLib apibridge): what a rule may read is what the managers'
+// API documents offer. A routine declares that contract with a top-level
+// `var routineContract = 2;` (PA-RT-01); a routine without it — a context
+// routine, which was handed a hand-built ctx object — is no longer run.
+// Evaluating and validating against the bridge is in bridge.go.
 //
 // Everything a routine does happens under a guard, because the code was written
 // by a model from a prompt and goja cannot be preempted. Every call into
@@ -31,7 +27,6 @@
 package jsruntime
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -41,426 +36,9 @@ import (
 
 	"github.com/dop251/goja"
 	"tachyonik/actiongenerator/internal/actionmanager"
-	"tachyonik/actiongenerator/internal/systemmanager"
-	"tachyonik/lib/jsctxtrace"
 	"tachyonik/lib/jsmap"
 	"tachyonik/lib/logger"
 )
-
-// CapabilitySet partitions the user's available tool capabilities into
-// the two buckets shown in the Resources/Tools page.
-//
-// Automated: distinct, sorted names of capabilities covered by an
-// enabled tool_rule on at least one of the user's tools (Tachyonik can
-// drive the tool to perform this capability).
-//
-// Manual: distinct, sorted names of capabilities listed in the
-// manualCapabilityIds of the ToolOverview of at least one of the
-// user's tools (the tool itself can't do it; the operator must invoke
-// another way or pick a different tool).
-//
-// A capability can appear in both arrays when different tools cover it
-// differently — the Resources/Tools page shows it the same way row-by-
-// row, so we don't try to deduplicate across the two sets.
-type CapabilitySet struct {
-	Automated []string `json:"automated"`
-	Manual    []string `json:"manual"`
-}
-
-// capabilitiesToMap converts CapabilitySet into a goja-friendly map.
-// goja's ToValue exposes Go struct fields by their (capitalised) Go
-// names, so binding the struct directly would surface
-// ctx.capabilities.Automated / .Manual instead of the lowercase JSON
-// tag names. The boundary conversion to map[string]interface{} matches
-// how the rest of RuleContext is exposed (User, AssetStats, etc.) and
-// gives the JS rule code the lowercase paths it expects:
-//
-//	ctx.capabilities.automated.indexOf("X")
-//	ctx.capabilities.manual.indexOf("X")
-//
-// Nil slices are coalesced to empty arrays so .indexOf never sees null.
-func capabilitiesToMap(c CapabilitySet) map[string]interface{} {
-	auto := c.Automated
-	if auto == nil {
-		auto = []string{}
-	}
-	manual := c.Manual
-	if manual == nil {
-		manual = []string{}
-	}
-	return map[string]interface{}{
-		"automated": auto,
-		"manual":    manual,
-	}
-}
-
-// RuleContext contains all data available for JS rule evaluation
-type RuleContext struct {
-	User              map[string]interface{}   `json:"user"`
-	Organisation      map[string]interface{}   `json:"organisation"`
-	Settings          map[string]interface{}   `json:"settings"`
-	Questionnaires    map[string]interface{}   `json:"questionnaires"`
-	Policies          map[string]interface{}   `json:"policies"`
-	SourceCount       int                      `json:"sourceCount"`
-	SourceMax         int                      `json:"sourceMax"`
-	Sources           []map[string]interface{} `json:"sources"`
-	Proxies           []map[string]interface{} `json:"proxies"`
-	ProxyRelease      map[string]interface{}   `json:"proxyRelease"`
-	Tools             []map[string]interface{} `json:"tools"`
-	AssetCount        int                      `json:"assetCount"`
-	Assets            []map[string]interface{} `json:"assets"`
-	HighestScoreAsset map[string]interface{}   `json:"highestScoreAsset"`
-	AssetStats        map[string]interface{}   `json:"assetStats"`
-	Capabilities      CapabilitySet            `json:"capabilities"`
-	ActionCount       int                      `json:"actionCount"`
-	Actions           []map[string]interface{} `json:"actions"`
-}
-
-// ToMap renders the context as the `ctx` object a rule sees.
-//
-// ONE conversion, used by both the evaluation path and the mock-context
-// validation below. It used to be written out twice in this file, and the
-// duplication was not free: a field added to RuleContext and to one copy is a
-// field that validates and then fails in production, or the reverse. The same
-// shape is mirrored again in AIManager's dry run and in the WebUI's test
-// presets, which cannot share this code — those two are what most recently
-// drifted, so anything added here belongs in all four places.
-//
-// Nil maps are replaced with empty objects: a rule reading ctx.organisation.x
-// on an organisation that could not be fetched should see "" or 0, not fail on
-// undefined.
-func (c RuleContext) ToMap() map[string]interface{} {
-	orDefault := func(m map[string]interface{}) map[string]interface{} {
-		if m == nil {
-			return map[string]interface{}{}
-		}
-		return m
-	}
-	return map[string]interface{}{
-		"user":         orDefault(c.User),
-		"organisation": orDefault(c.Organisation),
-		"settings":     orDefault(c.Settings),
-		// Never an empty object: a rule reads ctx.questionnaires.nis2Impact.progress
-		// straight away, and must get zeros rather than fail on undefined.
-		"questionnaires": questionnairesOrEmpty(c.Questionnaires),
-		// Never an empty object either: ctx.policies.nis2Impact.status is read
-		// straight away.
-		"policies":    policiesOrEmpty(c.Policies),
-		"sourceCount": c.SourceCount,
-		"sourceMax":   c.SourceMax,
-		"sources":     c.Sources,
-		// Never null: "no proxies" must read as an empty list, which a rule
-		// about offline proxies then correctly finds nothing in.
-		"proxies": listOrEmpty(c.Proxies),
-		// Never an empty object: ctx.proxyRelease.latestVersion is read
-		// straight away, and is "" while the latest release is not known.
-		"proxyRelease": proxyReleaseOrEmpty(c.ProxyRelease),
-		// Never null either: a rule looking for a tool without its credential
-		// finds none in an empty list.
-		"tools":      listOrEmpty(c.Tools),
-		"assetCount": c.AssetCount,
-		"assets":     c.Assets,
-		// Null when no asset is scored — a real state the rule must check for,
-		// so it is NOT defaulted to an empty object.
-		"highestScoreAsset": c.HighestScoreAsset,
-		"assetStats":        orDefault(c.AssetStats),
-		"capabilities":      capabilitiesToMap(c.Capabilities),
-		"actionCount":       c.ActionCount,
-		"actions":           c.Actions,
-	}
-}
-
-func listOrEmpty(l []map[string]interface{}) []map[string]interface{} {
-	if l == nil {
-		return []map[string]interface{}{}
-	}
-	return l
-}
-
-// ProxyReleaseToMap renders the latest TachyonikProxy release for the JS
-// context; latestVersion is "" while it is not known.
-func ProxyReleaseToMap(latestVersion string) map[string]interface{} {
-	return map[string]interface{}{"latestVersion": latestVersion}
-}
-
-func proxyReleaseOrEmpty(m map[string]interface{}) map[string]interface{} {
-	if m == nil {
-		return ProxyReleaseToMap("")
-	}
-	return m
-}
-
-// ProxyToMap renders one proxy for the JS context. lastSeen is "" for a proxy
-// that never connected, so every field is a string a rule can compare.
-// updateAvailable is whether a newer TachyonikProxy release exists than the
-// version the proxy reported, compared numerically by ResourceManager; false
-// while the latest release or the proxy's version is not known.
-func ProxyToMap(id int64, name, status, connectionMode, version string, lastSeen *string, updateAvailable bool) map[string]interface{} {
-	seen := ""
-	if lastSeen != nil {
-		seen = *lastSeen
-	}
-	return map[string]interface{}{
-		"id":              id,
-		"name":            name,
-		"status":          status,
-		"connectionMode":  connectionMode,
-		"version":         version,
-		"lastSeen":        seen,
-		"updateAvailable": updateAvailable,
-	}
-}
-
-// ToolToMap renders one of the user's tool records for the JS context.
-//
-// name is the tool as the Tools view names it: its catalogue name, or for an
-// unmanaged tool its command. credentialType is what the tool's kind needs to
-// authenticate (tool_overview.credential_type), "" when it needs nothing or
-// the tool is unmanaged. hasCredential is whether one is linked. A tool that
-// cannot be used for want of a credential is therefore
-// credentialType !== "" && !hasCredential — the same test as the Tools view's
-// "Credential missing".
-//
-// credentialDeclined is the user's choice to use the installation without a
-// credential. The caller then passes credentialType "": this installation
-// needs nothing, so a rule about missing credentials leaves it alone without
-// having to know about the choice.
-func ToolToMap(id int64, name string, proxyID int64, proxyName, host, credentialType string, hasCredential, credentialDeclined bool) map[string]interface{} {
-	return map[string]interface{}{
-		"id":                 id,
-		"name":               name,
-		"proxyId":            proxyID,
-		"proxyName":          proxyName,
-		"host":               host,
-		"credentialType":     credentialType,
-		"hasCredential":      hasCredential,
-		"credentialDeclined": credentialDeclined,
-	}
-}
-
-// OrganisationToMap renders the organisation for the JS context.
-//
-// Every field the internal endpoint returns, because a rule about something an
-// organisation has NOT recorded — no homepage, no NACE code, no address — can
-// only be written if the empty value is visible. Keys are the endpoint's own
-// JSON names, so the record reads the same here as it does in the browser.
-//
-// This lives here rather than in the generator so that the populated shape and
-// the empty one below have a single definition. Two of them is how a field ends
-// up present when the fetch succeeds and undefined when it does not.
-func OrganisationToMap(org *systemmanager.Organisation) map[string]interface{} {
-	return map[string]interface{}{
-		"name":        org.Name,
-		"assetsHosts": org.AssetsHosts,
-		"score":       org.Score,
-
-		"homepageUrl":         org.HomepageURL,
-		"naceCode":            org.NaceCode,
-		"employees":           org.Employees,
-		"employeesAffiliated": org.EmployeesAffiliated,
-
-		"addressStreet":     org.AddressStreet,
-		"addressPostalCode": org.AddressPostalCode,
-		"addressCity":       org.AddressCity,
-		"addressCountry":    org.AddressCountry,
-
-		"companyLegalName": org.CompanyLegalName,
-		"vatNumber":        org.VATNumber,
-		"vatNumberValid":   org.VATNumberValid,
-
-		"itStaffHourlyCost": org.ITStaffHourlyCost,
-		"currency":          org.Currency,
-
-		"itProviders": itProvidersToList(org.ITProviders),
-	}
-}
-
-// itProvidersToList renders the providers as a JS array of plain objects.
-//
-// Always an array, never null, and each provider's types always an array too:
-// the rules this exists for are written as
-// `ctx.organisation.itProviders.some(function (p) { return p.types.indexOf("cybersecurity") >= 0; })`
-// (ES5.1: goja has no arrow functions and no .includes), and an organisation with no providers — the case such a rule is looking for —
-// must reach that expression as an empty array rather than fail on null.
-func itProvidersToList(providers []systemmanager.ITProvider) []interface{} {
-	out := make([]interface{}, 0, len(providers))
-	for _, p := range providers {
-		types := make([]interface{}, 0, len(p.Types))
-		for _, t := range p.Types {
-			types = append(types, t)
-		}
-		out = append(out, map[string]interface{}{
-			"name":         p.Name,
-			"homepageUrl":  p.HomepageURL,
-			"contactEmail": p.ContactEmail,
-			"types":        types,
-		})
-	}
-	return out
-}
-
-// EmptyOrganisation is what a rule sees when the organisation could not be
-// fetched: every field present, at its zero value. Same shape, no undefined.
-func EmptyOrganisation() map[string]interface{} {
-	return OrganisationToMap(&systemmanager.Organisation{})
-}
-
-// QuestionnairesToMap renders SystemManager's questionnaire summary for the JS
-// context, under the names the Dialog action options use for the same three.
-//
-// One conversion on purpose: the readiness reporting score. SystemManager sends
-// null while the reporting area has no answers, and in JavaScript
-// `null < 50` is TRUE — a rule written "reporting score below 50" would fire
-// for an organisation that has not answered a single reporting question. So a
-// rule gets a number (0 when unanswered) and reportingAnswered to tell the two
-// apart.
-func QuestionnairesToMap(q *systemmanager.Questionnaires) map[string]interface{} {
-	if q == nil {
-		return EmptyQuestionnaires()
-	}
-	strings := func(in []string) []interface{} {
-		out := make([]interface{}, 0, len(in))
-		for _, v := range in {
-			out = append(out, v)
-		}
-		return out
-	}
-	reportingScore, reportingAnswered := 0.0, false
-	if q.NIS2Readiness.ReportingScore != nil {
-		reportingScore, reportingAnswered = *q.NIS2Readiness.ReportingScore, true
-	}
-	return map[string]interface{}{
-		"nis2Impact": map[string]interface{}{
-			"progress":            q.NIS2Impact.Progress,
-			"answered":            q.NIS2Impact.Answered,
-			"total":               q.NIS2Impact.Total,
-			"complete":            q.NIS2Impact.Complete,
-			"level":               q.NIS2Impact.Level,
-			"size":                q.NIS2Impact.Size,
-			"unclearTreatedAsYes": q.NIS2Impact.UnclearTreatedAsYes,
-			"lastUpdated":         q.NIS2Impact.LastUpdated,
-			"expired":             q.NIS2Impact.Expired,
-		},
-		"nis2Readiness": map[string]interface{}{
-			"progress":          q.NIS2Readiness.Progress,
-			"answered":          q.NIS2Readiness.Answered,
-			"total":             q.NIS2Readiness.Total,
-			"complete":          q.NIS2Readiness.Complete,
-			"score":             q.NIS2Readiness.Score,
-			"level":             q.NIS2Readiness.Level,
-			"unknownCount":      q.NIS2Readiness.UnknownCount,
-			"gaps":              strings(q.NIS2Readiness.Gaps),
-			"reportingScore":    reportingScore,
-			"reportingAnswered": reportingAnswered,
-			"reportingCritical": q.NIS2Readiness.ReportingCritical,
-			"lastUpdated":       q.NIS2Readiness.LastUpdated,
-			"expired":           q.NIS2Readiness.Expired,
-		},
-		"cyberStrategy": map[string]interface{}{
-			"progress":        q.CyberStrategy.Progress,
-			"answered":        q.CyberStrategy.Answered,
-			"total":           q.CyberStrategy.Total,
-			"complete":        q.CyberStrategy.Complete,
-			"missingRequired": strings(q.CyberStrategy.MissingRequired),
-			"lastUpdated":     q.CyberStrategy.LastUpdated,
-			"expired":         q.CyberStrategy.Expired,
-		},
-	}
-}
-
-// EmptyQuestionnaires is what a rule sees when the summary could not be
-// fetched: every key present, nothing started. The same shape as a populated
-// summary, so no rule reads undefined.
-func EmptyQuestionnaires() map[string]interface{} {
-	return QuestionnairesToMap(&systemmanager.Questionnaires{
-		NIS2Impact: systemmanager.QuestionnaireImpact{Size: "small"},
-	})
-}
-
-// policyKeys maps SystemManager's policy keys to the names a rule reads them
-// under — the questionnaires' own names, so ctx.policies.nis2Impact goes with
-// ctx.questionnaires.nis2Impact.
-var policyKeys = map[string]string{
-	"cyber_strategy": "cyberStrategy",
-	"nis2_impact":    "nis2Impact",
-	"nis2_readiness": "nis2Readiness",
-}
-
-// PoliciesToMap renders the organisation's policies for the JS context: each
-// of the three always present, as {status, note}; one SystemManager did not
-// send counts as not checked.
-func PoliciesToMap(policies []systemmanager.Policy) map[string]interface{} {
-	out := EmptyPolicies()
-	for _, p := range policies {
-		name, ok := policyKeys[p.Policy]
-		if !ok || p.Status == "" {
-			continue
-		}
-		out[name] = map[string]interface{}{"status": p.Status, "note": p.Note}
-	}
-	return out
-}
-
-// EmptyPolicies is what a rule sees when the policies could not be fetched:
-// every policy present and not checked, so a rule asking whether one is
-// mandatory or recommended gets no.
-func EmptyPolicies() map[string]interface{} {
-	out := make(map[string]interface{}, len(policyKeys))
-	for _, name := range policyKeys {
-		out[name] = map[string]interface{}{"status": "not_checked", "note": ""}
-	}
-	return out
-}
-
-func policiesOrEmpty(m map[string]interface{}) map[string]interface{} {
-	if m == nil {
-		return EmptyPolicies()
-	}
-	return m
-}
-
-// mockPolicies is a policy set with each status stated: strategy, impact,
-// readiness.
-func mockPolicies(strategy, impact, readiness string) map[string]interface{} {
-	return PoliciesToMap([]systemmanager.Policy{
-		{Policy: "cyber_strategy", Status: strategy},
-		{Policy: "nis2_impact", Status: impact},
-		{Policy: "nis2_readiness", Status: readiness},
-	})
-}
-
-func questionnairesOrEmpty(m map[string]interface{}) map[string]interface{} {
-	if m == nil {
-		return EmptyQuestionnaires()
-	}
-	return m
-}
-
-// SettingsToMap renders the user's own configuration for the JS context.
-// PersonalProviderCount is filled in by the caller — AIManager owns that number
-// and SystemManager, which supplies the rest, does not know it.
-func SettingsToMap(s *systemmanager.UserSettings) map[string]interface{} {
-	return map[string]interface{}{
-		"ai": map[string]interface{}{
-			"research":              s.AI.Research,
-			"chat":                  s.AI.Chat,
-			"dashboard":             s.AI.Dashboard,
-			"personalProviderCount": 0,
-		},
-		"language": s.Language,
-	}
-}
-
-// EmptySettings is the fallback when the settings could not be fetched. The
-// values are the defaults an account that has configured nothing reports, so a
-// rule about unconfigured features behaves the same either way.
-func EmptySettings() map[string]interface{} {
-	return SettingsToMap(&systemmanager.UserSettings{
-		AI: systemmanager.UserAISettings{
-			Research: "none", Chat: "internal", Dashboard: "internal",
-		},
-	})
-}
 
 // jsRule represents a loaded JS rule with callable functions
 type jsRule struct {
@@ -492,7 +70,7 @@ type JSRuleExecutor struct {
 	// model to write for it. See SetOnDemand.
 	onDemand bool
 	// contract is 2 for a bridge routine (it reads through the platform API
-	// bridge), 1 for a context routine. See bridge.go.
+	// bridge), 1 for a context routine, which is no longer run. See bridge.go.
 	contract int
 	// operations are the bridge operations a bridge routine was recorded as
 	// calling when it was generated (PA-RT-04); what its triggers are derived
@@ -751,56 +329,8 @@ func loadRules(vm *goja.Runtime, code string) ([]jsRule, error) {
 	return loaded, nil
 }
 
-// EvaluateRules runs all rules against the context and returns triggered actions
-func (e *JSRuleExecutor) EvaluateRules(ctx RuleContext, force bool) ([]actionmanager.CreateActionRequest, error) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	if e.code == "" || len(e.rules) == 0 {
-		logger.Warnf("EvaluateRules called with no rules loaded (rules=%d)", len(e.rules))
-		return nil, nil
-	}
-
-	// A VM of this evaluation's own: a global a rule sets while looking at
-	// this user's data must not be there for the next user's.
-	vm, rules, err := e.instance()
-	if err != nil {
-		return nil, fmt.Errorf("instantiate routine: %w", err)
-	}
-	ctxVal := vm.ToValue(ctx.ToMap())
-
-	var actions []actionmanager.CreateActionRequest
-
-	for _, rule := range rules {
-		if !force {
-			// Call check function. Guarded: a rule that will not terminate
-			// must cost one budget and be skipped, not wedge the daemon.
-			result, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
-				return rule.checkFn(goja.Undefined(), ctxVal)
-			})
-			if err != nil {
-				logger.Errorf("JS rule '%s' check error: %v", rule.name, err)
-				continue
-			}
-
-			if !result.ToBoolean() {
-				continue
-			}
-		}
-
-		action, err := e.raise(vm, rule, ctxVal)
-		if err != nil {
-			logger.Errorf("JS rule '%s': %v", rule.name, err)
-			continue
-		}
-		actions = append(actions, *action)
-	}
-
-	return actions, nil
-}
-
 // raise runs a rule's createAction and its option conditions against the
-// argument check() was given — the ctx, or a bridge routine's api — and turns
+// argument check() was given — the routine's api — and turns
 // the result into a checked action request (AG-IF-11 to -14).
 func (e *JSRuleExecutor) raise(vm *goja.Runtime, rule jsRule, arg goja.Value) (*actionmanager.CreateActionRequest, error) {
 	// Call createAction function, and read its result, inside one budget:
@@ -837,7 +367,7 @@ func (e *JSRuleExecutor) raise(vm *goja.Runtime, rule jsRule, arg goja.Value) (*
 	}
 
 	// Which of the rule's options do not apply to this user. Evaluated
-	// here because this is where the context lives; an option whose
+	// here because this is where the api the rule read is at hand; an option whose
 	// condition throws is left visible, since hiding a step the user needs
 	// is worse than offering one they do not.
 	if hidden := e.hiddenOptions(vm, rule, arg); hidden != nil {
@@ -864,379 +394,6 @@ func (e *JSRuleExecutor) raise(vm *goja.Runtime, rule jsRule, arg goja.Value) (*
 	return &action, nil
 }
 
-// mockOrganisation is the empty organisation with the given fields set. Built
-// from EmptyOrganisation so a scenario always carries the complete key set —
-// a hand-written literal here would go stale the next time a field is added,
-// and a rule reading the missing one would fail validation for no reason.
-func mockOrganisation(overrides map[string]interface{}) map[string]interface{} {
-	org := EmptyOrganisation()
-	for k, v := range overrides {
-		org[k] = v
-	}
-	return org
-}
-
-// mockSettings is the settings shape with each AI assignment stated explicitly.
-func mockSettings(research, chat, dashboard string, providers int, language string) map[string]interface{} {
-	settings := SettingsToMap(&systemmanager.UserSettings{
-		AI:       systemmanager.UserAISettings{Research: research, Chat: chat, Dashboard: dashboard},
-		Language: language,
-	})
-	settings["ai"].(map[string]interface{})["personalProviderCount"] = providers
-	return settings
-}
-
-// mockQuestionnaires is a questionnaire summary with each state stated explicitly.
-func mockQuestionnaires(impact systemmanager.QuestionnaireImpact, readiness systemmanager.QuestionnaireReadiness,
-	strategy systemmanager.QuestionnaireStrategy) map[string]interface{} {
-	return QuestionnairesToMap(&systemmanager.Questionnaires{
-		NIS2Impact: impact, NIS2Readiness: readiness, CyberStrategy: strategy,
-	})
-}
-
-func floatPtr(v float64) *float64 { return &v }
-
-// registeredUserScenario is mock scenario 3 — a registered user with assets,
-// capabilities, a filled-in organisation and an AI provider — with the given
-// questionnaire state. A constructor rather than a literal so the scenarios
-// built from it share no maps.
-func registeredUserScenario(questionnaires, policies map[string]interface{}) RuleContext {
-	return RuleContext{
-		User: map[string]interface{}{
-			"id":                     int64(3),
-			"username":               "jdoe",
-			"email":                  "jdoe@example.com",
-			"role":                   "registered",
-			"maxHostAssets":          100,
-			"organisationHostAssets": 10,
-			"organisationName":       "JDoe Corp",
-			"organisationScore":      75.5,
-			"createdAt":              "2025-03-01T00:00:00Z",
-		},
-		// The other side: an organisation that has recorded everything, and
-		// a user with providers of their own, one assigned to Research.
-		Organisation: mockOrganisation(map[string]interface{}{
-			"name": "JDoe Corp", "assetsHosts": 10, "score": 75.5,
-			"homepageUrl": "https://jdoe.example", "naceCode": "62.01",
-			"employees": 40, "employeesAffiliated": 120,
-			"addressStreet": "Hauptstrasse 1", "addressPostalCode": "10115",
-			"addressCity": "Berlin", "addressCountry": "DE",
-			"companyLegalName": "JDoe Corp GmbH", "vatNumber": "DE123456789", "vatNumberValid": true,
-			"itStaffHourlyCost": 120, "currency": "EUR",
-			// Providers recorded here and nowhere else, so a rule about
-			// them ("no cybersecurity provider") fires in scenarios 1 and 2
-			// and not here — which is what keeps it from being flagged as
-			// degenerate.
-			"itProviders": itProvidersToList([]systemmanager.ITProvider{
-				{Name: "SecureOps", HomepageURL: "https://secureops.example", ContactEmail: "soc@secureops.example",
-					Types: []string{"cybersecurity"}},
-				{Name: "NetCo", HomepageURL: "https://netco.example", ContactEmail: "",
-					Types: []string{"network_infrastructure", "general_it_support"}},
-			}),
-		}),
-		Settings:    mockSettings("personal", "personal", "disabled", 2, "de"),
-		SourceCount: 2,
-		SourceMax:   10,
-		Sources: []map[string]interface{}{
-			{"id": int64(10), "filename": "network.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-05-01T00:00:00Z", "lastSeen": "2025-05-01T00:00:00Z"},
-			{"id": int64(11), "filename": "vuln.nessus", "sourceType": "nessus", "status": "processed", "createdAt": "2025-05-10T00:00:00Z", "lastSeen": "2025-05-10T00:00:00Z"},
-		},
-		AssetCount: 4,
-		Assets: []map[string]interface{}{
-			{"id": int64(10), "name": "db-server", "type": "host", "source": "network.xml", "severity": 9, "score": 95, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-20T00:00:00Z", "lastSeen": "2025-05-20T00:00:00Z", "lastScanned": "2025-05-20T00:00:00Z", "lastScanCoverageVerification": "2025-05-19T00:00:00Z", "scanCoverageIntervalDays": 1},
-			{"id": int64(11), "name": "app-server", "type": "host", "source": "network.xml", "severity": 5, "score": 60, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-15T00:00:00Z", "lastSeen": "2025-05-15T00:00:00Z", "lastScanned": "2025-05-15T00:00:00Z", "lastScanCoverageVerification": "2025-05-14T00:00:00Z", "scanCoverageIntervalDays": 7},
-			{"id": int64(12), "name": "old-server", "type": "host", "source": "vuln.nessus", "severity": 8, "score": 70, "createdAt": "2025-01-01T00:00:00Z", "modifiedAt": "2025-01-15T00:00:00Z", "lastSeen": "2024-06-01T00:00:00Z", "lastScanned": "2024-06-01T00:00:00Z", "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
-			{"id": int64(13), "name": "printer", "type": "device", "source": "network.xml", "severity": 1, "score": 10, "createdAt": "2025-05-01T00:00:00Z", "modifiedAt": "2025-05-01T00:00:00Z", "lastSeen": "2025-05-01T00:00:00Z", "lastScanned": nil, "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
-		},
-		HighestScoreAsset: map[string]interface{}{
-			"id": int64(10), "name": "db-server", "type": "host", "source": "network.xml", "severity": 9, "score": 95, "lastSeen": "2025-05-20T00:00:00Z",
-		},
-		AssetStats: map[string]interface{}{
-			"critical": 1, "high": 1, "medium": 1, "low": 1,
-			"noThreat": 1, "unmanaged": 2, "total": 4,
-			"hostsSeen30d": 1, "hostsSeen180d": 1, "hostsSeenOlder": 1,
-		},
-		Capabilities: CapabilitySet{Automated: []string{"Asset discovery"}, Manual: []string{"Penetration testing"}},
-		ActionCount:  3,
-		Actions: []map[string]interface{}{
-			{"id": int64(10), "title": "Remediate db-server", "type": "Fix", "status": "New", "priority": 80, "assignedTo": "User", "issuedBy": "ActionGenerator", "trigger": "high score", "createdAt": "2025-05-20T00:00:00Z"},
-			{"id": int64(11), "title": "Review old-server", "type": "Info", "status": "InProgress", "priority": 60, "assignedTo": "User", "issuedBy": "ActionGenerator", "trigger": "stale asset", "createdAt": "2025-05-21T00:00:00Z"},
-			{"id": int64(12), "title": "Update firmware", "type": "Fix", "status": "Done", "priority": 30, "assignedTo": "User", "issuedBy": "User", "trigger": "manual", "createdAt": "2025-04-01T00:00:00Z"},
-		},
-		Questionnaires: questionnaires,
-		Policies:       policies,
-	}
-}
-
-// MockScenario is one mock context rules are validated against, with the name
-// the routine log and the WebUI's Test and Context tabs show it under.
-type MockScenario struct {
-	Label string
-	Ctx   RuleContext
-}
-
-// mockScenarioLabels names the scenarios, in order. Kept beside the list they
-// name; MockScenarios panics if the two ever differ in length, which a test
-// run catches immediately.
-var mockScenarioLabels = []string{
-	"Anonymous user at source limit",
-	"Admin user with empty data",
-	"Registered user — NIS2 red, readiness yellow",
-	"Registered user — NIS2 orange, readiness red",
-	"Registered user — NIS2 yellow, readiness green, strategy expired",
-	"Registered user — NIS2 orange, readiness in progress",
-	"Registered user — NIS2 impact in progress, recommended",
-}
-
-// MockScenarios returns the mock contexts every generated routine is validated
-// against. The WebUI's routine Test and Context tabs show exactly these: a test
-// in this package writes them to WebUI/src/generated/actionRuleMockContexts.json
-// and fails when that file is stale, so there is no second copy to keep in step.
-func MockScenarios() []MockScenario {
-	mockContexts := []RuleContext{
-		// Scenario 1: Anonymous user with assets, sources at max limit
-		{
-			User: map[string]interface{}{
-				"id":                     int64(1),
-				"username":               "testuser",
-				"email":                  "test@example.com",
-				"role":                   "anonymous",
-				"maxHostAssets":          20,
-				"organisationHostAssets": 5,
-				"organisationName":       "Test Org",
-				"organisationScore":      50.0,
-				"createdAt":              "2025-01-01T00:00:00Z",
-			},
-			// An organisation that has recorded almost nothing, and a user with
-			// no provider of their own — the state most "you have not
-			// configured X" rules are written for.
-			Organisation: mockOrganisation(map[string]interface{}{
-				"name": "Test Org", "assetsHosts": 10, "score": 50.0,
-				"itStaffHourlyCost": 100, "currency": "EUR",
-			}),
-			// Nothing started: the case "please fill in X" rules are for.
-			Questionnaires: EmptyQuestionnaires(),
-			// The policies as a new organisation has them: only the strategy
-			// is recommended, the NIS-2 ones not checked (no country).
-			Policies:    mockPolicies("recommended", "not_checked", "not_checked"),
-			Settings:    EmptySettings(),
-			SourceCount: 3,
-			SourceMax:   3,
-			Sources: []map[string]interface{}{
-				{"id": int64(1), "filename": "scan1.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-01T00:00:00Z", "lastSeen": "2025-07-01T00:00:00Z"},
-				{"id": int64(2), "filename": "scan2.xml", "sourceType": "nmap", "status": "processed", "createdAt": "2025-06-15T00:00:00Z", "lastSeen": "2025-06-15T00:00:00Z"},
-				{"id": int64(3), "filename": "scan3.xml", "sourceType": "nessus", "status": "processed", "createdAt": "2025-07-01T00:00:00Z", "lastSeen": "2025-07-01T00:00:00Z"},
-			},
-			AssetCount: 2,
-			Assets: []map[string]interface{}{
-				{"id": int64(1), "name": "test-host", "type": "host", "source": "scan1.xml", "severity": 7, "score": 85, "createdAt": "2025-06-01T00:00:00Z", "modifiedAt": "2025-07-01T00:00:00Z", "lastSeen": "2025-07-01T00:00:00Z", "lastScanned": "2025-07-01T00:00:00Z", "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
-				{"id": int64(2), "name": "web-server", "type": "host", "source": "scan2.xml", "severity": 3, "score": 40, "createdAt": "2025-06-15T00:00:00Z", "modifiedAt": "2025-06-15T00:00:00Z", "lastSeen": "2025-06-15T00:00:00Z", "lastScanned": nil, "lastScanCoverageVerification": nil, "scanCoverageIntervalDays": nil},
-			},
-			HighestScoreAsset: map[string]interface{}{
-				"id": int64(1), "name": "test-host", "type": "host", "source": "scan1.xml", "severity": 7, "score": 85, "lastSeen": "2025-07-01T00:00:00Z",
-			},
-			AssetStats: map[string]interface{}{
-				"critical": 1, "high": 1, "medium": 0, "low": 0,
-				"noThreat": 0, "unmanaged": 0, "total": 2,
-				"hostsSeen30d": 1, "hostsSeen180d": 1, "hostsSeenOlder": 0,
-			},
-			Capabilities: CapabilitySet{Automated: []string{"Vulnerability detection"}, Manual: []string{}},
-			ActionCount:  1,
-			Actions: []map[string]interface{}{
-				{"id": int64(1), "title": "Existing action", "type": "Info", "status": "New", "priority": 50, "assignedTo": "User", "issuedBy": "ActionGenerator", "trigger": "test", "createdAt": "2025-07-01T00:00:00Z"},
-			},
-		},
-		// Scenario 2: Admin user with no assets, no sources (exercises null/empty
-		// paths). Organisation and settings are the empty shapes rather than
-		// omitted — a rule reading ctx.settings.ai.research must be exercised
-		// against a context where nothing is configured, which is the case it
-		// most often exists for.
-		{
-			User: map[string]interface{}{
-				"id":                     int64(2),
-				"username":               "admin",
-				"email":                  "admin@example.com",
-				"role":                   "admin",
-				"maxHostAssets":          100,
-				"organisationHostAssets": 0,
-				"organisationName":       "Admin Org",
-				"organisationScore":      0.0,
-				"createdAt":              "2024-01-01T00:00:00Z",
-			},
-			Organisation: mockOrganisation(map[string]interface{}{"name": "Admin Org"}),
-			// Impact finished long ago and now expired; the other two started.
-			Questionnaires: mockQuestionnaires(
-				systemmanager.QuestionnaireImpact{Progress: 100, Answered: 10, Total: 10, Complete: true,
-					Level: "green", Size: "small", LastUpdated: "2025-01-10T09:00:00Z", Expired: true},
-				systemmanager.QuestionnaireReadiness{Progress: 30, Answered: 11, Total: 37, Score: 18.2,
-					Gaps: []string{"B2"}},
-				systemmanager.QuestionnaireStrategy{Progress: 20, Answered: 2, Total: 10,
-					MissingRequired: []string{"01", "02.1"}},
-			),
-			// Outside Germany: NIS-2 does not apply.
-			Policies:          mockPolicies("recommended", "not_applicable", "not_applicable"),
-			Settings:          EmptySettings(),
-			SourceCount:       0,
-			SourceMax:         10,
-			Sources:           []map[string]interface{}{},
-			AssetCount:        0,
-			Assets:            []map[string]interface{}{},
-			HighestScoreAsset: nil,
-			AssetStats: map[string]interface{}{
-				"critical": 0, "high": 0, "medium": 0, "low": 0,
-				"noThreat": 0, "unmanaged": 0, "total": 0,
-				"hostsSeen30d": 0, "hostsSeen180d": 0, "hostsSeenOlder": 0,
-			},
-			Capabilities: CapabilitySet{Automated: []string{}, Manual: []string{}},
-			ActionCount:  0,
-			Actions:      []map[string]interface{}{},
-		},
-	}
-
-	// Scenarios 3 to 5: the registered user, built three times so no scenario
-	// shares a map with another — goja exposes Go maps by reference, and a rule
-	// writing into ctx must not leak into the next scenario. They differ only
-	// in the questionnaires, so that between them every Impact level (red,
-	// orange, yellow, green) and every Readiness level appears somewhere and is
-	// absent somewhere else. Without that, a correct rule such as "the Impact
-	// outcome is orange" returns the same answer everywhere and is rejected as
-	// degenerate.
-	mockContexts = append(mockContexts,
-		registeredUserScenario(mockQuestionnaires(
-			systemmanager.QuestionnaireImpact{Progress: 100, Answered: 10, Total: 10, Complete: true,
-				Level: "red", Size: "large", LastUpdated: "2026-08-20T10:00:00Z"},
-			systemmanager.QuestionnaireReadiness{Progress: 100, Answered: 37, Total: 37, Complete: true,
-				Score: 58.5, Level: "yellow", UnknownCount: 2, Gaps: []string{"B11", "B4"},
-				ReportingScore: floatPtr(35), ReportingCritical: true, LastUpdated: "2026-08-21T10:00:00Z"},
-			systemmanager.QuestionnaireStrategy{Progress: 100, Answered: 10, Total: 10, Complete: true,
-				MissingRequired: []string{}, LastUpdated: "2026-08-22T10:00:00Z"},
-		), mockPolicies("recommended", "mandatory", "mandatory")),
-		registeredUserScenario(mockQuestionnaires(
-			systemmanager.QuestionnaireImpact{Progress: 100, Answered: 10, Total: 10, Complete: true,
-				Level: "orange", Size: "medium", LastUpdated: "2026-07-01T10:00:00Z"},
-			// Complete but out of date, so "the Readiness assessment has expired"
-			// is true somewhere — no other scenario has an expired Readiness.
-			systemmanager.QuestionnaireReadiness{Progress: 100, Answered: 37, Total: 37, Complete: true,
-				Score: 31.2, Level: "red", UnknownCount: 6, Gaps: []string{"B1", "B2", "B4"},
-				ReportingScore: floatPtr(60), LastUpdated: "2025-01-02T10:00:00Z", Expired: true},
-			// Complete (every required item present) while progress is below
-			// 100 — the case a rule must not confuse with "not complete".
-			systemmanager.QuestionnaireStrategy{Progress: 80, Answered: 8, Total: 10, Complete: true,
-				MissingRequired: []string{}, LastUpdated: "2026-07-03T10:00:00Z"},
-		), mockPolicies("recommended", "recommended", "recommended")),
-		registeredUserScenario(mockQuestionnaires(
-			systemmanager.QuestionnaireImpact{Progress: 100, Answered: 10, Total: 10, Complete: true,
-				Level: "yellow", Size: "small", UnclearTreatedAsYes: true, LastUpdated: "2026-09-01T10:00:00Z"},
-			systemmanager.QuestionnaireReadiness{Progress: 100, Answered: 37, Total: 37, Complete: true,
-				Score: 81.5, Level: "green", Gaps: []string{},
-				ReportingScore: floatPtr(90), LastUpdated: "2026-09-02T10:00:00Z"},
-			systemmanager.QuestionnaireStrategy{Progress: 100, Answered: 10, Total: 10, Complete: true,
-				MissingRequired: []string{}, LastUpdated: "2025-01-03T10:00:00Z", Expired: true},
-		), mockPolicies("recommended", "recommended", "not_applicable")),
-		// Directly affected by NIS2 (Impact complete, orange) while Readiness is
-		// still being filled in. Without it no scenario is "affected and not
-		// ready yet" — the situation rules about Readiness are written for — and
-		// a correct rule for it returned false everywhere.
-		registeredUserScenario(mockQuestionnaires(
-			systemmanager.QuestionnaireImpact{Progress: 100, Answered: 10, Total: 10, Complete: true,
-				Level: "orange", Size: "medium", LastUpdated: "2026-09-05T10:00:00Z"},
-			systemmanager.QuestionnaireReadiness{Progress: 46, Answered: 17, Total: 37, Score: 27.4,
-				UnknownCount: 3, Gaps: []string{"B2", "B11"},
-				ReportingScore: floatPtr(25), ReportingCritical: true},
-			systemmanager.QuestionnaireStrategy{Progress: 40, Answered: 4, Total: 10,
-				MissingRequired: []string{"01"}, LastUpdated: "2026-09-06T10:00:00Z"},
-		), mockPolicies("recommended", "recommended", "recommended")),
-		// The Impact assessment under way while NIS-2 Impact is recommended:
-		// the one scenario where "Impact below 100% and the policy concerns the
-		// organisation" holds — scenario 1 has it below 100% too, but not
-		// checked, which is what keeps such a rule from being degenerate.
-		registeredUserScenario(mockQuestionnaires(
-			systemmanager.QuestionnaireImpact{Progress: 60, Answered: 6, Total: 10, Size: "medium"},
-			systemmanager.QuestionnaireReadiness{},
-			systemmanager.QuestionnaireStrategy{Progress: 50, Answered: 5, Total: 10,
-				MissingRequired: []string{"02.1"}},
-		), mockPolicies("recommended", "recommended", "not_checked")),
-	)
-
-	// Proxies, varied so a rule about them fires somewhere and not everywhere:
-	// none at all (1, 2), all online (3), one offline (4 and 6), and one that
-	// was installed but never enrolled (5). Fresh maps per scenario, for the
-	// same reason the registered-user scenarios are built separately.
-	//
-	// The latest release is 0.9.2 wherever it is known (unknown in 1). Being
-	// outdated is varied independently of being offline: the outdated proxies
-	// are the offline one in 4 and the online one in 7, so a rule about either
-	// condition reads something the other does not decide.
-	online := func(id int64, name, version string) map[string]interface{} {
-		seen := "2026-09-10T08:00:00Z"
-		return ProxyToMap(id, name, "online", "inbound", version, &seen, version != "0.9.2")
-	}
-	offline := func(id int64, name, version string) map[string]interface{} {
-		seen := "2026-08-30T17:45:00Z"
-		return ProxyToMap(id, name, "offline", "outbound", version, &seen, version != "0.9.2")
-	}
-	mockProxies := [][]map[string]interface{}{
-		{},
-		{},
-		{online(1, "Office proxy", "0.9.2")},
-		{online(1, "Office proxy", "0.9.2"), offline(2, "Branch proxy", "0.9.1")},
-		{ProxyToMap(3, "New proxy", "pending_enrollment", "inbound", "", nil, false)},
-		{offline(2, "Branch proxy", "0.9.2"), online(4, "Datacenter proxy", "0.9.2")},
-		{online(1, "Office proxy", "0.9.1")},
-	}
-	if len(mockProxies) != len(mockContexts) {
-		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d proxy lists", len(mockContexts), len(mockProxies)))
-	}
-	for i := range mockContexts {
-		mockContexts[i].Proxies = mockProxies[i]
-		latest := "0.9.2"
-		if i == 0 {
-			latest = ""
-		}
-		mockContexts[i].ProxyRelease = ProxyReleaseToMap(latest)
-	}
-
-	// Tools, on the scenarios' proxies, varied the same way: none (1, 2, 5),
-	// every one usable (3, 7), and one whose kind needs a credential that has
-	// none linked (4, 6). Scenario 3 has a tool that needs a credential and
-	// has it, and one that needs none, so neither field alone decides.
-	mockTools := [][]map[string]interface{}{
-		{},
-		{},
-		{
-			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false, false),
-			ToolToMap(12, "Greenbone", 1, "Office proxy", "10.0.0.5", "username-password", true, false),
-		},
-		{
-			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false, false),
-			ToolToMap(13, "Greenbone", 2, "Branch proxy", "10.1.0.5", "username-password", false, false),
-		},
-		{},
-		{ToolToMap(14, "Greenbone", 4, "Datacenter proxy", "10.2.0.5", "username-password", false, false)},
-		// A Greenbone the user chose to use without a credential: it needs
-		// nothing here, so it is not missing one.
-		{
-			ToolToMap(11, "Nmap", 1, "Office proxy", "", "", false, false),
-			ToolToMap(15, "Greenbone", 1, "Office proxy", "10.0.0.9", "", false, true),
-		},
-	}
-	if len(mockTools) != len(mockContexts) {
-		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d tool lists", len(mockContexts), len(mockTools)))
-	}
-	for i := range mockContexts {
-		mockContexts[i].Tools = mockTools[i]
-	}
-
-	if len(mockContexts) != len(mockScenarioLabels) {
-		panic(fmt.Sprintf("jsruntime: %d mock contexts but %d labels", len(mockContexts), len(mockScenarioLabels)))
-	}
-	out := make([]MockScenario, len(mockContexts))
-	for i, c := range mockContexts {
-		out[i] = MockScenario{Label: mockScenarioLabels[i], Ctx: c}
-	}
-	return out
-}
-
 // ScenarioDecision is what one rule's check() returned in one mock scenario.
 type ScenarioDecision struct {
 	Label string
@@ -1248,10 +405,12 @@ type ScenarioDecision struct {
 type RuleValidation struct {
 	Name      string
 	Decisions []ScenarioDecision
-	// The ctx paths check() or createAction() read in any scenario, as leaves:
-	// the values tested, not the objects walked through to reach them.
+	// What check(), createAction() and the option conditions read in any
+	// scenario, as "operation:path".
 	FieldsRead []string
-	// Paths read that exist in no scenario — a typo or an invented field.
+	// What the API documents do not allow: a call to an operation the routine
+	// may not make, an argument the operation does not have, or a field the
+	// answer does not have — a typo or an invention (PA-VAL-02).
 	Missing []string
 }
 
@@ -1265,14 +424,14 @@ type RuleValidation struct {
 // Each condition gets its own execution budget. A condition that throws or
 // overruns leaves its option visible: the alternative is hiding a step the user
 // may need because a generated line of JavaScript was wrong.
-func (e *JSRuleExecutor) hiddenOptions(vm *goja.Runtime, rule jsRule, ctxVal goja.Value) []int64 {
+func (e *JSRuleExecutor) hiddenOptions(vm *goja.Runtime, rule jsRule, api goja.Value) []int64 {
 	if len(rule.optionFns) == 0 {
 		return nil
 	}
 	hidden := []int64{}
 	for optionID, fn := range rule.optionFns {
 		result, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
-			return fn(goja.Undefined(), ctxVal)
+			return fn(goja.Undefined(), api)
 		})
 		if err != nil {
 			logger.Errorf("JS rule '%s' option %d condition error, leaving the option visible: %v",
@@ -1305,7 +464,7 @@ func (e *JSRuleExecutor) SetOnDemand(onDemand bool) {
 	e.onDemand = onDemand
 }
 
-// ValidationReport is the outcome of ValidateWithMockCtxReport.
+// ValidationReport is the outcome of ValidateBridge.
 type ValidationReport struct {
 	// Why the routine must not be stored as passed. Empty means it passes.
 	Errors []error
@@ -1314,13 +473,9 @@ type ValidationReport struct {
 	// Per rule, in load order: what check() decided in each scenario and what
 	// it read. Written to the routine log so a result explains itself.
 	Rules []RuleValidation
-	// Operations are the bridge operations a bridge routine called in any
-	// scenario, sorted; stored with the routine (PA-RT-04). Empty for a
-	// context routine.
+	// Operations are the bridge operations the routine called in any
+	// scenario, sorted; stored with the routine (PA-RT-04).
 	Operations []string
-	// Bridge marks the report of a bridge routine: its reads are
-	// "operation:path", not ctx paths.
-	Bridge bool
 }
 
 // Log renders the report for the routine log.
@@ -1336,31 +491,19 @@ func (r ValidationReport) Log() string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		if r.Bridge {
-			b.WriteString("Validation record — check() in each mock scenario, against the API's mock answers:\n")
-		} else {
-			b.WriteString("Validation record — check() in each mock scenario:\n")
-		}
+		b.WriteString("Validation record — check() in each mock scenario, against the API's mock answers:\n")
 		for _, rule := range r.Rules {
 			fmt.Fprintf(&b, "  rule '%s'\n", rule.Name)
 			for i, d := range rule.Decisions {
 				fmt.Fprintf(&b, "    %d %-66s %s\n", i+1, d.Label, d.Result)
 			}
-			paths := ctxPaths
-			if r.Bridge {
-				paths = func(p []string) []string { return p }
-			}
 			if len(rule.FieldsRead) > 0 {
-				fmt.Fprintf(&b, "    fields read: %s\n", strings.Join(paths(rule.FieldsRead), ", "))
+				fmt.Fprintf(&b, "    fields read: %s\n", strings.Join(rule.FieldsRead, ", "))
 			} else {
 				b.WriteString("    fields read: none\n")
 			}
 			if len(rule.Missing) > 0 {
-				label := "fields that do not exist"
-				if r.Bridge {
-					label = "not allowed by the API documents"
-				}
-				fmt.Fprintf(&b, "    %s: %s\n", label, strings.Join(paths(rule.Missing), "; "))
+				fmt.Fprintf(&b, "    not allowed by the API documents: %s\n", strings.Join(rule.Missing, "; "))
 			}
 		}
 	}
@@ -1368,277 +511,6 @@ func (r ValidationReport) Log() string {
 		fmt.Fprintf(&b, "\nAPI operations called: %s\n", strings.Join(r.Operations, ", "))
 	}
 	return b.String()
-}
-
-func ctxPaths(paths []string) []string {
-	out := make([]string, len(paths))
-	for i, p := range paths {
-		out[i] = "ctx." + p
-	}
-	return out
-}
-
-// ValidateWithMockCtxReport runs every rule against every mock scenario with
-// its reads traced, and judges the rule from what it decided AND what it read.
-//
-// Deciding from the return value alone cannot tell a broken rule from a correct
-// one no scenario happens to satisfy: both return the same answer everywhere.
-// What the rule read separates them:
-//
-//   - A read of a field that exists in no scenario is an error, named — a typo
-//     or an invented field, the thing the old "does the condition match the
-//     field names" message was guessing at.
-//   - Always the same answer while reading nothing that differs between the
-//     scenarios is an error: `return false` reads nothing, and a condition over
-//     fields that never vary cannot be expressing a trigger.
-//   - Always false while reading fields that DO differ is accepted with a note:
-//     the rule is testing real data, and no scenario meets its condition. That
-//     was rule 18 — "Impact complete and not green, Readiness incomplete" — which
-//     no scenario combined until scenario 6.
-//   - Always true is rejected whatever it reads. It would fire for every user,
-//     and an action is only withdrawn when its rule stops matching, so it could
-//     never be cleared.
-//
-// ruleTally is what one rule did across every mock scenario: what it decided,
-// and what it read to decide it. Both halves matter — see
-// ValidateWithMockCtxReport.
-type ruleTally struct {
-	decisions []ScenarioDecision
-	results   []bool
-	// What each option's condition answered, in the scenarios where the rule
-	// fired. Recorded rather than judged: see runScenarios.
-	optionResults map[int64][]bool
-	threw         bool
-	checkReads    map[string]bool
-	allReads      map[string]bool
-	present       map[string]bool
-	candidates    map[string]bool
-}
-
-func (e *JSRuleExecutor) ValidateWithMockCtxReport() ValidationReport {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	var report ValidationReport
-	if e.code == "" || len(e.rules) == 0 {
-		return report
-	}
-
-	scenarios := MockScenarios()
-	plains := make([]map[string]interface{}, len(scenarios))
-	for i, sc := range scenarios {
-		plains[i] = sc.Ctx.ToMap()
-	}
-
-	tallies := make([]*ruleTally, len(e.rules))
-	for i := range e.rules {
-		tallies[i] = &ruleTally{checkReads: map[string]bool{}, allReads: map[string]bool{},
-			present: map[string]bool{}, candidates: map[string]bool{}}
-	}
-	absorb := func(t *ruleTally, tr *jsctxtrace.Trace) {
-		missing := map[string]bool{}
-		for _, p := range tr.Missing() {
-			missing[p] = true
-			t.candidates[p] = true
-		}
-		for _, p := range tr.Read() {
-			t.allReads[p] = true
-			if !missing[p] {
-				t.present[p] = true
-			}
-		}
-	}
-
-	e.runScenarios(scenarios, plains, tallies, absorb, &report)
-	e.judgeRules(tallies, plains, &report)
-
-	return report
-}
-
-// runScenarios evaluates every rule against every mock scenario, recording what
-// each decided and what it read. Failures are reported as they happen; the
-// judging of what the decisions MEAN is judgeRules' job.
-func (e *JSRuleExecutor) runScenarios(
-	scenarios []MockScenario,
-	plains []map[string]interface{},
-	tallies []*ruleTally,
-	absorb func(*ruleTally, *jsctxtrace.Trace),
-	report *ValidationReport,
-) {
-	for si, sc := range scenarios {
-		// One traced context per scenario, shared by every rule and by check()
-		// and createAction() — as production evaluates a routine's rules against
-		// one ctx. Reset attributes the reads to each rule in turn.
-		//
-		// And a fresh VM per scenario, as production gives each user one: a
-		// global set in one scenario would otherwise colour the next, and the
-		// degeneracy judgement below would be judging that instead.
-		vm, rules, err := e.instance()
-		if err != nil {
-			report.Errors = append(report.Errors, fmt.Errorf("routine failed to load for mock scenario %d (%s): %w", si+1, sc.Label, err))
-			continue
-		}
-		tr := jsctxtrace.New()
-		ctxVal := tr.Wrap(vm, plains[si])
-		for ri, rule := range rules {
-			t := tallies[ri]
-			tr.Reset()
-
-			checkResult, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
-				return rule.checkFn(goja.Undefined(), ctxVal)
-			})
-			for _, p := range tr.Read() {
-				t.checkReads[p] = true
-			}
-			if err != nil {
-				absorb(t, tr)
-				t.threw = true
-				t.decisions = append(t.decisions, ScenarioDecision{Label: sc.Label, Result: "error"})
-				report.Errors = append(report.Errors, fmt.Errorf("rule '%s' check() failed in mock scenario %d (%s): %w",
-					rule.name, si+1, sc.Label, err))
-				continue
-			}
-			fired := checkResult.ToBoolean()
-			t.results = append(t.results, fired)
-			t.decisions = append(t.decisions, ScenarioDecision{Label: sc.Label, Result: fmt.Sprintf("%v", fired)})
-
-			if fired {
-				if _, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
-					return rule.actionFn(goja.Undefined(), ctxVal)
-				}); err != nil {
-					report.Errors = append(report.Errors, fmt.Errorf("rule '%s' createAction() failed in mock scenario %d (%s): %w",
-						rule.name, si+1, sc.Label, err))
-				}
-
-				// The per-option conditions run where the action would be
-				// raised, against the same context. A condition that throws is
-				// an error like any other generated code that throws; whether
-				// it answers the same in every scenario is NOT — unlike
-				// check(), an option that no mock user happens to need is
-				// perfectly ordinary, so the tally below only records it.
-				for optionID, fn := range rule.optionFns {
-					result, oerr := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
-						return fn(goja.Undefined(), ctxVal)
-					})
-					if oerr != nil {
-						report.Errors = append(report.Errors, fmt.Errorf(
-							"rule '%s' condition for option %d failed in mock scenario %d (%s): %w",
-							rule.name, optionID, si+1, sc.Label, oerr))
-						continue
-					}
-					if t.optionResults == nil {
-						t.optionResults = map[int64][]bool{}
-					}
-					t.optionResults[optionID] = append(t.optionResults[optionID], result.ToBoolean())
-				}
-			}
-			absorb(t, tr)
-		}
-	}
-
-}
-
-// judgeRules decides, from the tallies, which rules are broken.
-//
-// A rule is judged on what it decided AND what it read. Deciding from the
-// return value alone cannot tell a broken rule from a correct one that no
-// scenario happens to satisfy: both answer the same everywhere. What the rule
-// read separates them.
-func (e *JSRuleExecutor) judgeRules(tallies []*ruleTally, plains []map[string]interface{}, report *ValidationReport) {
-	for ri, rule := range e.rules {
-		t := tallies[ri]
-		rec := RuleValidation{Name: rule.name, Decisions: t.decisions, FieldsRead: jsctxtrace.Leaves(setToSortedBool(t.allReads))}
-		for p := range t.candidates {
-			if !t.present[p] {
-				rec.Missing = append(rec.Missing, p)
-			}
-		}
-		sort.Strings(rec.Missing)
-		report.Rules = append(report.Rules, rec)
-
-		if len(rec.Missing) > 0 {
-			report.Errors = append(report.Errors, fmt.Errorf(
-				"rule '%s' reads %s, which does not exist in the context", rule.name, strings.Join(ctxPaths(rec.Missing), ", ")))
-		}
-		// A rule that threw somewhere has already been reported; judging it on
-		// a partial set of answers would turn one failure into two.
-		if t.threw || len(t.results) < 2 || !allSame(t.results) {
-			continue
-		}
-		varying := varyingPaths(setToSortedBool(t.checkReads), plains)
-		if t.results[0] {
-			report.Errors = append(report.Errors, fmt.Errorf(
-				"rule '%s' check() returned true in every mock scenario: it would fire for every user "+
-					"and could never be cleared. Does the condition actually test the context?", rule.name))
-			continue
-		}
-		if len(varying) == 0 {
-			// An on-demand rule is expected to answer false everywhere: it has
-			// no condition of its own and runs only when forced.
-			if e.onDemand {
-				report.Notes = append(report.Notes, fmt.Sprintf(
-					"rule '%s' has no trigger of its own, so check() returns false in every mock scenario. "+
-						"It produces an action only when something asks for it by name — an action option of "+
-						"type \"Action\" pointing at this rule.", rule.name))
-				continue
-			}
-			read := "nothing"
-			if len(t.checkReads) > 0 {
-				read = "only fields that are the same in every scenario (" + strings.Join(ctxPaths(setToSortedBool(t.checkReads)), ", ") + ")"
-			}
-			report.Errors = append(report.Errors, fmt.Errorf(
-				"rule '%s' check() returned false in every mock scenario and reads %s: it would never fire. "+
-					"Does the condition test the context at all?", rule.name, read))
-			continue
-		}
-		report.Notes = append(report.Notes, fmt.Sprintf(
-			"rule '%s' check() returned false in every mock scenario, but it reads fields that differ between them "+
-				"(%s), so it is accepted: no scenario happens to meet its condition. "+
-				"Check it against the scenarios in the routine's Context tab.",
-			rule.name, strings.Join(ctxPaths(varying), ", ")))
-	}
-
-	noteConstantOptions(tallies, e.rules, report)
-}
-
-// noteConstantOptions reports option conditions that answered the same way in
-// every scenario the rule fired in.
-//
-// A note, never an error. An option condition is not a trigger: "show this only
-// to a user with no host detection tool" is correct even if every mock user has
-// one, and rejecting the routine for it would make the mock scenarios a
-// specification of what conditions are allowed to exist. It is still worth
-// saying, because an option hidden everywhere is also what a mistyped condition
-// looks like.
-func noteConstantOptions(tallies []*ruleTally, rules []jsRule, report *ValidationReport) {
-	for ri, rule := range rules {
-		t := tallies[ri]
-		for _, optionID := range sortedOptionIDs(t.optionResults) {
-			results := t.optionResults[optionID]
-			if len(results) < 2 || !allSame(results) {
-				continue
-			}
-			state := "shown"
-			if !results[0] {
-				state = "hidden"
-			}
-			report.Notes = append(report.Notes, fmt.Sprintf(
-				"rule '%s': action option %d is %s in every mock scenario where the rule fires. "+
-					"That is legitimate if no mock user is in the situation the option is for; "+
-					"check it against the scenarios in the routine's Context tab.",
-				rule.name, optionID, state))
-		}
-	}
-}
-
-// sortedOptionIDs keeps the notes in a stable order; map iteration is not.
-func sortedOptionIDs(m map[int64][]bool) []int64 {
-	ids := make([]int64, 0, len(m))
-	for id := range m {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids
 }
 
 func allSame(results []bool) bool {
@@ -1657,50 +529,6 @@ func setToSortedBool(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// varyingPaths returns the read paths whose value is not the same in every
-// scenario. A path through an array ("assets[].severity") is compared at the
-// array itself, since that is the value the rule's reading depends on.
-func varyingPaths(paths []string, plains []map[string]interface{}) []string {
-	var out []string
-	for _, p := range paths {
-		base := p
-		if i := strings.Index(base, "[]"); i >= 0 {
-			base = strings.TrimSuffix(base[:i], ".")
-		}
-		first := ""
-		for i, plain := range plains {
-			sig := valueSignature(plain, base)
-			if i == 0 {
-				first = sig
-			} else if sig != first {
-				out = append(out, p)
-				break
-			}
-		}
-	}
-	return out
-}
-
-func valueSignature(root map[string]interface{}, path string) string {
-	var cur interface{} = root
-	for _, key := range strings.Split(path, ".") {
-		m, ok := cur.(map[string]interface{})
-		if !ok {
-			return "<absent>"
-		}
-		v, ok := m[key]
-		if !ok {
-			return "<absent>"
-		}
-		cur = v
-	}
-	b, err := json.Marshal(cur)
-	if err != nil {
-		return fmt.Sprintf("%v", cur)
-	}
-	return string(b)
 }
 
 // RuleIDs returns the ruleId of every loaded rule.
@@ -1745,7 +573,7 @@ const maxCallStackSize = 2048
 //
 // Generous on purpose: these exist to stop unbounded growth reaching the
 // database and the UI, not to enforce a house style. A routine builds these
-// strings by interpolating context — an asset name, an organisation — so the
+// strings by interpolating what it read — an asset name, an organisation — so the
 // length is a property of the data as much as of the rule.
 const (
 	MaxActionTitleLen       = 200
