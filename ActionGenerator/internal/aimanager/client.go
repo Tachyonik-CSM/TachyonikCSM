@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"tachyonik/lib/restclient"
@@ -63,10 +64,17 @@ type ActionRule struct {
 	GenerateActivate bool   `json:"generateActivate"`
 	CreatedAt        string `json:"createdAt"`
 	ModifiedAt       string `json:"modifiedAt"`
-	// Options is filled in by the caller before code generation, not by the
-	// action-rules endpoint: the AI has to be told which options this rule
-	// offers and when each applies, so it can write the per-option conditions
-	// into the routine. Empty for a rule whose options carry no conditions.
+}
+
+// RuleForGeneration is an action rule as the code generator is shown it: the
+// rule with the options it offers. The options are filled in by the caller,
+// not by the action-rules endpoint — the AI has to be told which options this
+// rule offers and when each applies, so it can write the per-option
+// conditions into the routine. Empty for a rule whose options carry no
+// conditions. (They used to be a field of ActionRule, the answer type, which
+// then decoded a field AIManager never sends.)
+type RuleForGeneration struct {
+	ActionRule
 	Options []ActionRuleOption `json:"options,omitempty"`
 }
 
@@ -107,6 +115,11 @@ type ActionOption struct {
 	Links []ActionOptionLink `json:"links"`
 }
 
+// listActionOptionsResponse is the answer of the action-options endpoint.
+type listActionOptionsResponse struct {
+	ActionOptions []ActionOption `json:"actionOptions"`
+}
+
 // GetActionOptionsByRuleID fetches the options one rule offers, with the
 // condition each is offered under.
 //
@@ -114,9 +127,7 @@ type ActionOption struct {
 // be compiled into the rule's routine, and the routine is the only place they
 // are ever evaluated.
 func (c *Client) GetActionOptionsByRuleID(ruleID int64) ([]ActionOption, error) {
-	var result struct {
-		ActionOptions []ActionOption `json:"actionOptions"`
-	}
+	var result listActionOptionsResponse
 	path := fmt.Sprintf("/api/internal/action-options?actionRuleId=%d", ruleID)
 	if err := c.rc.JSON("GET", path, nil, &result, http.StatusOK); err != nil {
 		return nil, err
@@ -272,6 +283,8 @@ func (c *Client) GetAIByID(id int64) (*AIEntry, error) {
 
 // GetAIByName fetches an AI provider entry by name.
 func (c *Client) GetAIByName(name string) (*AIEntry, error) {
-	return c.getAI("/api/internal/ais/by-name/"+name,
+	// Escaped: a name is free text, and one holding "/" or "?" would
+	// otherwise reach another route, or a query.
+	return c.getAI("/api/internal/ais/by-name/"+url.PathEscape(name),
 		fmt.Sprintf("AI with name %q not found in AIManager", name))
 }

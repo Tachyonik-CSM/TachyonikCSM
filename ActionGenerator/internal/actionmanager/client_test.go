@@ -176,3 +176,13 @@ func TestRejectsNonOK(t *testing.T) {
 		t.Error("a 500 was accepted by DeleteNewActionsByRule")
 	}
 }
+
+// ActionManager sends an action's last change as modifiedAt; the client read
+// updatedAt, which it never sends, and so always had "".
+func TestTheLastChangeIsRead(t *testing.T) {
+	c, _ := serve(t, http.StatusOK, `{"actions":[{"id":1,"title":"Existing","createdAt":"2025-07-01T00:00:00Z","modifiedAt":"2025-07-02T00:00:00Z"}],"total":1}`)
+	actions, err := c.GetActionsForUser(52)
+	if err != nil || len(actions) != 1 || actions[0].ModifiedAt != "2025-07-02T00:00:00Z" {
+		t.Errorf("actions %+v, %v", actions, err)
+	}
+}

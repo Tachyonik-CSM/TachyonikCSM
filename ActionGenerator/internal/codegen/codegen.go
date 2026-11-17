@@ -53,7 +53,7 @@ func New(chatClient ChatClient, model, systemPrompt string) *CodeGenerator {
 
 // Generate sends a single action rule to the AI and returns generated JavaScript code.
 // The generated code contains `var rules = [{ ... }]` with exactly one rule object.
-func (g *CodeGenerator) Generate(rule aimanager.ActionRule) (string, error) {
+func (g *CodeGenerator) Generate(rule aimanager.RuleForGeneration) (string, error) {
 	if g.systemPrompt == "" {
 		return "", fmt.Errorf("code generation refused: system prompt not configured in AIManager (Settings → ActionGenerator → System Prompt)")
 	}

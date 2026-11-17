@@ -40,7 +40,7 @@ type Action struct {
 	IssuedBy    string `json:"issuedBy"`   // "User", "Support", "ActionGenerator"
 	Trigger     string `json:"trigger"`    // Trigger string
 	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	ModifiedAt  string `json:"modifiedAt"` // ActionManager has no updatedAt
 }
 
 // CreateActionRequest represents the request to create an action

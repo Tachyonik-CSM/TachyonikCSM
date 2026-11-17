@@ -218,6 +218,18 @@ func TestGetAIByNameNotFound(t *testing.T) {
 	}
 }
 
+// A name is free text: one holding "/" or "?" stays the name, not another
+// route or a query.
+func TestGetAIByNameEscapesTheName(t *testing.T) {
+	c, got := serve(t, http.StatusOK, `{"id":3,"name":"a/b?c"}`)
+	if _, err := c.GetAIByName("a/b?c"); err != nil {
+		t.Fatalf("GetAIByName: %v", err)
+	}
+	if got.path != "/api/internal/ais/by-name/a/b?c" || got.query != "" {
+		t.Errorf("path = %q, query = %q; want the whole name as the last segment", got.path, got.query)
+	}
+}
+
 func TestGetAIByID(t *testing.T) {
 	c, got := serve(t, http.StatusOK, `{"id":3,"name":"claude","model":"opus","provider":"claude"}`)
 	entry, err := c.GetAIByID(3)

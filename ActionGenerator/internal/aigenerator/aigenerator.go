@@ -322,7 +322,7 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 	//
 	// Best-effort: a rule whose options cannot be read still generates, and
 	// every option then applies, which is the behaviour without conditions.
-	ruleWithOptions := *rule
+	ruleWithOptions := aimanager.RuleForGeneration{ActionRule: *rule}
 	if options, oerr := ag.aiMgrClient.GetActionOptionsByRuleID(rule.ID); oerr != nil {
 		logger.Warnf("Could not read the options of action rule %d, generating without conditions: %v", rule.ID, oerr)
 	} else {
