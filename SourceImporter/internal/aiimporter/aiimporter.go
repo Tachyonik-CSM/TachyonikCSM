@@ -36,6 +36,7 @@ import (
 	"tachyonik/sourceimporter/internal/config"
 	"tachyonik/sourceimporter/internal/importrulewatcher"
 	"tachyonik/sourceimporter/internal/jsruntime"
+	"tachyonik/sourceimporter/internal/outputschema"
 	"tachyonik/sourceimporter/internal/rscmanager"
 )
 
@@ -56,7 +57,10 @@ type AIImporter struct {
 	rules             map[int64]*aimanager.ImportRule       // by ID
 	typeToRule        map[string]*aimanager.ImportRule      // sourceType → rule
 	executors         map[int64]*jsruntime.JSImportExecutor // by rule ID
-	mu                sync.RWMutex
+	// outputSchemas are the records' schemas from AssetManager's document in
+	// the platform API catalogue; holds none until the catalogue is loaded.
+	outputSchemas *outputschema.Holder
+	mu            sync.RWMutex
 }
 
 // New creates a new AIImporter
@@ -70,8 +74,13 @@ func New(rscManagerAPI *rscmanager.Client, aiMgrClient *aimanager.Client, assetM
 		rules:           make(map[int64]*aimanager.ImportRule),
 		typeToRule:      make(map[string]*aimanager.ImportRule),
 		executors:       make(map[int64]*jsruntime.JSImportExecutor),
+		outputSchemas:   &outputschema.Holder{},
 	}
 }
+
+// OutputSchemas is where the daemon loads the record schemas from the
+// platform API catalogue, at startup and on API_CATALOGUE_UPDATED.
+func (ai *AIImporter) OutputSchemas() *outputschema.Holder { return ai.outputSchemas }
 
 // LoadRules fetches all import rules from AIManager, builds lookup maps,
 // and loads the active routine for each rule that has one.
@@ -191,7 +200,20 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule, useNow bool) (
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for import rule %d with %s", rule.ID, choice.Describe())
 
-	codeGen := codegen.New(choice.Client, ruleModel, choice.SystemPrompt)
+	// The system prompt may ask for the records' description from
+	// AssetManager's document ({{OUTPUT_SCHEMA}}); a prompt without the
+	// placeholder describes them itself and is used as it is.
+	schemas := ai.outputSchemas.Current()
+	systemPrompt := choice.SystemPrompt
+	if strings.Contains(systemPrompt, outputschema.Placeholder) {
+		if schemas == nil {
+			logger.Errorf("Holding back the generation of the routine for import rule %d: the system prompt asks for %s, and AssetManager's document has not been loaded from the platform API catalogue yet", rule.ID, outputschema.Placeholder)
+			return nil, fmt.Errorf("cannot generate the routine for rule %d: the system prompt asks for the record schemas (%s), and AssetManager's API document has not been loaded from the platform API catalogue", rule.ID, outputschema.Placeholder)
+		}
+		systemPrompt = strings.ReplaceAll(systemPrompt, outputschema.Placeholder, schemas.Render())
+	}
+
+	codeGen := codegen.New(choice.Client, ruleModel, systemPrompt)
 
 	// Convert to codegen.ImportRule
 	codegenRule := codegen.ImportRule{
@@ -222,8 +244,12 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule, useNow bool) (
 		return nil, fmt.Errorf("syntax validation failed for rule %d: %w", rule.ID, err)
 	}
 
-	// Validate runtime behavior with mock contexts
-	validationErrors := tempExecutor.ValidateWithMockCtx()
+	// Validate runtime behavior with mock contexts, and the records the
+	// routine returns against AssetManager's document when it is loaded.
+	if schemas == nil {
+		logger.Warnf("The records of the routine for import rule %d are not checked: AssetManager's document has not been loaded from the platform API catalogue", rule.ID)
+	}
+	validationErrors := tempExecutor.ValidateWithMockCtx(recordCheck(schemas))
 	if len(validationErrors) > 0 {
 		combinedErr := fmt.Errorf("runtime validation failed with %d errors", len(validationErrors))
 		var logMsg string
@@ -249,6 +275,21 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule, useNow bool) (
 
 	logger.Infof("Successfully generated and saved JS for import rule %d (%s v%s), routine ID %d", rule.ID, rule.Type, rule.Version, routine.ID)
 	return routine, nil
+}
+
+// recordCheck checks a routine's records against the schemas, for
+// validation: each kind's violations are one error. nil without schemas.
+func recordCheck(schemas *outputschema.Schemas) jsruntime.RecordCheck {
+	if schemas == nil {
+		return nil
+	}
+	return func(result *jsruntime.ImportResult) []error {
+		var errs []error
+		for _, v := range schemas.Check(result.Records) {
+			errs = append(errs, errors.New(v.String()))
+		}
+		return errs
+	}
 }
 
 // storeRoutine creates a routine in AIManager with the given parameters.
@@ -314,6 +355,16 @@ func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
 	result, err := executor.Execute(ctx)
 	if err != nil {
 		return "", fmt.Errorf("JS import execution failed: %w", err)
+	}
+
+	// Records that do not fit AssetManager's document are logged, not
+	// refused: they are imported as before, and AssetManager decides on
+	// each. A routine that passed validation before the check existed may
+	// return them, and refusing now would lose what imports today.
+	if schemas := ai.outputSchemas.Current(); schemas != nil {
+		for _, v := range schemas.Check(result.Records) {
+			logger.Warnf("Import of source %d with rule %d (%s): %s", source.ID, rule.ID, rule.Type, v)
+		}
 	}
 
 	// Process results: create assets, vulnerabilities, detections via AssetManager API
@@ -436,6 +487,10 @@ type ImportTestSummary struct {
 	AssetTypes      map[string]int `json:"assetTypes"`
 	// ScanCoverage is how many scan coverage rows it would apply.
 	ScanCoverage int `json:"scanCoverage"`
+	// Violations are the records that do not fit AssetManager's document,
+	// per kind: how many, and the first few with record and field. Left out
+	// when every record fits, or the document has not been loaded.
+	Violations []string `json:"violations,omitempty"`
 }
 
 // RunImportTest dry-runs a single import routine (by ID, bypassing rule
@@ -483,13 +538,21 @@ func (ai *AIImporter) RunImportTest(source *rscmanager.Source, routineID int64) 
 		assetTypes[t]++
 	}
 
-	return &ImportTestSummary{
+	summary := &ImportTestSummary{
 		Assets:          len(result.Assets),
 		Vulnerabilities: len(result.Vulnerabilities),
 		Detections:      len(result.Detections),
 		AssetTypes:      assetTypes,
 		ScanCoverage:    len(result.ScanCoverage),
-	}, nil
+	}
+	if schemas := ai.outputSchemas.Current(); schemas != nil {
+		for _, v := range schemas.Check(result.Records) {
+			summary.Violations = append(summary.Violations, v.String())
+		}
+	} else {
+		logger.Warnf("Import test of routine %d: the records are not checked, AssetManager's document has not been loaded from the platform API catalogue", routineID)
+	}
+	return summary, nil
 }
 
 // HandleRuleChange is called by the import rule watcher when a rule changes.

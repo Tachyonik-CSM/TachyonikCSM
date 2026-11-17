@@ -94,6 +94,12 @@ type ImportResult struct {
 	// ScanCoverage is optional: only a routine for a scan coverage table
 	// returns it.
 	ScanCoverage []ScanCoverageResult
+	// Records are the four arrays as the routine returned them, by their
+	// names in the return object ("assets", …), before the conversion to the
+	// types above: what is checked against AssetManager's document
+	// (internal/outputschema), since the conversion reads a number given as
+	// a string, or a missing field as empty, and would hide that.
+	Records map[string][]interface{}
 }
 
 // JSImportExecutor manages and executes a JavaScript import function.
@@ -340,7 +346,16 @@ func extractResult(vm *goja.Runtime, val goja.Value) (*ImportResult, error) {
 		return nil, fmt.Errorf("importFunction did not return an object")
 	}
 
-	result := &ImportResult{}
+	result := &ImportResult{Records: map[string][]interface{}{}}
+	for _, kind := range []string{"assets", "vulnerabilities", "detections", "scanCoverage"} {
+		v := obj.Get(kind)
+		if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+			continue
+		}
+		if items, ok := v.Export().([]interface{}); ok {
+			result.Records[kind] = items
+		}
+	}
 
 	// Extract assets
 	assetsVal := obj.Get("assets")
@@ -417,10 +432,16 @@ func extractResult(vm *goja.Runtime, val goja.Value) (*ImportResult, error) {
 	return result, nil
 }
 
+// RecordCheck checks what a routine returned for one mock context and says
+// what of it is wrong; nil when nothing is.
+type RecordCheck func(result *ImportResult) []error
+
 // ValidateWithMockCtx runs the importFunction against mock contexts to catch runtime errors.
 // Tests with: (1) a mock XML file with hosts/vulnerabilities, (2) empty file content,
-// (3) a pipe-separated table (a scan coverage table).
-func (e *JSImportExecutor) ValidateWithMockCtx() []error {
+// (3) a pipe-separated table (a scan coverage table). check, when not nil,
+// is given each context's result to check the records (against AssetManager's
+// document, internal/outputschema).
+func (e *JSImportExecutor) ValidateWithMockCtx(check RecordCheck) []error {
 	e.mu.RLock()
 	code := e.code
 	e.mu.RUnlock()
@@ -522,6 +543,24 @@ func (e *JSImportExecutor) ValidateWithMockCtx() []error {
 			if fieldVal == nil || goja.IsUndefined(fieldVal) {
 				errs = append(errs, fmt.Errorf("mock context %d: result missing '%s' field", i+1, field))
 			}
+		}
+
+		if check == nil {
+			continue
+		}
+		// Converted under the budget, as Execute does: the routine's own
+		// getters run here.
+		var out *ImportResult
+		if _, err := runGuarded(vm, e.executionBudget(), func() (goja.Value, error) {
+			var eerr error
+			out, eerr = extractResult(vm, result)
+			return nil, eerr
+		}); err != nil {
+			errs = append(errs, fmt.Errorf("mock context %d: %w", i+1, err))
+			continue
+		}
+		for _, cerr := range check(out) {
+			errs = append(errs, fmt.Errorf("mock context %d: %w", i+1, cerr))
 		}
 	}
 

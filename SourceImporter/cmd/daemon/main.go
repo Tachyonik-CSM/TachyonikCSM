@@ -6,7 +6,7 @@
 // configuration, sets up logging, builds the ResourceManager/AssetManager/
 // AIManager/SystemManager clients, resolves the configured AI chat client, and
 // wires up the AIImporter and the Importer. It then starts the AIManager
-// watchers (live AI-settings and import-rule changes) and the SystemManager
+// watchers (live AI-settings, import-rule and API catalogue changes) and the SystemManager
 // heartbeat, and runs the poll loop that drives importing until it receives
 // SIGINT/SIGTERM.
 //
@@ -36,6 +36,7 @@ import (
 	"tachyonik/sourceimporter/internal/config"
 	"tachyonik/sourceimporter/internal/importer"
 	"tachyonik/sourceimporter/internal/importrulewatcher"
+	"tachyonik/sourceimporter/internal/outputschema"
 	"tachyonik/sourceimporter/internal/rscmanager"
 	"tachyonik/sourceimporter/internal/version"
 )
@@ -159,6 +160,12 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 		logger.Info("AI importer initialized: no AI configured, code generation disabled; existing import routines will still be applied")
 	}
 
+	// AssetManager's document from the platform API catalogue: the schemas
+	// of the records a routine returns (internal/outputschema). Loaded before
+	// the startup generation below, which may need it.
+	loadOutputSchemas := func() { loadOutputSchemas(aiMgrClient, aiImp.OutputSchemas()) }
+	loadOutputSchemas()
+
 	// Shared module-settings refresh — used by both the
 	// MODULE_AI_SETTING_UPDATED watcher and the FEED_IMPORTED reload
 	// path below. See SourceAnalyser's daemon for full rationale.
@@ -188,9 +195,17 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 	}
 
 	// Start AIManager settings watcher for real-time AI config changes
-	aimw := aimwatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, aimwatcher.Handlers{ModuleName: "sourceimporter", OnModuleSettingChange: refreshModuleSettings})
+	// and API catalogue updates (also fired on every reconnect, so a document
+	// missed while disconnected is read then).
+	aimw := aimwatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, aimwatcher.Handlers{
+		ModuleName:            "sourceimporter",
+		OnModuleSettingChange: refreshModuleSettings,
+		OnAPICatalogueUpdated: loadOutputSchemas,
+	})
 	aimw.Start()
-	defer aimw.Close()
+	// Closed with the daemon, not when this function returns: a deferred
+	// Close here stopped the watcher right after startup.
+	closeWatcher = func() { _ = aimw.Close() }
 	logger.Info("AIManager settings watcher started")
 
 	// Generate missing JS code on startup. This requires an AI chat
@@ -240,6 +255,7 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 		// leave it deaf to every later rule change. The caller owns
 		// the lifetime.
 		closeWatcher = func() {
+			_ = aimw.Close()
 			if cerr := irw.Close(); cerr != nil {
 				logger.Warnf("Import rule watcher close: %v", cerr)
 			}
@@ -248,6 +264,31 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 	}
 
 	return aiImp, revisitImport, closeWatcher
+}
+
+// loadOutputSchemas reads AssetManager's document from the platform API
+// catalogue into holder. Without it imports run as before — AssetManager
+// checks what it receives — and only a generation whose system prompt asks
+// for {{OUTPUT_SCHEMA}} is held back; the schemas loaded before stay when the
+// catalogue cannot be read.
+func loadOutputSchemas(aiMgrClient *aimanager.Client, holder *outputschema.Holder) {
+	cat, err := aiMgrClient.GetAPICatalogue()
+	if err != nil {
+		logger.Warnf("The platform API catalogue cannot be read yet; a routine's records are not checked, and a generation that asks for %s is held back until it can: %v", outputschema.Placeholder, err)
+		return
+	}
+	for _, d := range cat.Documents {
+		if d.Module != outputschema.Module {
+			continue
+		}
+		if err := holder.Load(d.Document); err != nil {
+			logger.Errorf("API catalogue: the record schemas cannot be read from AssetManager's document: %v", err)
+			return
+		}
+		logger.Infof("API catalogue loaded: record schemas from AssetManager's document version %s (fingerprint %.12s)", holder.Current().Version(), cat.Fingerprint)
+		return
+	}
+	logger.Warnf("API catalogue: AssetManager has not registered its document; a routine's records are not checked, and a generation that asks for %s is held back until it does", outputschema.Placeholder)
 }
 
 // logStartupConfig records what the daemon is running with, so a support log

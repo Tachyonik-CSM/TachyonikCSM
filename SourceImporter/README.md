@@ -297,7 +297,39 @@ rows) it *would* produce, and
 writes that summary as JSON into the source's import notes with status "Tested"
 (or an error message with status "Test failed"). It **never writes to
 AssetManager** and emits no audit events, so testing a routine has no side
-effects. The WebUI reads the summary and deletes the test source.
+effects. The WebUI reads the summary and deletes the test source. When
+AssetManager's API document is loaded (see
+[What a routine returns](#what-a-routine-returns)), the summary also has
+`violations`: per record kind, how many records do not fit the document and the
+first three with record index and field, e.g.
+`1 of the assets do not fit AssetManager's document: assets[0]: type: server is not one of [Host]`.
+
+### What a routine returns
+
+An import routine returns `{assets, vulnerabilities, detections, scanCoverage?}`.
+What each record may contain is described in one place: **AssetManager's API
+document** (`AssetManager/spec/openapi.yaml`), as the daemon loads it from the
+platform API catalogue in AIManager — at startup, on `API_CATALOGUE_UPDATED`,
+and on every reconnect of the AIManager WebSocket. A record's schema is the
+request body of the AssetManager operation the importer creates it with
+(`POST /api/assets`, `/api/vulnerabilities`, `/api/detections`; for scan
+coverage one entry of `POST /api/assets/scan-coverage`), less the fields the
+importer sets itself (`sourceId`, `sourceLabel`, `userId` — declared in
+`internal/outputschema`) and the deprecated ones.
+
+- **System prompt.** Where the system prompt contains `{{OUTPUT_SCHEMA}}`, it is
+  replaced with the return object and, per kind, each field with its type,
+  required or optional, and AssetManager's description. A prompt without the
+  placeholder is used as it is. While AssetManager's document is not loaded, a
+  generation whose prompt has the placeholder is held back with an error naming
+  it; nothing else waits for the document.
+- **Validation.** A generated routine's records from the mock contexts are
+  checked against the schemas (types, required fields, enums); one that does not
+  fit is stored as failed, with the first three violations per kind in its log.
+- **Imports.** Records of a real import that do not fit are **logged** (a
+  warning per kind, counted, with three examples) and imported as before:
+  AssetManager decides on each record, as it did. Refusing them here would stop
+  imports of routines that passed before the check existed.
 
 ### Which routine runs
 
@@ -579,6 +611,8 @@ linked to this source. Both are success.
 ## Architecture
 
 - **Rule Watcher**: WebSocket connection to AIManager for import-rule changes
+- **AIManager Watcher**: module AI settings and the platform API catalogue
+  (AssetManager's document, for the records a routine returns)
 - **Debouncing**: 500ms timer with mutex to prevent concurrent processing
 - **Service APIs**: Reads sources from ResourceManager and writes assets to
   AssetManager, both over HTTP with the internal service key — the daemon opens

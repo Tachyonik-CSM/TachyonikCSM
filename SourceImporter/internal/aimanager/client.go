@@ -4,8 +4,9 @@
 
 // Package aimanager is the client for the AIManager internal API. It supplies
 // the import rules and their generated routines, the per-module AI assignment
-// and system prompt, and the AI provider entries a rule may name to override the
-// module default.
+// and system prompt, the AI provider entries a rule may name to override the
+// module default, and the platform API catalogue, whose AssetManager document
+// describes the records a routine returns.
 package aimanager
 
 import (
@@ -200,4 +201,30 @@ func (c *Client) ClearGenerateRequest(ruleID int64, reason string, activateRouti
 	}
 	path := fmt.Sprintf("/api/internal/import-rules/%d", ruleID)
 	return c.rc.JSON("PATCH", path, payload, nil, http.StatusOK)
+}
+
+// APIDocument is one module's document in the platform API catalogue.
+type APIDocument struct {
+	Module   string `json:"module"`
+	Version  string `json:"version"`
+	SHA256   string `json:"sha256"`
+	Document string `json:"document"`
+}
+
+// APICatalogue is the platform API catalogue as AIManager serves it.
+type APICatalogue struct {
+	Documents   []APIDocument `json:"documents"`
+	Fingerprint string        `json:"fingerprint"`
+}
+
+// GetAPICatalogue reads the platform API catalogue: every registered
+// manager's API document (docs/specs/01-platform-api-catalogue.md, §4).
+// SourceImporter reads AssetManager's from it, for the records a routine
+// returns (internal/outputschema).
+func (c *Client) GetAPICatalogue() (*APICatalogue, error) {
+	var out APICatalogue
+	if err := c.rc.JSON("GET", "/api/internal/api-catalogue", nil, &out, http.StatusOK); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

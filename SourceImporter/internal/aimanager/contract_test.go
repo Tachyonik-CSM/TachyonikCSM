@@ -23,6 +23,7 @@ var calls = []apicontract.Call{
 	{Method: "PATCH", Path: "/api/internal/import-rules/%d", Request: map[string]any{}},
 	{Method: "POST", Path: "/api/internal/routines", Request: CreateRoutineRequest{}, Answer: Routine{}},
 	{Method: "GET", Path: "/api/internal/routines/%d", Answer: Routine{}},
+	{Method: "GET", Path: "/api/internal/api-catalogue", Answer: APICatalogue{}},
 }
 
 func TestTheClientMatchesAIManagersDocument(t *testing.T) {

@@ -53,7 +53,7 @@ func TestACoverageRoutinePassesValidation(t *testing.T) {
 	if err := e.LoadFromString(coverageRoutine); err != nil {
 		t.Fatal(err)
 	}
-	if errs := e.ValidateWithMockCtx(); len(errs) > 0 {
+	if errs := e.ValidateWithMockCtx(nil); len(errs) > 0 {
 		t.Errorf("validation: %v", errs)
 	}
 }
