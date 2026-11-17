@@ -39,7 +39,7 @@ func TestGenerationUsesTheCurrentDefaultAndNamesIt(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"moduleName":"sourceimporter","defaultAiId":8,"systemPrompt":"current prompt",
+		_, _ = w.Write([]byte(`{"moduleName":"sourceimporter","defaultAiId":8,"systemPrompt":"current prompt {{OUTPUT_SCHEMA}}",
 			"ai":{"id":8,"name":"claude opus 5 Tachyonik","provider":"anthropic","model":"claude-opus-5"}}`))
 	}))
 	defer srv.Close()
@@ -49,6 +49,7 @@ func TestGenerationUsesTheCurrentDefaultAndNamesIt(t *testing.T) {
 	staleCalled := false
 	cfg := &config.Config{AI: config.AIConfig{AIName: "claude opus 5", Model: "claude-opus-5", SystemPrompt: "old prompt"}}
 	ai := New(nil, aimanager.NewClient(srv.URL, ""), nil, staleClient{called: &staleCalled}, cfg)
+	loadedSchemas(t, ai)
 	var builtFor string
 	ai.SetChatClientFactory(func(e *aimanager.AIEntry) codegen.ChatClient {
 		builtFor = e.Name
@@ -62,7 +63,7 @@ func TestGenerationUsesTheCurrentDefaultAndNamesIt(t *testing.T) {
 	if staleCalled {
 		t.Error("generation went to the AI loaded at startup, not the current default")
 	}
-	if builtFor != "claude opus 5 Tachyonik" || askedWith != "current prompt" {
+	if builtFor != "claude opus 5 Tachyonik" || !strings.HasPrefix(askedWith, "current prompt ") {
 		t.Errorf("generated with AI %q and prompt %q, want AIManager's current ones", builtFor, askedWith)
 	}
 	for _, want := range []string{`AI "claude opus 5 Tachyonik"`, "id 8", "module default", "credit balance"} {

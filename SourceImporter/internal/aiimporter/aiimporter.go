@@ -200,12 +200,18 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule, useNow bool) (
 	ruleModel := choice.Entry.Model
 	logger.Infof("Generating the routine for import rule %d with %s", rule.ID, choice.Describe())
 
-	// The system prompt may ask for the records' description from
-	// AssetManager's document ({{OUTPUT_SCHEMA}}); a prompt without the
-	// placeholder describes them itself and is used as it is.
+	// The records a routine returns are described by AssetManager's own
+	// document: the system prompt must ask for that description
+	// ({{OUTPUT_SCHEMA}}). A prompt without the placeholder predates it and
+	// describes the records itself, by hand — it is refused before the AI is
+	// asked. An empty prompt is left to codegen's own refusal.
 	schemas := ai.outputSchemas.Current()
 	systemPrompt := choice.SystemPrompt
-	if strings.Contains(systemPrompt, outputschema.Placeholder) {
+	if strings.TrimSpace(systemPrompt) != "" {
+		if !strings.Contains(systemPrompt, outputschema.Placeholder) {
+			logger.Errorf("Not generating the routine for import rule %d: the system prompt predates AssetManager's record schemas — it has no %s. Replace it with prompts/sourceimporter.txt (Settings → SourceImporter → System Prompt).", rule.ID, outputschema.Placeholder)
+			return nil, fmt.Errorf("cannot generate the routine for rule %d: the system prompt predates AssetManager's record schemas (it has no %s); replace it with the current SourceImporter prompt", rule.ID, outputschema.Placeholder)
+		}
 		if schemas == nil {
 			logger.Errorf("Holding back the generation of the routine for import rule %d: the system prompt asks for %s, and AssetManager's document has not been loaded from the platform API catalogue yet", rule.ID, outputschema.Placeholder)
 			return nil, fmt.Errorf("cannot generate the routine for rule %d: the system prompt asks for the record schemas (%s), and AssetManager's API document has not been loaded from the platform API catalogue", rule.ID, outputschema.Placeholder)
@@ -245,10 +251,7 @@ func (ai *AIImporter) GenerateForRule(rule *aimanager.ImportRule, useNow bool) (
 	}
 
 	// Validate runtime behavior with mock contexts, and the records the
-	// routine returns against AssetManager's document when it is loaded.
-	if schemas == nil {
-		logger.Warnf("The records of the routine for import rule %d are not checked: AssetManager's document has not been loaded from the platform API catalogue", rule.ID)
-	}
+	// routine returns against AssetManager's document.
 	validationErrors := tempExecutor.ValidateWithMockCtx(recordCheck(schemas))
 	if len(validationErrors) > 0 {
 		combinedErr := fmt.Errorf("runtime validation failed with %d errors", len(validationErrors))

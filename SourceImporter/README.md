@@ -320,9 +320,11 @@ importer sets itself (`sourceId`, `sourceLabel`, `userId` — declared in
 - **System prompt.** Where the system prompt contains `{{OUTPUT_SCHEMA}}`, it is
   replaced with the return object and, per kind, each field with its type,
   required or optional, and AssetManager's description. A prompt without the
-  placeholder is used as it is. While AssetManager's document is not loaded, a
-  generation whose prompt has the placeholder is held back with an error naming
-  it; nothing else waits for the document.
+  placeholder predates AssetManager's record schemas and is refused before the
+  AI is asked: the generation fails, and the log says to replace the prompt with
+  `prompts/sourceimporter.txt` (an empty prompt is refused as before). While
+  AssetManager's document is not loaded, generation is held back with an error
+  naming the placeholder; imports do not wait for the document.
 - **Validation.** A generated routine's records from the mock contexts are
   checked against the schemas (types, required fields, enums); one that does not
   fit is stored as failed, with the first three violations per kind in its log.
@@ -386,71 +388,28 @@ over every user's uploads of that type.
 
 ## Supported File Types
 
-### OpenVAS Report
+SourceImporter has no built-in parser for any format. A file type is an
+**import rule** in AIManager (Settings → Import Rules): the source type
+SourceAnalyser identifies the file as, and a prompt saying what to extract.
+The rule's active routine — JavaScript the AI generated from that prompt —
+parses the file and returns the records; the importer creates them in
+AssetManager with the source and owner added (see [What a routine
+returns](#what-a-routine-returns)). Which records a routine may return, and
+every field of them, is AssetManager's own API document, not this module.
 
-**Source Type**: `OpenVAS Report`
+### Adding a file type
 
-**File Format**: XML
+1. Make sure SourceAnalyser recognises the format: its analysis rule assigns the
+   source type (SourceAnalyser README).
+2. Create an import rule for that source type in AIManager, with a prompt
+   describing where the hosts, findings and dates are in the file.
+3. Generate its routine (the rule dialog, or automatically on save). It is
+   validated against the mock contexts and AssetManager's record schemas, and
+   stored as passed or failed with the reason in its log.
+4. Try it on a real file with the import routine test (WebUI, the routine's
+   Test tab) before making it the rule's active routine.
 
-**Extracted Assets**:
-- **Type**: `host`
-- **Name**: IP address
-- **Source**: XML path `report/report/host/ip`
-
-**Example XML Structure**:
-```xml
-<report>
-  <report>
-    <host>
-      <ip>192.168.222.131</ip>
-      ...
-    </host>
-  </report>
-</report>
-```
-
-**Asset Creation**:
-- Each unique IP address becomes a separate asset
-- Duplicate IPs are deduplicated automatically
-- Asset name: IP address (e.g., "192.168.222.131")
-- Asset type: "Host", the only asset type AssetManager accepts
-- Source: the ResourceManager source id and filename (`sourceId`, `sourceLabel`),
-  sent the same way for assets, vulnerabilities and detections
-
-**Example**:
-```
-Name: 192.168.222.131
-Type: Host
-Source: sourceId 15, sourceLabel openvas-sample-report-1.xml
-```
-
-The stale-record cleanup after a re-import names the source by its reference
-`"{filename} (ID: {sourceID})"`; AssetManager finds the records by the id in it.
-
-### Adding New File Types
-
-To support additional file types:
-
-1. Add the type to `isSupported()` in `internal/importer/importer.go`:
-   ```go
-   supportedTypes := []string{"OpenVAS Report", "New Type"}
-   ```
-
-2. Add a case to the switch in `processSource()`:
-   ```go
-   case "New Type":
-       importErr = i.importNewType(source)
-   ```
-
-3. Implement the import function:
-   ```go
-   func (i *Importer) importNewType(source *database.Source) error {
-       // 1. Find file
-       // 2. Parse file
-       // 3. Extract assets
-       // 4. Create assets in database
-   }
-   ```
+No code in this module changes for a new file type.
 
 ## Logging
 

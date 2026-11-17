@@ -112,19 +112,22 @@ func TestThePlaceholderGetsTheRecordSchemas(t *testing.T) {
 	}
 }
 
-func TestAPromptWithoutThePlaceholderIsUsedAsItIs(t *testing.T) {
+// A prompt without the placeholder predates AssetManager's record schemas:
+// it is refused before the AI is asked, and nothing is stored.
+func TestAPromptWithoutThePlaceholderIsRefused(t *testing.T) {
 	f := newFakeAIManager(t, "", "")
 	chat := &recordingChat{routine: sampleImportRoutine}
-	// No document loaded either: the old prompt works as it did.
 	ai := New(nil, aimanager.NewClient(f.srv.URL, "k"), nil, chat, &config.Config{AI: config.AIConfig{SystemPrompt: "the old prompt", Model: "m"}})
-	if _, err := ai.GenerateForRule(rule, true); err != nil {
-		t.Fatal(err)
+	loadedSchemas(t, ai)
+	_, err := ai.GenerateForRule(rule, true)
+	if err == nil || !strings.Contains(err.Error(), "predates AssetManager's record schemas") {
+		t.Fatalf("err = %v", err)
 	}
-	if chat.system != "the old prompt" {
-		t.Errorf("system prompt = %q", chat.system)
+	if chat.asked {
+		t.Error("the AI was asked with a prompt that predates the record schemas")
 	}
-	if f.stored.Status != "passed" {
-		t.Errorf("the routine was stored %q: %s", f.stored.Status, f.stored.Log)
+	if f.stored.Status != "" {
+		t.Errorf("a routine was stored: %q", f.stored.Status)
 	}
 }
 
@@ -155,7 +158,7 @@ var importFunction = function (ctx) {
 
 func TestARoutineWhoseRecordsDoNotFitFailsValidation(t *testing.T) {
 	f := newFakeAIManager(t, "", "")
-	ai := New(nil, aimanager.NewClient(f.srv.URL, "k"), nil, &recordingChat{routine: misfitRoutine}, &config.Config{AI: config.AIConfig{SystemPrompt: "p", Model: "m"}})
+	ai := New(nil, aimanager.NewClient(f.srv.URL, "k"), nil, &recordingChat{routine: misfitRoutine}, &config.Config{AI: config.AIConfig{SystemPrompt: "p\n" + outputschema.Placeholder, Model: "m"}})
 	loadedSchemas(t, ai)
 	if _, err := ai.GenerateForRule(rule, true); err == nil {
 		t.Fatal("a routine whose records do not fit passed validation")

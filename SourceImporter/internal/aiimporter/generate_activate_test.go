@@ -20,6 +20,7 @@ import (
 	"tachyonik/sourceimporter/internal/aimanager"
 	"tachyonik/sourceimporter/internal/config"
 	"tachyonik/sourceimporter/internal/importrulewatcher"
+	"tachyonik/sourceimporter/internal/outputschema"
 )
 
 type fakeChat struct{}
@@ -54,7 +55,8 @@ func generateThroughEvent(t *testing.T, activate bool) map[string]any {
 	}))
 	t.Cleanup(srv.Close)
 
-	ai := New(nil, aimanager.NewClient(srv.URL, "k"), nil, fakeChat{}, &config.Config{AI: config.AIConfig{SystemPrompt: "p", Model: "m"}})
+	ai := New(nil, aimanager.NewClient(srv.URL, "k"), nil, fakeChat{}, &config.Config{AI: config.AIConfig{SystemPrompt: "p\n" + outputschema.Placeholder, Model: "m"}})
+	loadedSchemas(t, ai)
 	ai.HandleRuleChange(importrulewatcher.RuleChangeEvent{Type: "updated", RuleID: 1})
 	if ai.HasExecutor(1) {
 		t.Error("the new routine runs before AIManager names it the active one")
