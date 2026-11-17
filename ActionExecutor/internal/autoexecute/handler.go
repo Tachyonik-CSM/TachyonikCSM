@@ -151,13 +151,17 @@ type userExecutionRuleSetting struct {
 	Status          string `json:"status"`
 }
 
+// userExecutionRuleSettings is SystemManager's answer listing a user's
+// automation settings.
+type userExecutionRuleSettings struct {
+	Settings []userExecutionRuleSetting `json:"settings"`
+}
+
 // checkAutomationStatus queries SystemManager for the user's automation setting
 // for a specific execution rule. Returns true if status is "automatic".
 // Missing rows default to "manual" per SystemManager convention.
 func (h *Handler) checkAutomationStatus(userID, executionRuleID int64) (bool, error) {
-	var result struct {
-		Settings []userExecutionRuleSetting `json:"settings"`
-	}
+	var result userExecutionRuleSettings
 	if err := h.calls.Call("GET", h.cfg.SystemManager.URL, "/api/user-execution-rule-settings",
 		h.cfg.SystemManager.InternalServiceKey, userID, nil, &result); err != nil {
 		return false, err

@@ -305,11 +305,14 @@ type ExecutionOutcome struct {
 // longer pending: another instance took it, or it finished or expired.
 var ErrNotClaimable = errors.New("execution request is no longer pending")
 
+// listExecutionRequestsResponse is the answer of the pending-requests endpoint.
+type listExecutionRequestsResponse struct {
+	ExecutionRequests []ExecutionRequest `json:"executionRequests"`
+}
+
 // ListPendingExecutionRequests returns the requests still waiting to be run.
 func (c *Client) ListPendingExecutionRequests() ([]ExecutionRequest, error) {
-	var result struct {
-		ExecutionRequests []ExecutionRequest `json:"executionRequests"`
-	}
+	var result listExecutionRequestsResponse
 	if err := c.rc.JSON("GET", "/api/internal/execution-requests", nil, &result, http.StatusOK); err != nil {
 		return nil, err
 	}
