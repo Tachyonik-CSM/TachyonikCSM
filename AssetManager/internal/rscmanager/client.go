@@ -33,11 +33,11 @@ func NewClient(baseURL, internalServiceKey string) *Client {
 	return &Client{rest: restclient.New(baseURL, internalServiceKey, 10*time.Second)}
 }
 
-// GetSource retrieves a source by ID
+// GetSource retrieves a source by ID (ResourceManager sources.get)
 // Returns nil if source not found (404), error for other failures
 func (c *Client) GetSource(id int64) (*Source, error) {
 	var source Source
-	if err := c.rest.JSON("GET", fmt.Sprintf("/api/src-entries/%d", id), nil, &source, http.StatusOK); err != nil {
+	if err := c.rest.JSON("GET", fmt.Sprintf("/api/sources/%d", id), nil, &source, http.StatusOK); err != nil {
 		if isNotFound(err) {
 			return nil, nil // Source doesn't exist
 		}

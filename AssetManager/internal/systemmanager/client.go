@@ -68,6 +68,25 @@ type Organisation struct {
 	Score       float64 `json:"score"`
 }
 
+// userIDs is SystemManager's answer listing user ids.
+type userIDs struct {
+	UserIDs []int64 `json:"userIds"`
+}
+
+// subScoreRequest is the body of a sub-score update.
+type subScoreRequest struct {
+	UserID   int64   `json:"userId"`
+	SubScore string  `json:"subScore"`
+	Value    float64 `json:"value"`
+}
+
+// statsEntryRequest is the body of a statistics entry.
+type statsEntryRequest struct {
+	UserID int64   `json:"userId"`
+	Key    string  `json:"key"`
+	Value  float64 `json:"value"`
+}
+
 // GetOrganisationByUserID retrieves the organisation for a user
 func (c *Client) GetOrganisationByUserID(userID int64) (*Organisation, error) {
 	var org Organisation
@@ -84,16 +103,14 @@ func (c *Client) GetOrganisationByUserID(userID int64) (*Organisation, error) {
 // capability) for a user's organisation. SystemManager recomputes the overall
 // score atomically from the three stored sub-scores.
 func (c *Client) UpdateOrganisationSubScore(userID int64, subScore string, value float64) error {
-	body := map[string]interface{}{"userId": userID, "subScore": subScore, "value": value}
+	body := subScoreRequest{UserID: userID, SubScore: subScore, Value: value}
 	return c.rest.JSON("PATCH", "/api/internal/organisation/sub-score", body, nil, http.StatusOK)
 }
 
 // ListAllUserIDs returns the IDs of every user known to SystemManager. Used by
 // startup recalc and global fan-out triggers.
 func (c *Client) ListAllUserIDs() ([]int64, error) {
-	var result struct {
-		UserIDs []int64 `json:"userIds"`
-	}
+	var result userIDs
 	if err := c.rest.JSON("GET", "/api/internal/users/ids", nil, &result, http.StatusOK); err != nil {
 		return nil, err
 	}
@@ -121,9 +138,7 @@ func (c *Client) GetUser(id int64) (*User, error) {
 // GetGroupMemberIDs returns all user IDs that share a group with the given user.
 // If the user is not in a group, returns a slice containing only their own ID.
 func (c *Client) GetGroupMemberIDs(userID int64) ([]int64, error) {
-	var result struct {
-		UserIDs []int64 `json:"userIds"`
-	}
+	var result userIDs
 	if err := c.rest.JSON("GET", fmt.Sprintf("/api/internal/group-members?userId=%d", userID), nil, &result, http.StatusOK); err != nil {
 		return []int64{userID}, err
 	}
@@ -147,7 +162,7 @@ func (c *Client) CreateStatsEntry(userID int64, key string, value float64) error
 	c.statLastEmit[throttleKey] = time.Now()
 	c.statThrottleMu.Unlock()
 
-	body := map[string]interface{}{"userId": userID, "key": key, "value": value}
+	body := statsEntryRequest{UserID: userID, Key: key, Value: value}
 	// SystemManager answers 201; 200 is taken as well, as any success was.
 	if err := c.rest.JSON("POST", "/api/internal/stats", body, nil, http.StatusCreated, http.StatusOK); err != nil {
 		return fmt.Errorf("stats entry: %w", err)

@@ -100,5 +100,8 @@ func (h *Handler) ListUserIDs(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to list user ids")
 		return
 	}
+	if ids == nil {
+		ids = []int64{} // the document's array, not null, when no one has records
+	}
 	respondJSON(w, http.StatusOK, map[string][]int64{"userIds": ids})
 }
