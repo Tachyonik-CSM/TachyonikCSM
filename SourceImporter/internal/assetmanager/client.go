@@ -12,7 +12,6 @@
 package assetmanager
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -122,8 +121,7 @@ func NewClient(baseURL, internalServiceKey string) *Client {
 
 // DeleteStaleResponse represents the response from delete stale endpoints
 type DeleteStaleResponse struct {
-	Deleted int    `json:"deleted"`
-	Message string `json:"message"`
+	Deleted int `json:"deleted"`
 }
 
 // CreateAsset creates a new asset via the AssetManager API.
@@ -224,11 +222,13 @@ func (c *Client) CreateDetection(name, host, port string, sourceID int64, source
 // been touched since modifiedBefore — the sweep that follows a re-import, so
 // what the previous run created but this one did not produce goes away.
 //
-// The three exported wrappers below differ only in the collection they name;
-// they were three copies of this function, identical but for that one word.
-func (c *Client) deleteStale(collection, source string, modifiedBefore time.Time) (int, error) {
-	path := fmt.Sprintf("/api/%s/stale?source=%s&modifiedBefore=%s",
-		collection, url.QueryEscape(source), url.QueryEscape(modifiedBefore.Format(time.RFC3339)))
+// The three exported wrappers below differ only in the endpoint they name,
+// written out whole so the client's contract test sees each path.
+func (c *Client) deleteStale(endpoint, source string, modifiedBefore time.Time) (int, error) {
+	path := endpoint + "?" + url.Values{
+		"source":         {source},
+		"modifiedBefore": {modifiedBefore.Format(time.RFC3339)},
+	}.Encode()
 
 	var result DeleteStaleResponse
 	if err := c.rc.JSON("DELETE", path, nil, &result, http.StatusOK); err != nil {
@@ -240,17 +240,17 @@ func (c *Client) deleteStale(collection, source string, modifiedBefore time.Time
 // DeleteStaleAssets deletes assets associated with a source that were modified
 // before the given timestamp.
 func (c *Client) DeleteStaleAssets(source string, modifiedBefore time.Time) (int, error) {
-	return c.deleteStale("assets", source, modifiedBefore)
+	return c.deleteStale("/api/assets/stale", source, modifiedBefore)
 }
 
 // DeleteStaleVulnerabilities deletes vulnerabilities associated with a source
 // that were modified before the given timestamp.
 func (c *Client) DeleteStaleVulnerabilities(source string, modifiedBefore time.Time) (int, error) {
-	return c.deleteStale("vulnerabilities", source, modifiedBefore)
+	return c.deleteStale("/api/vulnerabilities/stale", source, modifiedBefore)
 }
 
 // DeleteStaleDetections deletes detections associated with a source that were
 // modified before the given timestamp.
 func (c *Client) DeleteStaleDetections(source string, modifiedBefore time.Time) (int, error) {
-	return c.deleteStale("detections", source, modifiedBefore)
+	return c.deleteStale("/api/detections/stale", source, modifiedBefore)
 }
