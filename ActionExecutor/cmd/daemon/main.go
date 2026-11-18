@@ -159,6 +159,7 @@ func main() {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	logger.Startup("ActionExecutor", version.Version)
 
 	runDaemon(cfg)
 }
@@ -176,7 +177,6 @@ func runHelp() {
 
 // runDaemon starts the daemon: load rules, start watchers, pick up waiting run requests.
 func runDaemon(cfg *config.Config) {
-	logger.Info("Starting Tachyonik ActionExecutor daemon...")
 	logger.Info("Configuration loaded:")
 	logger.Infof("  AIManager URL: %s", cfg.AIManager.URL)
 	logger.Infof("  AI Timeout: %ds", cfg.AI.TimeoutSeconds)
