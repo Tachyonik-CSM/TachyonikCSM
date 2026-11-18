@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -250,9 +249,16 @@ func runDaemon(cfg *config.Config) {
 	}
 	refreshTriggers()
 
-	// The callback every change watcher shares: debounced, and never two
-	// passes at once.
-	onChange := newDebouncedProcessor(gen)
+	// Every full pass goes through one runner: never two at once
+	// (AG-EVAL-03), and a pass asked for while one runs follows it
+	// (AG-EVAL-04). Change messages are debounced (AG-EVAL-02); the other
+	// triggers ask for a pass at once.
+	passes := generator.NewPassRunner(func() {
+		if err := gen.ProcessRules(); err != nil {
+			logger.Errorf("Error processing rules: %v", err)
+		}
+	}, 2*time.Second)
+	onChange := passes.Debounced
 
 	// Shared module-settings refresh — used by both the
 	// MODULE_AI_SETTING_UPDATED watcher and the FEED_IMPORTED reload
@@ -291,15 +297,14 @@ func runDaemon(cfg *config.Config) {
 	// The watchers that make rules evaluate, closed first on a stop
 	// (AG-OPS-09): from then on nothing new is reacted to.
 	var stopWatching []func() error
+	stopWatching = append(stopWatching, func() error { passes.Stop(); return nil })
 
 	// A later load is followed by a pass over every rule, as at startup.
 	ruleLoader := reload.New("the action rules", func() error {
 		if err := loadRules(); err != nil {
 			return err
 		}
-		if err := gen.ProcessRules(); err != nil {
-			logger.Errorf("Error processing rules after loading them: %v", err)
-		}
+		passes.Now()
 		return nil
 	})
 	ruleLoader.Start()
@@ -320,9 +325,7 @@ func runDaemon(cfg *config.Config) {
 		gen.SetOnDemandRules(aiGen.OnDemandRules())
 		refreshTriggers()
 		logger.Info("Re-processing rules after regeneration...")
-		if err := gen.ProcessRules(); err != nil {
-			logger.Errorf("Error processing rules after regeneration: %v", err)
-		}
+		passes.Now()
 	})
 	if err != nil {
 		logger.Errorf("Failed to create action rule watcher: %v", err)
@@ -367,9 +370,7 @@ func runDaemon(cfg *config.Config) {
 				gen.SetOnDemandRules(aiGen.OnDemandRules())
 			}
 			refreshTriggers()
-			if err := gen.ProcessRules(); err != nil {
-				logger.Errorf("Error processing rules after the API catalogue changed: %v", err)
-			}
+			passes.Now()
 		})
 		// AIManager's own messages that invalidate a routine's answers —
 		// the tool catalogue's, for instance.
@@ -385,9 +386,7 @@ func runDaemon(cfg *config.Config) {
 
 	// Process rules on startup
 	logger.Info("Processing rules on startup...")
-	if err := gen.ProcessRules(); err != nil {
-		logger.Errorf("Error processing rules: %v", err)
-	}
+	passes.Now()
 
 	// WebSocket watchers for the managers' change messages. What a routine
 	// reads is decided by the operations it calls, so what re-evaluates is the
@@ -509,47 +508,6 @@ func newClients(cfg *config.Config) *clients {
 	}
 	logger.Info("API clients initialized")
 	return c
-}
-
-// newDebouncedProcessor returns the callback the event watchers share.
-//
-// Two guards, doing different jobs. The timer collapses a burst of events — an
-// import produces hundreds — into one re-evaluation two seconds after the last
-// one. The processing flag then keeps a second run from starting while the
-// first is still going, since a full pass over every rule and user can outlast
-// the debounce window.
-func newDebouncedProcessor(gen *generator.Generator) func() {
-	var mu sync.Mutex
-	var processing bool
-	var debounceTimer *time.Timer
-
-	return func() {
-		mu.Lock()
-		defer mu.Unlock()
-
-		if debounceTimer != nil {
-			debounceTimer.Stop()
-		}
-
-		debounceTimer = time.AfterFunc(2*time.Second, func() {
-			mu.Lock()
-			if processing {
-				mu.Unlock()
-				return
-			}
-			processing = true
-			mu.Unlock()
-
-			logger.Info("Change detected, processing rules...")
-			if err := gen.ProcessRules(); err != nil {
-				logger.Errorf("Error processing rules: %v", err)
-			}
-
-			mu.Lock()
-			processing = false
-			mu.Unlock()
-		})
-	}
 }
 
 // waitForShutdown blocks until the service is asked to stop; runDaemon then

@@ -12,7 +12,7 @@ authoritative.
 | # | Specification | Answers | Status |
 |---|---|---|---|
 | 1 | [Purpose and scope](01-purpose-and-scope.md) | What is ActionGenerator for, and what is it not for? | Accepted |
-| 2 | [Evaluation and actions](02-evaluation-and-actions.md) | When are rules evaluated, and what happens to the actions? | Draft |
+| 2 | [Evaluation and actions](02-evaluation-and-actions.md) | When are rules evaluated, and what happens to the actions? | Accepted |
 | 3 | [Routine generation and validation](03-generation-and-validation.md) | How does a rule become a routine that may run? | Accepted |
 | 4 | [Interfaces](04-interfaces.md) | What do routines read and return, and how does ActionGenerator talk to the other services? | Accepted |
 | 5 | [Security and containment](05-security-and-containment.md) | Whose data reaches whom, and how is generated code kept in bounds? | Accepted |

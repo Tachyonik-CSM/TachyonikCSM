@@ -375,6 +375,14 @@ triggered by:
 | SystemManager WebSocket | `USER_CREATED`, `USER_DELETED`, whatever the routines read — they change whom the rules are evaluated for (2s debounce) |
 | Action-rule watcher | a rule created, edited or deleted; an evaluation request; a feed import; an API catalogue change; every reconnect to AIManager, after the rules are loaded again — the connection has missed the changes made while it was down |
 
+**One pass at a time, and none lost** (spec AG-EVAL-02 to -04). Every full
+pass goes through one runner (`internal/generator/passrunner.go`). Change
+messages are debounced by 2 s; the other triggers ask for a pass at once. A pass
+asked for while one runs is not dropped: exactly one more pass follows, 2 s
+after the running one ends — pushed back by every further message, so an import
+that outlasts a pass still ends in one pass. An evaluation request (one rule for
+one user) is not a full pass and does not wait for one.
+
 There is deliberately **no periodic sweep**: staleness is fixed by watching the
 data the routines read, not by re-running on a timer. The triggers follow from
 the routines: the message types after which an operation's answer may differ
