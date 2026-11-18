@@ -198,12 +198,21 @@ Environment variables override configuration file values:
 | `SYSTEMMANAGER_INTERNAL_SERVICE_KEY` | SystemManager service key | — |
 | `SOURCEIMPORTER_AI_MANAGER_URL` | AIManager base URL | `http://localhost:8085` |
 | `AIMANAGER_INTERNAL_SERVICE_KEY` | AIManager service key | — |
-| `SOURCEIMPORTER_POLL_INTERVAL` | Seconds between polls for new sources | `5` |
-| `SOURCEIMPORTER_HEARTBEAT_INTERVAL_SECONDS` | Liveness heartbeat interval | `10` |
+| `SOURCEIMPORTER_POLL_INTERVAL` | Seconds between polls for new sources, a whole number above 0 | `5` |
+| `SOURCEIMPORTER_HEARTBEAT_INTERVAL_SECONDS` | Liveness heartbeat interval, in whole seconds above 0 | `10` |
 | `SOURCEIMPORTER_LOG_FILE` | Log file path | `./sourceimporter.log` |
-| `SOURCEIMPORTER_LOG_TO_CONSOLE` | Log to console (`true`/`1` or `false`/`0`) | `true` |
-| `SOURCEIMPORTER_LOG_TO_FILE` | Log to file (`true`/`1` or `false`/`0`) | `true` |
-| `SOURCEIMPORTER_LOG_LEVEL` | Log level (DEBUG, INFO, WARN, ERROR) | `INFO` |
+| `SOURCEIMPORTER_LOG_TO_CONSOLE` | Log to console (`true`, `false`, `1` or `0`, any case) | `true` |
+| `SOURCEIMPORTER_LOG_TO_FILE` | Log to file (`true`, `false`, `1` or `0`, any case) | `true` |
+| `SOURCEIMPORTER_LOG_LEVEL` | Log level (DEBUG, INFO, WARN, ERROR, any case) | `INFO` |
+
+A number, true/false or log-level value SourceImporter cannot use stops it at
+startup with exit code 1, whether it comes from a variable above or from the
+file, and the error lists every such setting with what it takes. An empty
+variable counts as unset; in the file a `0` counts as an absent key, and a
+negative interval is refused. Before 2026-11-18 such values were dropped
+without a word — `SOURCEIMPORTER_LOG_TO_FILE=yes` even switched the file log
+off, and `SOURCEIMPORTER_POLL_INTERVAL=5s` read as 5 — so check a deployment's
+variables when upgrading.
 
 `RESOURCEMANAGER_DB_PATH` and `ASSETMANAGER_DB_PATH` no longer exist. They are
 left over in some older configs, from before the daemon reached both services

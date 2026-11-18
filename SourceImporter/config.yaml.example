@@ -6,6 +6,11 @@
 # (a misspelling), stops the service at startup with the reason on standard
 # error. Without a file, it runs on the defaults and the environment.
 #
+# A number, true/false or log-level value SourceImporter cannot use — here or
+# in a SOURCEIMPORTER_* variable — stops it at startup with an error listing
+# every such setting and what it takes. A 0 here counts as an absent key.
+# True/false variables take true, false, 1 or 0, in any case.
+#
 # Precedence: environment variables > this file > built-in defaults.
 # Every value below is optional — omitting a key leaves the default shown in
 # its comment. The internal service keys are the exception: without them the
@@ -35,13 +40,13 @@ ai_manager:
   internal_service_key: ""            # required; no default
 
 importer:
-  poll_interval: 5                    # seconds between polls for new sources; default: 5
+  poll_interval: 5                    # seconds between polls for new sources, above 0; default: 5
 
 heartbeat:
-  interval_seconds: 10                # liveness signal to SystemManager; default: 10
+  interval_seconds: 10                # liveness signal to SystemManager, seconds above 0; default: 10
 
 log:
   file_path: /home/tachyon/log/tachyonik-sourceimporter.log   # default: ./sourceimporter.log
   to_console: false                   # default: true
   to_file: true                       # default: true
-  level: INFO                         # One of DEBUG, INFO, WARN, ERROR; default: INFO
+  level: INFO                         # One of DEBUG, INFO, WARN, ERROR (any case); default: INFO
