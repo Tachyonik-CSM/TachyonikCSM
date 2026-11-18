@@ -176,17 +176,7 @@ func (g *Generator) ProcessRules() error {
 	// with the whole workspace's data (PA-BR-07) — and create the actions under
 	// them. SaaS keeps per-user
 	// generation. A lookup failure falls back to per-user (safe default).
-	shared := false
-	var primaryID int64
-	if ws, werr := g.systemMgr.GetWorkspace(); werr != nil {
-		logger.Warnf("Could not determine workspace mode, defaulting to per-user generation: %v", werr)
-	} else if ws.IsAppliance() {
-		if ws.PrimaryUserID > 0 {
-			shared, primaryID = true, ws.PrimaryUserID
-		} else {
-			logger.Warn("Appliance mode but no primary user reported; falling back to per-user generation")
-		}
-	}
+	primaryID, shared := g.workspaceOwner()
 
 	actionsCreated := 0
 	var created int
@@ -208,6 +198,26 @@ func (g *Generator) ProcessRules() error {
 	}
 
 	return nil
+}
+
+// workspaceOwner reports whether the instance is a shared workspace and, if
+// so, its primary owner, for whom it is evaluated (AG-EVAL-07). A mode that
+// cannot be read, or an appliance without a primary owner, is evaluated per
+// user, and the log says so (AG-EVAL-08).
+func (g *Generator) workspaceOwner() (primaryID int64, shared bool) {
+	ws, err := g.systemMgr.GetWorkspace()
+	if err != nil {
+		logger.Warnf("Could not determine workspace mode, defaulting to per-user generation: %v", err)
+		return 0, false
+	}
+	if !ws.IsAppliance() {
+		return 0, false
+	}
+	if ws.PrimaryUserID <= 0 {
+		logger.Warn("Appliance mode but no primary user reported; falling back to per-user generation")
+		return 0, false
+	}
+	return ws.PrimaryUserID, true
 }
 
 // ProcessRuleForUser evaluates a single action rule for a single user and
@@ -237,16 +247,26 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 		return 0, fmt.Errorf("user %d is deactivated; its actions are left as they are", userID)
 	}
 
-	actions, unknown, err := g.evaluate(executor, g.newPass(), userID, force)
+	// In a shared workspace the request is evaluated for the primary owner
+	// and its action placed under them, as the shared pass would; the
+	// requester only asked (AG-EVAL-13).
+	owner, who := userID, fmt.Sprintf("user %d", userID)
+	primaryID, shared := g.workspaceOwner()
+	if shared {
+		owner, who = primaryID, fmt.Sprintf("the workspace (owner %d), asked by user %d", primaryID, userID)
+		unit.Rename(fmt.Sprintf("rule %d for %s", ruleID, who))
+	}
+
+	actions, unknown, err := g.evaluate(executor, g.newPass(), owner, force)
 	if err != nil {
-		return 0, fmt.Errorf("error evaluating rule %d for user %d: %w", ruleID, userID, err)
+		return 0, fmt.Errorf("error evaluating rule %d for %s: %w", ruleID, who, err)
 	}
 	if unknown {
-		logger.Infof("Rule %d could not be decided for user %d; its actions are left as they are", ruleID, userID)
+		logger.Infof("Rule %d could not be decided for %s; its actions are left as they are", ruleID, who)
 		return 0, nil
 	}
 
-	logger.Infof("Rule %d produced %d candidate actions for user %d (force=%v)", ruleID, len(actions), userID, force)
+	logger.Infof("Rule %d produced %d candidate actions for %s (force=%v)", ruleID, len(actions), who, force)
 
 	// The rule no longer matches: collect the stale action it left behind,
 	// exactly as the full sweep does. Without this the single-rule path could
@@ -256,17 +276,24 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 	// preserved by the server-side filter.
 	if len(actions) == 0 {
 		if !g.shouldWithdraw(ruleID, len(actions)) {
-			logger.Debugf("Rule %d is on-demand; leaving its actions for user %d alone", ruleID, userID)
+			logger.Debugf("Rule %d is on-demand; leaving its actions for %s alone", ruleID, who)
 			return 0, nil
 		}
-		g.withdraw(userID, ruleID)
+		if shared {
+			g.withdrawShared(ruleID)
+		} else {
+			g.withdraw(owner, ruleID)
+		}
 		return 0, nil
 	}
 
 	// The rule's open action is updated, or the action raised; a forced
 	// request raises it even while a Done one holds the rule back
 	// (AG-EVAL-26).
-	created, err := g.placeAction(userID, ruleID, firstAction(ruleID, actions)[0], force)
+	created, err := g.placeAction(owner, ruleID, firstAction(ruleID, actions)[0], force)
+	if shared {
+		g.consolidateShared(ruleID, primaryID)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -406,14 +433,7 @@ func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanag
 			actionsCreated++
 		}
 
-		// Consolidate: drop any New-status copies of this rule owned by other
-		// users (duplicates from prior per-user generation, or from a manual
-		// single-user trigger), keeping only the primary owner's.
-		if n, derr := g.actionMgr.DeleteNewActionsByRuleExceptUser(ruleID, primaryID); derr != nil {
-			logger.Warnf("Shared consolidation failed for rule %d: %v", ruleID, derr)
-		} else if n > 0 {
-			logger.Infof("Consolidated %d duplicate action(s) for rule %d under owner %d", n, ruleID, primaryID)
-		}
+		g.consolidateShared(ruleID, primaryID)
 	}
 
 	return actionsCreated, nil

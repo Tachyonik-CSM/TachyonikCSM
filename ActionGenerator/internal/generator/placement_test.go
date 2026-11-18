@@ -125,6 +125,19 @@ func (f *fakeActionManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.actions = keep
 		json.NewEncoder(w).Encode(map[string]any{"deleted": n, "deletedIds": []int64{}})
+	case r.URL.Path == "/api/internal/actions/delete-by-rule-shared":
+		rule, keepUser := num("actionRuleId"), num("keepUserId")
+		var keep []*fakeAction
+		n := 0
+		for _, a := range f.actions {
+			if a.RuleID != nil && *a.RuleID == rule && a.Status == "New" && (keepUser == 0 || a.UserID != keepUser) {
+				n++
+				continue
+			}
+			keep = append(keep, a)
+		}
+		f.actions = keep
+		json.NewEncoder(w).Encode(map[string]any{"deleted": n, "deletedIds": []int64{}})
 	case r.URL.Path == "/api/internal/actions/clear-done-by-rule":
 		user, rule := num("userId"), num("actionRuleId")
 		n := 0

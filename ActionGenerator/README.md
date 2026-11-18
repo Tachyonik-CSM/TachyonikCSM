@@ -86,6 +86,7 @@ The daemon reads the instance operating mode from SystemManager (`GET /api/inter
 
 - **SaaS mode** — each user has private data, so rules are evaluated per user and actions are owned by that user (the behavior above). A deactivated account is not evaluated: its actions are left as they are until it is reactivated, and an evaluation request for it is refused (spec AG-EVAL-25). An account is deactivated when SystemManager's user list says `active: false`.
 - **Appliance mode** — the whole instance is one shared workspace: every non-anonymous user sees the same data, so generating one action set per user would surface as duplicates in the shared Actions view. Instead, each rule is evaluated **once**, for a single **primary owner** (the oldest admin, reported as `primaryUserId`), whose API answers the managers give for the whole workspace, and the resulting actions are created under that owner. Any per-user duplicates left by earlier generation are consolidated away under that owner. If the mode can't be determined, the daemon falls back to per-user generation.
+  An evaluation request — the actions view asking for current answers, or a user picking an option of type `Action` — is evaluated for the primary owner too, and its action placed under them; the member who asked sees it like every action of the workspace (spec AG-EVAL-13).
 
 ## Building
 

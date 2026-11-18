@@ -14,7 +14,8 @@
 // consolidated to the newest (AG-EVAL-27).
 //
 // The per-user pass, the shared workspace and evaluation requests all go
-// through here, so they cannot drift apart.
+// through here, so they cannot drift apart. In a shared workspace an
+// evaluation request is evaluated for the primary owner too (AG-EVAL-13).
 
 package generator
 
@@ -112,5 +113,16 @@ func (g *Generator) clearDone(ruleID, owner int64) {
 		logger.Warnf("Could not mark the Done actions of rule %d cleared (user %d; 0 = every owner): %v", ruleID, owner, err)
 	} else if n > 0 {
 		logger.Infof("Rule %d no longer matches: %d Done action(s) cleared (user %d; 0 = every owner); it raises a new action when it matches again", ruleID, n, owner)
+	}
+}
+
+// consolidateShared drops the New copies of a rule owned by other members of
+// a shared workspace — left by earlier per-user evaluation — keeping only the
+// primary owner's (AG-EVAL-12).
+func (g *Generator) consolidateShared(ruleID, primaryID int64) {
+	if n, err := g.actionMgr.DeleteNewActionsByRuleExceptUser(ruleID, primaryID); err != nil {
+		logger.Warnf("Shared consolidation failed for rule %d: %v", ruleID, err)
+	} else if n > 0 {
+		logger.Infof("Consolidated %d duplicate action(s) for rule %d under owner %d", n, ruleID, primaryID)
 	}
 }
