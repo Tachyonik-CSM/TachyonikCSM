@@ -131,6 +131,7 @@ func main() {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	logger.Startup("ActionGenerator", version.Version)
 
 	runDaemon(cfg)
 }
@@ -148,7 +149,6 @@ func runHelp() {
 
 // runDaemon starts the daemon with per-rule JS executors, action rule watcher, and asset watcher.
 func runDaemon(cfg *config.Config) {
-	logger.Info("Starting Tachyonik ActionGenerator daemon...")
 	logConfiguration(cfg)
 
 	c := newClients(cfg)

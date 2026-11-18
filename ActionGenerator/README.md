@@ -130,7 +130,7 @@ stripped to a numeric `x.y.z`, and injected at build time:
 
 `--match` is what keeps it independent — every other tag in the monorepo is
 ignored. Off-tag or dirty builds get a descriptive suffix (`1.0.0-3-gabc123`,
-`1.0.0-dirty`); a tree with no matching tag falls back to `0.0.0-dev`.
+`1.0.0-dirty`); a tree with no matching tag falls back to `0.0.0-dev`. The first line of every start names it — `Starting Tachyonik ActionGenerator <version> (<go version>, <os>/<arch>)` — so a support log shows exactly what ran.
 
 Three build paths inject it, and all three must, or a build silently ships the
 fallback:
@@ -607,7 +607,7 @@ Manager event → Watcher → 2s debounce → Generator → for each user:
 ### Startup
 
 ```
-[INFO] Starting Tachyonik ActionGenerator daemon...
+[INFO] Starting Tachyonik ActionGenerator 1.4.0 (go1.24.4, linux/arm64)
 [INFO] Configuration loaded:
 [INFO]   AIManager URL: http://localhost:8085
 [INFO]   JS Exec Timeout: 5s
