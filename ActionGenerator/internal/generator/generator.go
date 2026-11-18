@@ -25,6 +25,7 @@ import (
 	"tachyonik/actiongenerator/internal/systemmanager"
 	"tachyonik/lib/apibridge"
 	"tachyonik/lib/apiholder"
+	"tachyonik/lib/drain"
 	"tachyonik/lib/logger"
 )
 
@@ -40,6 +41,8 @@ type Generator struct {
 	// catalogue holds the API bridge the routines read through; without it
 	// no rule can be decided.
 	catalogue *apiholder.Holder
+	// gate lets a stop wait for the unit being evaluated (shutdown.go).
+	gate drain.Gate
 }
 
 // SetCatalogue gives the generator the API bridge for bridge routines.
@@ -126,6 +129,12 @@ func (g *Generator) shouldWithdraw(ruleID int64, produced int) bool {
 
 // ProcessRules iterates over all users and checks action rules
 func (g *Generator) ProcessRules() error {
+	unit := g.gate.Enter("a pass over every rule", nil)
+	if unit == nil {
+		logger.Debug("Not processing action rules: stopping")
+		return nil
+	}
+	defer unit.Leave()
 	logger.Info("Processing action rules...")
 
 	// Get all users
@@ -183,9 +192,9 @@ func (g *Generator) ProcessRules() error {
 	var created int
 	if shared {
 		logger.Infof("Appliance shared-workspace mode: generating one action set under user %d", primaryID)
-		created, err = g.processSharedWorkspace(users, executorSnapshot, primaryID)
+		created, err = g.processSharedWorkspace(unit, users, executorSnapshot, primaryID)
 	} else {
-		created, err = g.processJSRules(users, executorSnapshot)
+		created, err = g.processJSRules(unit, users, executorSnapshot)
 	}
 	if err != nil {
 		logger.Errorf("Error processing JS rules: %v", err)
@@ -221,6 +230,11 @@ func (g *Generator) refreshHiddenOptions(actionID int64, req actionmanager.Creat
 // creates actions if the rule's JS routine produces any. Returns the number
 // of actions created.
 func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (int, error) {
+	unit := g.gate.Enter(fmt.Sprintf("rule %d for user %d", ruleID, userID), nil)
+	if unit == nil {
+		return 0, ErrStopping
+	}
+	defer unit.Leave()
 	g.executorMu.RLock()
 	executor, ok := g.executors[ruleID]
 	g.executorMu.RUnlock()
@@ -297,7 +311,7 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 }
 
 // processJSRules evaluates JS rules from all executors for all users
-func (g *Generator) processJSRules(users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor) (int, error) {
+func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor) (int, error) {
 	actionsCreated := 0
 	pass := g.newPass()
 
@@ -306,6 +320,11 @@ func (g *Generator) processJSRules(users []systemmanager.User, executors map[int
 
 		// Evaluate each per-rule executor
 		for ruleID, executor := range executors {
+			if g.stopping() {
+				logger.Info("Stopping: the rest of this pass is evaluated at the next start")
+				return actionsCreated, nil
+			}
+			unit.Rename(fmt.Sprintf("rule %d for user %d", ruleID, user.ID))
 			actions, unknown, err := g.evaluate(executor, pass, user.ID, false)
 			if err != nil {
 				logger.Errorf("Error evaluating JS rules for user %d (rule executor %d): %v", user.ID, ruleID, err)
@@ -376,7 +395,7 @@ func (g *Generator) processJSRules(users []systemmanager.User, executors map[int
 // is correct. Owning everything under the primary user makes the existing
 // per-(owner,rule) dedup collapse to one-per-rule automatically, and lets us
 // consolidate away the per-user duplicates that earlier per-user generation left.
-func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor, primaryID int64) (int, error) {
+func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor, primaryID int64) (int, error) {
 	found := false
 	for i := range users {
 		if users[i].ID == primaryID {
@@ -394,6 +413,11 @@ func (g *Generator) processSharedWorkspace(users []systemmanager.User, executors
 	actionsCreated := 0
 
 	for ruleID, executor := range executors {
+		if g.stopping() {
+			logger.Info("Stopping: the rest of this pass is evaluated at the next start")
+			return actionsCreated, nil
+		}
+		unit.Rename(fmt.Sprintf("rule %d for the workspace (owner %d)", ruleID, primaryID))
 		actions, unknown, err := g.evaluate(executor, pass, primaryID, false)
 		if err != nil {
 			logger.Errorf("Error evaluating shared JS rule %d: %v", ruleID, err)

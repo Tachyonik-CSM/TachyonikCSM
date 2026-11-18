@@ -283,11 +283,20 @@ The daemon will:
 
 ### Stopping the Daemon
 
-Send `SIGINT` (Ctrl+C) or `SIGTERM` to shut down gracefully:
+Send `SIGINT` (Ctrl+C) or `SIGTERM` to shut down gracefully (spec AG-OPS-09):
 
-- The evaluation in progress completes
-- The WebSocket watchers and the heartbeat are closed
-- The log file is closed
+1. The watchers are closed, so no message starts an evaluation any more; an
+   evaluation request or pass asked for from now on is refused.
+2. The rule and user being evaluated finish — their new actions created and
+   their stale ones withdrawn — and the pass stops there; the rest is evaluated
+   by the pass at the next start. The wait is at most 20 seconds; a unit still
+   running then is named in a warning and cut off. The container is given 30
+   seconds (`stop_grace_period` in `deployment/docker/compose.yaml`).
+3. A routine generation in progress is not waited for: an AI call takes
+   minutes. Its request, and any request made while the daemon was down, is
+   cleared at the next start with that reason, which the rule dialog shows —
+   request it again.
+4. The heartbeat and the log file are closed.
 
 ### Running as a Background Service
 

@@ -227,6 +227,9 @@ func runDaemon(cfg *config.Config) {
 	} else {
 		gen.SetExecutors(aiGen.Executors())
 		gen.SetOnDemandRules(aiGen.OnDemandRules())
+		// Before the rule watcher starts: a request still standing now will
+		// get no announcement any more (AG-GEN-02).
+		aiGen.ClearStandingRequests()
 	}
 	refreshTriggers()
 
@@ -267,6 +270,10 @@ func runDaemon(cfg *config.Config) {
 	aimw.Start()
 	defer aimw.Close()
 	logger.Info("AIManager settings watcher started")
+
+	// The watchers that make rules evaluate, closed first on a stop
+	// (AG-OPS-09): from then on nothing new is reacted to.
+	var stopWatching []func() error
 
 	// Start action rule watcher for rule changes and evaluation requests
 	arw, err := actionrulewatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, func(event actionrulewatcher.RuleChangeEvent) {
@@ -335,7 +342,7 @@ func runDaemon(cfg *config.Config) {
 			}
 		})
 		arw.Start()
-		defer arw.Close()
+		stopWatching = append(stopWatching, arw.Close)
 		logger.Info("Action rule watcher started")
 	}
 
@@ -370,14 +377,15 @@ func runDaemon(cfg *config.Config) {
 			logger.Errorf("Failed to create %s watcher: %v", m.name, err)
 			continue
 		}
-		defer w.Close()
+		stopWatching = append(stopWatching, w.Close)
 		w.SetExtraTriggers(extraTrigger)
 		w.Start()
 		logger.Infof("%s WebSocket watcher started", m.name)
 	}
 
 	// Start liveness heartbeat to SystemManager.
-	heartbeat.Start(context.Background(), heartbeat.Config{
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
+	heartbeat.Start(heartbeatCtx, heartbeat.Config{
 		ServiceName:        "ActionGenerator",
 		IntervalSeconds:    cfg.Heartbeat.IntervalSeconds,
 		SystemManagerURL:   cfg.SystemManager.URL,
@@ -385,7 +393,26 @@ func runDaemon(cfg *config.Config) {
 	}, logger.Errorf)
 
 	waitForShutdown()
+
+	// AG-OPS-09, in its order: stop reacting to messages, let the evaluation
+	// in progress finish, close the connections and exit. A running pass stops
+	// after the rule and user it is on; the rest is evaluated at the next
+	// start. A generation in progress is not waited for — it takes minutes —
+	// and its request is cleared at the next start (AG-GEN-02).
+	for _, closeWatcher := range stopWatching {
+		_ = closeWatcher()
+	}
+	gen.Stop()
+	if unit := gen.Wait(shutdownDrain); unit != "" {
+		logger.Warnf("Stopping although %s is still being evaluated after %s; it is cut off", unit, shutdownDrain)
+	}
+	stopHeartbeat()
+	logger.Info("Daemon stopped")
 }
+
+// shutdownDrain bounds how long a stop waits for the unit being evaluated.
+// The container is given 30 s (stop_grace_period in compose.yaml).
+const shutdownDrain = 20 * time.Second
 
 // newAPICatalogue makes the holder of the platform API catalogue, with where
 // this daemon reaches each manager. A bridge call is bounded by the shorter
@@ -488,8 +515,8 @@ func newDebouncedProcessor(gen *generator.Generator) func() {
 	}
 }
 
-// waitForShutdown blocks until the service is asked to stop. Returning from
-// here is what runs runDaemon's deferred Close calls.
+// waitForShutdown blocks until the service is asked to stop; runDaemon then
+// runs the stop sequence of AG-OPS-09.
 func waitForShutdown() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -498,5 +525,4 @@ func waitForShutdown() {
 	<-quit
 
 	logger.Info("Shutting down ActionGenerator daemon...")
-	logger.Info("Daemon stopped")
 }
