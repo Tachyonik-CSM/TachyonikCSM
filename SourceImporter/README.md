@@ -107,7 +107,7 @@ stripped to a numeric `x.y.z`, and injected at build time:
 
 `--match` is what keeps it independent — every other tag in the monorepo is
 ignored. Off-tag or dirty builds get a descriptive suffix (`1.0.1-3-gabc123`,
-`1.0.1-dirty`); a tree with no matching tag falls back to `0.0.0-dev`.
+`1.0.1-dirty`); a tree with no matching tag falls back to `0.0.0-dev`. The first line of every start names it — `Starting Tachyonik SourceImporter <version> (<go version>, <os>/<arch>)` — so a support log shows exactly what ran.
 
 Three build paths inject it, and all three must, or a build silently ships the
 fallback:
@@ -446,7 +446,7 @@ log:
 ### Log Output Examples
 
 ```
-2026/01/07 11:23:45 cmd/daemon/main.go:62: [INFO] Starting Tachyonik SourceImporter daemon...
+2026/01/07 11:23:45 cmd/daemon/main.go:62: [INFO] Starting Tachyonik SourceImporter 1.2.0 (go1.24.4, linux/arm64)
 2026/01/07 11:23:45 cmd/daemon/main.go:78: [INFO] Database connections established
 2026/01/07 11:23:45 cmd/daemon/main.go:85: [INFO] Processing existing sources...
 2026/01/07 11:23:45 internal/importer/importer.go:36: [INFO] Processing 1 sources for import...

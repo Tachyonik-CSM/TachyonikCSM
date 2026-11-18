@@ -124,6 +124,7 @@ func main() {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	logger.Startup("SourceImporter", version.Version)
 
 	runDaemon(cfg)
 }
@@ -294,7 +295,6 @@ func loadOutputSchemas(aiMgrClient *aimanager.Client, holder *outputschema.Holde
 // logStartupConfig records what the daemon is running with, so a support log
 // answers "which URLs, which log level" without asking for the config file.
 func logStartupConfig(cfg *config.Config) {
-	logger.Info("Starting Tachyonik SourceImporter daemon...")
 	logger.Infof("Version: %s", version.Version)
 	logger.Info("Configuration loaded:")
 	logger.Infof("  ResourceManager URL: %s", cfg.ResourceManager.URL)
