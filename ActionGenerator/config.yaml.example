@@ -95,6 +95,10 @@ heartbeat:
   interval_seconds: 10  # Seconds between heartbeats (default: 10)
                         # Env: ACTIONGENERATOR_HEARTBEAT_INTERVAL_SECONDS
 
+# A value ActionGenerator cannot use — a negative number, an unknown log level,
+# here or in an environment variable — stops it at startup with an error naming
+# the setting. A 0 here counts as an absent key.
+#
 # NOTE: to_console and to_file must be stated explicitly whenever this file
 # exists. Unlike every other setting, they are applied unconditionally rather
 # than only when non-empty — YAML cannot distinguish an absent boolean from
@@ -104,8 +108,8 @@ log:
   file_path: /home/tachyon/log/tachyonik-actiongenerator.log  # Log file path (default: ./actiongenerator.log)
                                                               # Env: ACTIONGENERATOR_LOG_FILE
   to_console: false  # Write logs to stdout (built-in default: true; see NOTE above)
-                     # Env: ACTIONGENERATOR_LOG_TO_CONSOLE (true/1 to enable)
+                     # Env: ACTIONGENERATOR_LOG_TO_CONSOLE (true/false/1/0)
   to_file: true      # Write logs to file_path (built-in default: true; see NOTE above)
-                     # Env: ACTIONGENERATOR_LOG_TO_FILE (true/1 to enable)
+                     # Env: ACTIONGENERATOR_LOG_TO_FILE (true/false/1/0)
   level: INFO        # Log verbosity: DEBUG, INFO, WARN, ERROR (default: INFO)
                      # Env: ACTIONGENERATOR_LOG_LEVEL

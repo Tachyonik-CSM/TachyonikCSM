@@ -99,7 +99,8 @@ func TestEnvOverridesBeatDefaults(t *testing.T) {
 }
 
 // Zero is a meaningful value for the budget — "run unguarded" — and must be
-// distinguishable from an unset or unparseable variable.
+// distinguishable from an unset or unparseable variable, which is refused
+// (AG-OPS-15).
 func TestJSExecBudgetCanBeDisabled(t *testing.T) {
 	t.Setenv("ACTIONGENERATOR_CONFIG", "/nonexistent/config.yaml")
 	t.Setenv("ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS", "0")
@@ -108,7 +109,7 @@ func TestJSExecBudgetCanBeDisabled(t *testing.T) {
 	}
 
 	t.Setenv("ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS", "not-a-number")
-	if got := mustLoad(t).AI.JSExecTimeoutSeconds; got != 5 {
-		t.Errorf("budget = %d for an unparseable value, want the default 5", got)
+	if _, err := Load(); err == nil {
+		t.Error("an unparseable budget must stop the daemon")
 	}
 }

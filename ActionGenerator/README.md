@@ -240,13 +240,20 @@ Environment variables override configuration file values:
 | `TOOLMANAGER_URL` | ToolManager API URL (the API bridge) | `http://localhost:8086` |
 | `TOOLMANAGER_INTERNAL_SERVICE_KEY` | ToolManager service key | - |
 | `AIMANAGER_INTERNAL_SERVICE_KEY` | AIManager service key | - |
-| `ACTIONGENERATOR_AI_TIMEOUT_SECONDS` | HTTP timeout for AI code-generation requests | `300` |
-| `ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS` | Budget for a single JS execution — loading a routine, one `check()`, one `createAction()`. Routine code is AI-generated and goja cannot be preempted, so without this a rule that never terminates hangs its goroutine for the life of the process. `0` disables the guard | `5` |
-| `ACTIONGENERATOR_HEARTBEAT_INTERVAL_SECONDS` | Liveness heartbeat interval to SystemManager | `10` |
+| `ACTIONGENERATOR_AI_TIMEOUT_SECONDS` | HTTP timeout for AI code-generation requests, in whole seconds above 0 | `300` |
+| `ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS` | Budget for a single JS execution — loading a routine, one `check()`, one `createAction()`. Routine code is AI-generated and goja cannot be preempted, so without this a rule that never terminates hangs its goroutine for the life of the process. Whole seconds; `0` disables the guard | `5` |
+| `ACTIONGENERATOR_HEARTBEAT_INTERVAL_SECONDS` | Liveness heartbeat interval to SystemManager, in whole seconds above 0 | `10` |
 | `ACTIONGENERATOR_LOG_FILE` | Log file path | `./actiongenerator.log` |
-| `ACTIONGENERATOR_LOG_TO_CONSOLE` | Log to console (true/false) | `true` |
-| `ACTIONGENERATOR_LOG_TO_FILE` | Log to file (true/false) | `true` |
-| `ACTIONGENERATOR_LOG_LEVEL` | Log level (DEBUG, INFO, WARN, ERROR) | `INFO` |
+| `ACTIONGENERATOR_LOG_TO_CONSOLE` | Log to console (`true`, `false`, `1` or `0`, any case) | `true` |
+| `ACTIONGENERATOR_LOG_TO_FILE` | Log to file (`true`, `false`, `1` or `0`, any case) | `true` |
+| `ACTIONGENERATOR_LOG_LEVEL` | Log level (DEBUG, INFO, WARN, ERROR, any case) | `INFO` |
+
+A value ActionGenerator cannot use stops it at startup with exit code 1 and an
+error on standard error naming the setting, whether it comes from a variable
+above or from the file (a negative number, an unknown log level). An empty
+variable counts as unset. Before 2026-11-18 such a value was ignored without a
+word — `ACTIONGENERATOR_LOG_TO_FILE=yes` even switched the file log off — so
+check a deployment's variables when upgrading (spec AG-OPS-15).
 
 ### Configuration Priority
 

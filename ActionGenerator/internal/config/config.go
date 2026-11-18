@@ -21,6 +21,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -107,7 +108,9 @@ type FileConfig struct {
 // be read or parsed, or a key it does not know (a misspelt key would leave
 // its setting at the default without a word). Running on defaults the
 // operator did not mean is worse than not starting. A missing file is fine:
-// the defaults and the environment run a local development setup.
+// the defaults and the environment run a local development setup. A value
+// it cannot use — from the file or the environment — is refused as well
+// (AG-OPS-15), naming the setting and where it came from.
 func Load() (*Config, error) {
 	// 1. Set built-in defaults
 	cfg := &Config{
@@ -151,17 +154,23 @@ func Load() (*Config, error) {
 
 	// 3. Apply config.yaml on top of defaults
 	if fileCfg != nil {
-		applyFileConfig(cfg, fileCfg)
+		if err := applyFileConfig(cfg, fileCfg); err != nil {
+			return nil, fmt.Errorf("configuration file %s cannot be used: %w", configPath, err)
+		}
 	}
 
 	// 4. Apply env var overrides on top (overrides everything)
-	applyEnvOverrides(cfg)
+	if err := applyEnvOverrides(cfg); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
 // applyFileConfig applies non-zero values from the parsed config.yaml onto cfg.
-func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
+// A 0 reads as an absent key (YAML cannot tell them apart, AG-OPS-03); a
+// negative number or an unknown log level is refused (AG-OPS-15).
+func applyFileConfig(cfg *Config, fileCfg *FileConfig) error {
 	for _, svc := range []struct {
 		dst *ServiceConfig
 		src FileServiceConfig
@@ -180,27 +189,40 @@ func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
 			svc.dst.InternalServiceKey = svc.src.InternalServiceKey
 		}
 	}
-	if fileCfg.AI.TimeoutSeconds > 0 {
-		cfg.AI.TimeoutSeconds = fileCfg.AI.TimeoutSeconds
-	}
-	if fileCfg.AI.JSExecTimeoutSeconds > 0 {
-		cfg.AI.JSExecTimeoutSeconds = fileCfg.AI.JSExecTimeoutSeconds
-	}
-	if fileCfg.Heartbeat.IntervalSeconds > 0 {
-		cfg.Heartbeat.IntervalSeconds = fileCfg.Heartbeat.IntervalSeconds
+	for _, n := range []struct {
+		key string
+		src int
+		dst *int
+	}{
+		{"ai.timeout_seconds", fileCfg.AI.TimeoutSeconds, &cfg.AI.TimeoutSeconds},
+		{"ai.js_exec_timeout_seconds", fileCfg.AI.JSExecTimeoutSeconds, &cfg.AI.JSExecTimeoutSeconds},
+		{"heartbeat.interval_seconds", fileCfg.Heartbeat.IntervalSeconds, &cfg.Heartbeat.IntervalSeconds},
+	} {
+		switch {
+		case n.src < 0:
+			return fmt.Errorf("%s is %d; it takes a whole number of seconds above 0", n.key, n.src)
+		case n.src > 0:
+			*n.dst = n.src
+		}
 	}
 	if fileCfg.Log.FilePath != "" {
 		cfg.Log.FilePath = fileCfg.Log.FilePath
 	}
 	if fileCfg.Log.Level != "" {
-		cfg.Log.Level = fileCfg.Log.Level
+		level, err := parseLevel(fileCfg.Log.Level)
+		if err != nil {
+			return fmt.Errorf("log.level: %w", err)
+		}
+		cfg.Log.Level = level
 	}
 	cfg.Log.ToConsole = fileCfg.Log.ToConsole
 	cfg.Log.ToFile = fileCfg.Log.ToFile
+	return nil
 }
 
-// applyEnvOverrides applies environment variable overrides onto cfg.
-func applyEnvOverrides(cfg *Config) {
+// applyEnvOverrides applies environment variable overrides onto cfg. An empty
+// variable counts as unset; a value it cannot use is refused (AG-OPS-15).
+func applyEnvOverrides(cfg *Config) error {
 	// The variable names are not derivable from the field names — AIManager's
 	// URL is read from ACTIONGENERATOR_AI_MANAGER_URL while its key comes from
 	// the plain AIMANAGER_INTERNAL_SERVICE_KEY — so each pair is named here
@@ -224,34 +246,69 @@ func applyEnvOverrides(cfg *Config) {
 			svc.dst.InternalServiceKey = key
 		}
 	}
-	if timeoutStr := os.Getenv("ACTIONGENERATOR_AI_TIMEOUT_SECONDS"); timeoutStr != "" {
-		if v, err := strconv.Atoi(timeoutStr); err == nil && v > 0 {
-			cfg.AI.TimeoutSeconds = v
+	for _, n := range []struct {
+		env     string
+		dst     *int
+		zeroOff bool // 0 is a value: the JS budget switched off (AG-OPS-03)
+	}{
+		{"ACTIONGENERATOR_AI_TIMEOUT_SECONDS", &cfg.AI.TimeoutSeconds, false},
+		{"ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS", &cfg.AI.JSExecTimeoutSeconds, true},
+		{"ACTIONGENERATOR_HEARTBEAT_INTERVAL_SECONDS", &cfg.Heartbeat.IntervalSeconds, false},
+	} {
+		v := os.Getenv(n.env)
+		if v == "" {
+			continue
 		}
-	}
-	if jsTimeout := os.Getenv("ACTIONGENERATOR_JS_EXEC_TIMEOUT_SECONDS"); jsTimeout != "" {
-		// >= 0: zero is the meaningful value "no guard", distinct from unparseable.
-		if n, err := strconv.Atoi(jsTimeout); err == nil && n >= 0 {
-			cfg.AI.JSExecTimeoutSeconds = n
+		s, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || s < 0 || (s == 0 && !n.zeroOff) {
+			want := "a whole number of seconds above 0"
+			if n.zeroOff {
+				want = "a whole number of seconds, or 0 to switch the guard off"
+			}
+			return fmt.Errorf("%s=%q cannot be used: it takes %s", n.env, v, want)
 		}
-	}
-	if interval := os.Getenv("ACTIONGENERATOR_HEARTBEAT_INTERVAL_SECONDS"); interval != "" {
-		if n, err := strconv.Atoi(interval); err == nil && n > 0 {
-			cfg.Heartbeat.IntervalSeconds = n
-		}
+		*n.dst = s
 	}
 	if logPath := os.Getenv("ACTIONGENERATOR_LOG_FILE"); logPath != "" {
 		cfg.Log.FilePath = logPath
 	}
-	if logConsole := os.Getenv("ACTIONGENERATOR_LOG_TO_CONSOLE"); logConsole != "" {
-		cfg.Log.ToConsole = logConsole == "true" || logConsole == "1"
-	}
-	if logFile := os.Getenv("ACTIONGENERATOR_LOG_TO_FILE"); logFile != "" {
-		cfg.Log.ToFile = logFile == "true" || logFile == "1"
+	for _, b := range []struct {
+		env string
+		dst *bool
+	}{
+		{"ACTIONGENERATOR_LOG_TO_CONSOLE", &cfg.Log.ToConsole},
+		{"ACTIONGENERATOR_LOG_TO_FILE", &cfg.Log.ToFile},
+	} {
+		v := os.Getenv(b.env)
+		if v == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1":
+			*b.dst = true
+		case "false", "0":
+			*b.dst = false
+		default:
+			return fmt.Errorf("%s=%q cannot be used: it takes true, false, 1 or 0", b.env, v)
+		}
 	}
 	if logLevel := os.Getenv("ACTIONGENERATOR_LOG_LEVEL"); logLevel != "" {
-		cfg.Log.Level = logLevel
+		level, err := parseLevel(logLevel)
+		if err != nil {
+			return fmt.Errorf("ACTIONGENERATOR_LOG_LEVEL: %w", err)
+		}
+		cfg.Log.Level = level
 	}
+	return nil
+}
+
+// parseLevel reads a log level in any case and returns it in upper case.
+func parseLevel(v string) (string, error) {
+	switch l := strings.ToUpper(strings.TrimSpace(v)); l {
+	case "DEBUG", "INFO", "WARN", "ERROR":
+		return l, nil
+	}
+	return "", fmt.Errorf("%q cannot be used: it takes DEBUG, INFO, WARN or ERROR", v)
 }
 
 func getEnv(key, defaultValue string) string {
