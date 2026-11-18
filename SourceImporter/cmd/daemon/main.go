@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"tachyonik/lib/aimwatcher"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
+	"tachyonik/lib/reload"
 	"tachyonik/lib/systemmanager"
 	"tachyonik/sourceimporter/internal/aiimporter"
 	"tachyonik/sourceimporter/internal/aimanager"
@@ -149,18 +151,48 @@ func main() {
 // shutdown, which would fire when this function returns instead of when the
 // daemon stops. It is never nil, so the caller can defer it unconditionally.
 func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, aiMgrClient *aimanager.Client, assetManagerClient *assetmanager.Client, chatClient codegen.ChatClient) (*aiimporter.AIImporter, *importer.Revisit, func()) {
+	// Generation requests made before this moment are left behind by an
+	// earlier run.
+	startedAt := time.Now()
 	revisitImport := &importer.Revisit{}
-	closeWatcher := func() {}
 
 	aiImp := aiimporter.New(rscManagerClient, aiMgrClient, assetManagerClient, chatClient, cfg)
 	aiImp.SetChatClientFactory(buildChatClient)
-	if err := aiImp.LoadRules(); err != nil {
-		logger.Warnf("Failed to load import rules: %v", err)
-	} else {
-		// Before the rule watcher starts: a request still standing now will
-		// get no announcement any more.
-		aiImp.ClearStandingRequests()
+
+	// The import rules and their routines. Loaded now, and again on every
+	// reconnect to AIManager and after a feed import; a load that fails is
+	// tried again every 30 s until one succeeds. The first load that succeeds
+	// clears the generation requests an earlier run left standing.
+	var requestsCleared atomic.Bool
+	loadRules := func() error {
+		if err := aiImp.LoadRules(); err != nil {
+			return err
+		}
+		if requestsCleared.CompareAndSwap(false, true) {
+			aiImp.ClearStandingRequests(startedAt)
+		}
+		return nil
 	}
+	loadedAtStartup := true
+	if err := loadRules(); err != nil {
+		logger.Errorf("Failed to load import rules, trying again every %s: %v", reload.DefaultRetry, err)
+		loadedAtStartup = false
+	}
+	// A later load may import what had no routine or failed before: it
+	// requests both for the next poll.
+	ruleLoader := reload.New("the import rules", func() error {
+		if err := loadRules(); err != nil {
+			return err
+		}
+		revisitImport.RulesReloaded()
+		return nil
+	})
+	ruleLoader.Start()
+	if !loadedAtStartup {
+		// Also when AIManager's WebSocket stays down while its API is back.
+		time.AfterFunc(reload.DefaultRetry, ruleLoader.Request)
+	}
+	closeWatcher := ruleLoader.Stop
 	if chatClient == nil {
 		logger.Info("AI importer initialized: no AI configured, code generation disabled; existing import routines will still be applied")
 	}
@@ -210,7 +242,7 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 	aimw.Start()
 	// Closed with the daemon, not when this function returns: a deferred
 	// Close here stopped the watcher right after startup.
-	closeWatcher = func() { _ = aimw.Close() }
+	closeWatcher = func() { ruleLoader.Stop(); _ = aimw.Close() }
 	logger.Info("AIManager settings watcher started")
 
 	// Generate missing JS code on startup. This requires an AI chat
@@ -231,7 +263,9 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 
 	// Start import rule watcher. FEED_IMPORTED triggers a full
 	// LoadRules() rebuild plus module-settings refresh — see
-	// SourceAnalyser's daemon for the rationale.
+	// SourceAnalyser's daemon for the rationale. The watcher calls it on
+	// every (re)connect as well, which loads what a connection that was down
+	// has missed, and the rules a startup without AIManager could not load.
 	irw, err := importrulewatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, func(event importrulewatcher.RuleChangeEvent) {
 		aiImp.HandleRuleChange(event)
 		// A changed/created rule may match resources previously parked in
@@ -245,11 +279,8 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 		revisitImport.RuleChanged(ruleType)
 	}, func() {
 		logger.Info("FEED_IMPORTED: reloading import rules + module settings")
-		if err := aiImp.LoadRules(); err != nil {
-			logger.Errorf("Failed to reload import rules after feed import: %v", err)
-		}
 		refreshModuleSettings()
-		revisitImport.RulesReloaded()
+		ruleLoader.Request()
 	})
 	if err != nil {
 		logger.Errorf("Failed to create import rule watcher: %v", err)
@@ -260,6 +291,7 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 		// leave it deaf to every later rule change. The caller owns
 		// the lifetime.
 		closeWatcher = func() {
+			ruleLoader.Stop()
 			_ = aimw.Close()
 			if cerr := irw.Close(); cerr != nil {
 				logger.Warnf("Import rule watcher close: %v", cerr)
