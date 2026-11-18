@@ -354,7 +354,9 @@ passed: SourceImporter then names it the rule's active routine as it clears the
 request, and loads it from AIManager's update like any other change. A routine
 that was not asked to become active is stored and waits to be picked; the
 active one stays in use. Only at start-up, for a rule with no routine at all,
-is a newly generated routine used at once.
+is a newly generated routine used at once. A generation request still standing at start-up — cut off by a stop, or made
+while SourceImporter was not running — gets no announcement any more, so it is
+cleared then with that reason, which the rule dialog shows; request it again.
 
 A new active routine applies to the next imports. Sources already imported are
 imported again only when the rule's **version** changes (see [Two different "importer versions"](#two-different-importer-versions)).

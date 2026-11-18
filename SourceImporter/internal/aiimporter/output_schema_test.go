@@ -18,9 +18,9 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"tachyonik/lib/aicode"
 	"testing"
 
+	"tachyonik/lib/aicode"
 	"tachyonik/lib/apicontract"
 	"tachyonik/sourceimporter/internal/aimanager"
 	"tachyonik/sourceimporter/internal/config"

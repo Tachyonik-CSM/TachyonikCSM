@@ -156,6 +156,10 @@ func setupAIImporter(cfg *config.Config, rscManagerClient *rscmanager.Client, ai
 	aiImp.SetChatClientFactory(buildChatClient)
 	if err := aiImp.LoadRules(); err != nil {
 		logger.Warnf("Failed to load import rules: %v", err)
+	} else {
+		// Before the rule watcher starts: a request still standing now will
+		// get no announcement any more.
+		aiImp.ClearStandingRequests()
 	}
 	if chatClient == nil {
 		logger.Info("AI importer initialized: no AI configured, code generation disabled; existing import routines will still be applied")
