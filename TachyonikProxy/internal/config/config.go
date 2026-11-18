@@ -28,6 +28,7 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+	"tachyonik/lib/settings"
 )
 
 // systemConfigPath is the canonical system-wide config location, matching
@@ -249,8 +250,10 @@ func Load() (*Config, error) {
 // so a subsequent SaveConfig lands in the right place.
 //
 // It refuses a configuration it cannot use: a file that exists but cannot be
-// read or parsed, and a connection_mode other than outbound or inbound (the
-// case does not matter). Running on defaults instead would start a proxy
+// read or parsed, a connection_mode other than outbound or inbound (the
+// case does not matter), and a log level other than DEBUG, INFO, WARN or
+// ERROR (any case) from the file or TACHYONIKPROXY_LOG_LEVEL; every such
+// value is reported at once. Running on defaults instead would start a proxy
 // with neither its certificates nor its pairing. A key it does not know is
 // only reported (UnknownKeys), see there.
 func LoadFrom(configPath string) (*Config, error) {
@@ -294,6 +297,11 @@ func LoadFrom(configPath string) (*Config, error) {
 		cfg.baseDir = abs
 	}
 
+	// Collects every value that cannot be used — the log level, the
+	// connection mode — and stops the proxy with the whole list below.
+	r := settings.NewReader(configPath)
+	defaultLevel := cfg.Log.Level
+
 	fileData, readErr := os.ReadFile(configPath)
 	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
 		return nil, fmt.Errorf("configuration file %s cannot be read: %w", configPath, readErr)
@@ -302,6 +310,11 @@ func LoadFrom(configPath string) (*Config, error) {
 		if err := yaml.Unmarshal(fileData, cfg); err != nil {
 			return nil, fmt.Errorf("configuration file %s cannot be used: %w", configPath, err)
 		}
+		// The file is decoded over the defaults, so its level is checked
+		// here; an empty one keeps the default.
+		fileLevel := cfg.Log.Level
+		cfg.Log.Level = defaultLevel
+		r.FileLevel("log.level", fileLevel, &cfg.Log.Level)
 		cfg.unknownKeys = unknownKeys(fileData)
 		for _, k := range cfg.unknownKeys {
 			log.Printf("Warning: %s: unknown setting ignored (%s)", configPath, k)
@@ -326,17 +339,19 @@ func LoadFrom(configPath string) (*Config, error) {
 	if host := os.Getenv("TACHYONIKPROXY_HOST"); host != "" {
 		cfg.Server.Host = host
 	}
-	if level := os.Getenv("TACHYONIKPROXY_LOG_LEVEL"); level != "" {
-		cfg.Log.Level = level
-	}
+	r.Level("TACHYONIKPROXY_LOG_LEVEL", &cfg.Log.Level)
 
 	// The connection mode decides which certificates the proxy needs and
 	// whether it dials or listens; anything else used to be read as outbound.
 	mode := strings.ToLower(strings.TrimSpace(cfg.ConnectionMode))
 	if mode != "" && mode != ConnectionOutbound && mode != ConnectionInbound {
-		return nil, fmt.Errorf("connection_mode in %s is %q; it must be %q or %q", configPath, cfg.ConnectionMode, ConnectionOutbound, ConnectionInbound)
+		r.Add(fmt.Errorf("connection_mode in %s is %q; it must be %q or %q", configPath, cfg.ConnectionMode, ConnectionOutbound, ConnectionInbound))
 	}
 	cfg.ConnectionMode = mode
+
+	if err := r.Err(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }

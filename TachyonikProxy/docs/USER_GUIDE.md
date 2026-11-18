@@ -749,7 +749,7 @@ These override values from config.yaml:
 | `TACHYONIKPROXY_CONFIG` | Path to config file (default: `./config.yaml`) |
 | `TACHYONIKPROXY_PORT` | Server port |
 | `TACHYONIKPROXY_HOST` | Server bind address |
-| `TACHYONIKPROXY_LOG_LEVEL` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `TACHYONIKPROXY_LOG_LEVEL` | Log level: `DEBUG`, `INFO`, `WARN` or `ERROR`, in any case; any other value stops the proxy at startup |
 
 ---
 

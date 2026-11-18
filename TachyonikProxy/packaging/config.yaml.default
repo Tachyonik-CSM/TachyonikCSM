@@ -20,7 +20,8 @@ log:
   file_path: "/var/log/tachyonik/toolproxy.log"
   to_console: false
   to_file: true
-  level: INFO
+  level: INFO   # DEBUG, INFO, WARN or ERROR, any case; any other value (here or in
+                # TACHYONIKPROXY_LOG_LEVEL) stops the proxy at startup
 
 tools: []
 

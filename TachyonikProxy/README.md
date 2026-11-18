@@ -167,7 +167,7 @@ log:
   file_path: "./tachyonikproxy.log"
   to_console: true
   to_file: true
-  level: INFO  # One of DEBUG, INFO, WARN, ERROR
+  level: INFO  # One of DEBUG, INFO, WARN, ERROR, any case; any other value stops the proxy
 
 # Inbound (reverse-connect) mode is set automatically by `enroll --listen`
 # connection_mode: "outbound"  # or "inbound"
@@ -206,7 +206,7 @@ Environment variables override configuration file values:
 | `TACHYONIKPROXY_CONFIG`   | Path to the config file                          | auto-detect (see above) |
 | `TACHYONIKPROXY_PORT`     | Listening port (outbound) or health port (inbound) | `9100`           |
 | `TACHYONIKPROXY_HOST`     | Listening host                                   | `0.0.0.0`          |
-| `TACHYONIKPROXY_LOG_LEVEL`| Log level (DEBUG, INFO, WARN, ERROR)             | `INFO`             |
+| `TACHYONIKPROXY_LOG_LEVEL`| Log level: DEBUG, INFO, WARN or ERROR, in any case | `INFO`           |
 
 ### Configuration Priority
 
@@ -226,7 +226,14 @@ launchd and the Windows service manager keep — when:
 - it cannot be parsed, or a value has the wrong kind (a word where a number
   belongs), with the line;
 - `connection_mode` is neither `outbound` nor `inbound` (the case does not
-  matter; unset means outbound).
+  matter; unset means outbound);
+- the log level, from `log.level` or `TACHYONIKPROXY_LOG_LEVEL`, is not
+  DEBUG, INFO, WARN or ERROR (the case does not matter; an empty variable
+  counts as unset).
+
+Every such value is listed at once. Before 2026-11-18 an unknown log level fell
+back to INFO without a word, so check a deployment's `TACHYONIKPROXY_LOG_LEVEL`
+when upgrading.
 
 Running on the defaults instead would start a proxy without its certificates
 and pairing. A missing file is still a fresh install: the defaults apply until
