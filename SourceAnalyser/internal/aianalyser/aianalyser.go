@@ -496,3 +496,31 @@ func (a *AIAnalyser) RuleCount() int {
 	defer a.mu.RUnlock()
 	return len(a.executors)
 }
+
+// interruptedRequestReason is what a generation request still standing at
+// startup is cleared with.
+const interruptedRequestReason = "SourceAnalyser was restarted before it could handle this generation request; request it again"
+
+// ClearStandingRequests clears every generation request still standing at
+// startup. A request is handled when its rule's change is announced, so one
+// that is still set now was either cut off by a stop — an AI call is not
+// waited for — or asked for while SourceAnalyser was not running. No announcement
+// will come for it any more, and the rule dialog would say "generating" for
+// good. Call it after LoadRules, before the rule watcher starts, so a request made
+// from then on is not mistaken for one.
+func (a *AIAnalyser) ClearStandingRequests() {
+	a.mu.RLock()
+	var standing []*aimanager.AnalysisRule
+	for _, rule := range a.rules {
+		if rule.GenerateRequestedAt != nil {
+			standing = append(standing, rule)
+		}
+	}
+	a.mu.RUnlock()
+	for _, rule := range standing {
+		logger.Warnf("Clearing the generation request of analysis rule %d (%s): %s", rule.ID, rule.Type, interruptedRequestReason)
+		if err := a.aiMgrClient.ClearGenerateRequest(rule.ID, interruptedRequestReason, 0); err != nil {
+			logger.Errorf("Failed to clear the generation request of analysis rule %d: %v", rule.ID, err)
+		}
+	}
+}

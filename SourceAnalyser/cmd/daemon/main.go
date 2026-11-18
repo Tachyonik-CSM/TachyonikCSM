@@ -219,6 +219,9 @@ func runDaemon(cfg *config.Config) {
 			logger.Errorf("Failed to load analysis rules: %v", err)
 		} else {
 			logger.Infof("AIAnalyser loaded: %d rules (%d with existing JS code)", len(ai.Rules()), ai.RuleCount())
+			// Before the rule watcher starts: a request still standing now
+			// will get no announcement any more.
+			ai.ClearStandingRequests()
 		}
 
 		a.SetAIAnalyser(ai)
