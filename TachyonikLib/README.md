@@ -13,7 +13,7 @@ replace tachyonik/lib => ../TachyonikLib
 
 | Package | Purpose |
 |---------|---------|
-| `logger` | Small leveled logger (DEBUG/INFO/WARN/ERROR) writing to console and/or file, with package-level helpers. |
+| `logger` | Small leveled logger (DEBUG/INFO/WARN/ERROR) writing to console and/or file, with package-level helpers. `Startup(module, version)` writes the line every module logs first: `Starting Tachyonik <Module> <version> (<go version>, <os>/<arch>)`. |
 | `heartbeat` | Sends periodic liveness signals from a daemon (no HTTP server of its own) to SystemManager. Parameterized via `heartbeat.Config{ServiceName, …}`. |
 | `aipick` | Decides which AI generates a routine, at the moment it is generated: the rule's own AI, otherwise the module's current default as AIManager reports it now, otherwise (AIManager unreachable) the AI loaded last. A `Choice` describes itself for errors and logs, e.g. `AI "claude opus 5" (id 6, anthropic, model claude-opus-5; module default)`, never with its URL or key. Used by every module that generates code. |
 | `aimwatcher` | Maintains one WebSocket connection to AIManager and dispatches analysis-rule changes, bulk feed imports, and module-AI-setting updates to caller-registered handlers, reconnecting automatically. |
