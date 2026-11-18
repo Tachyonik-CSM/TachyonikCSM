@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"tachyonik/lib/aimwatcher"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
+	"tachyonik/lib/reload"
 	"tachyonik/lib/systemmanager"
 	"tachyonik/sourceanalyser/internal/aianalyser"
 	"tachyonik/sourceanalyser/internal/aimanager"
@@ -159,6 +161,9 @@ func runHelp() {
 
 // runDaemon starts the daemon with AIAnalyser, analysis rule watcher, and polling loop.
 func runDaemon(cfg *config.Config) {
+	// Generation requests made before this moment are left behind by an
+	// earlier run.
+	startedAt := time.Now()
 	logger.Infof("Version: %s", version.Version)
 	logger.Info("Configuration loaded:")
 	logger.Infof("  AIManager URL: %s", cfg.AIManager.URL)
@@ -215,13 +220,41 @@ func runDaemon(cfg *config.Config) {
 		ai := aianalyser.New(aiMgrClient, chatClient, cfg)
 		ai.SetChatClientFactory(buildChatClient)
 
-		if err := ai.LoadRules(); err != nil {
-			logger.Errorf("Failed to load analysis rules: %v", err)
-		} else {
+		// The analysis rules and their routines. Loaded now, and again on
+		// every reconnect to AIManager and after a feed import; a load that
+		// fails is tried again every 30 s until one succeeds. The first load
+		// that succeeds clears the generation requests an earlier run left
+		// standing.
+		var requestsCleared atomic.Bool
+		loadRules := func() error {
+			if err := ai.LoadRules(); err != nil {
+				return err
+			}
 			logger.Infof("AIAnalyser loaded: %d rules (%d with existing JS code)", len(ai.Rules()), ai.RuleCount())
-			// Before the rule watcher starts: a request still standing now
-			// will get no announcement any more.
-			ai.ClearStandingRequests()
+			if requestsCleared.CompareAndSwap(false, true) {
+				ai.ClearStandingRequests(startedAt)
+			}
+			return nil
+		}
+		loadedAtStartup := true
+		if err := loadRules(); err != nil {
+			logger.Errorf("Failed to load analysis rules, trying again every %s: %v", reload.DefaultRetry, err)
+			loadedAtStartup = false
+		}
+		// A later load may identify resources left Unsupported meanwhile:
+		// it requests a re-analysis on the next poll.
+		ruleLoader := reload.New("the analysis rules", func() error {
+			if err := loadRules(); err != nil {
+				return err
+			}
+			a.RequestRevisit()
+			return nil
+		})
+		ruleLoader.Start()
+		defer ruleLoader.Stop()
+		if !loadedAtStartup {
+			// Also when AIManager's WebSocket stays down while its API is back.
+			time.AfterFunc(reload.DefaultRetry, ruleLoader.Request)
 		}
 
 		a.SetAIAnalyser(ai)
@@ -287,7 +320,10 @@ func runDaemon(cfg *config.Config) {
 		// The FEED_IMPORTED callback runs a full LoadRules() rebuild — the import
 		// wipes and reinserts rules + routines, so the in-memory rule/executor
 		// maps are stale until rebuilt. It also refreshes module settings because
-		// the feed carries the system prompt and AI selection too.
+		// the feed carries the system prompt and AI selection too. The watcher
+		// calls it on every (re)connect as well, which loads what a connection
+		// that was down has missed, and the rules a startup without AIManager
+		// could not load.
 		watcher := aimwatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, aimwatcher.Handlers{
 			ModuleName: "sourceanalyser",
 			OnRuleChange: func(event aimwatcher.RuleChangeEvent) {
@@ -298,13 +334,8 @@ func runDaemon(cfg *config.Config) {
 			},
 			OnFeedImported: func() {
 				logger.Info("FEED_IMPORTED: reloading analysis rules + module settings")
-				if err := ai.LoadRules(); err != nil {
-					logger.Errorf("Failed to reload analysis rules after feed import: %v", err)
-				} else {
-					logger.Infof("Analysis rules reloaded: %d rules (%d executors)", len(ai.Rules()), ai.RuleCount())
-				}
 				refreshModuleSettings()
-				a.RequestRevisit()
+				ruleLoader.Request()
 			},
 			OnModuleSettingChange: refreshModuleSettings,
 		})

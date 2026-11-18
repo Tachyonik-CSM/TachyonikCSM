@@ -311,9 +311,14 @@ Edit Analysis Rule dialog) — when it passed: SourceAnalyser then names it the
 rule's active routine as it clears the request, and loads it from AIManager's
 update like any other change. A routine that was not asked to become active is
 stored and waits to be picked; the active one stays in use. Only at start-up,
-for a rule with no routine at all, is a newly generated routine used at once. A generation request still standing at start-up — cut off by a stop, or made
-while SourceAnalyser was not running — gets no announcement any more, so it is
-cleared then with that reason, which the rule dialog shows; request it again.
+for a rule with no routine at all, is a newly generated routine used at once. The rules are loaded again on
+every reconnect to AIManager. If AIManager can't be reached at start-up,
+SourceAnalyser starts without rules and tries again every 30 seconds and on every
+connect. Once the rules are loaded for the first time, a generation request
+made before the start and still standing — cut off by a stop, or made while
+SourceAnalyser was not running — gets no announcement any more, so it is cleared
+then with that reason, which the rule dialog shows; request it again. A request
+made after the start is left alone.
 
 ### A routine
 
