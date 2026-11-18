@@ -94,28 +94,73 @@ func TestCreateActionRejectsPlainOK(t *testing.T) {
 	}
 }
 
-// ExistingActionID is a filter over the list call, not an endpoint of its own.
-func TestExistingActionID(t *testing.T) {
-	c, got := serve(t, http.StatusOK, `{"actions":[{"id":1,"title":"Existing"}]}`)
+// GetRuleActions sorts an owner's actions of one rule out of the list call:
+// the open ones newest first, and whether an uncleared Done one holds the rule
+// back. The title plays no part, and other rules' and owners' actions are left
+// out.
+func TestGetRuleActions(t *testing.T) {
+	c, got := serve(t, http.StatusOK, `{"actions":[
+		{"id":1,"userId":52,"title":"3 hosts","status":"New","actionRuleId":7},
+		{"id":4,"userId":52,"title":"4 hosts","status":"InProgress","actionRuleId":7},
+		{"id":2,"userId":52,"title":"done","status":"Done","actionRuleId":7,"clearedAt":"2026-11-18T10:00:00Z"},
+		{"id":3,"userId":52,"title":"3 hosts","status":"New","actionRuleId":8},
+		{"id":5,"userId":52,"title":"3 hosts","status":"New"}]}`)
 
-	id, err := c.ExistingActionID(52, "Existing")
+	ra, err := c.GetRuleActions(52, 7)
 	if err != nil {
-		t.Fatalf("ExistingActionID: %v", err)
+		t.Fatalf("GetRuleActions: %v", err)
 	}
-	// The id, not just "yes": the caller refreshes that action's option set.
-	if id != 1 {
-		t.Errorf("id = %d, want 1", id)
+	if got.path != "/api/actions" || got.query != "userId=52" {
+		t.Errorf("request = %s?%s, want the list call", got.path, got.query)
 	}
-	if got.path != "/api/actions" {
-		t.Errorf("path = %q — ExistingActionID should reuse the list endpoint", got.path)
+	if len(ra.Open) != 2 || ra.Open[0].ID != 4 || ra.Open[1].ID != 1 {
+		t.Errorf("open = %v, want 4 then 1", ra.Open)
+	}
+	if ra.DoneUncleared {
+		t.Error("a cleared Done action was taken as holding the rule back")
 	}
 
-	missing, err := c.ExistingActionID(52, "Not there")
-	if err != nil {
-		t.Fatalf("ExistingActionID: %v", err)
+	c, _ = serve(t, http.StatusOK, `{"actions":[{"id":2,"userId":52,"status":"Done","actionRuleId":7}]}`)
+	if ra, _ := c.GetRuleActions(52, 7); !ra.DoneUncleared || len(ra.Open) != 0 {
+		t.Errorf("rule actions = %+v, want an uncleared Done and nothing open", ra)
 	}
-	if missing != 0 {
-		t.Errorf("an absent action reported id %d, want 0", missing)
+}
+
+func TestRefreshAction(t *testing.T) {
+	c, got := serve(t, http.StatusOK, `{"changed":true}`)
+	hidden := []int64{3}
+	changed, err := c.RefreshAction(9, CreateActionRequest{Title: "5 hosts", Type: "Fix", Description: "d", Priority: 60, HiddenOptions: &hidden})
+	if err != nil || !changed {
+		t.Fatalf("RefreshAction: changed=%v err=%v", changed, err)
+	}
+	if got.method != "POST" || got.path != "/api/internal/actions/9/refresh" {
+		t.Errorf("request = %s %s", got.method, got.path)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(got.body), &payload); err != nil {
+		t.Fatalf("body was not JSON: %s", got.body)
+	}
+	if payload["title"] != "5 hosts" || payload["priority"] != float64(60) || payload["hiddenOptions"] == nil {
+		t.Errorf("payload = %v", payload)
+	}
+	if _, ok := payload["status"]; ok {
+		t.Error("the refresh sent a status: the status is the user's")
+	}
+}
+
+func TestClearDoneActionsByRule(t *testing.T) {
+	c, got := serve(t, http.StatusOK, `{"cleared":2,"clearedIds":[1,2]}`)
+	n, err := c.ClearDoneActionsByRule(7, 0)
+	if err != nil || n != 2 {
+		t.Fatalf("ClearDoneActionsByRule: n=%d err=%v", n, err)
+	}
+	if got.path != "/api/internal/actions/clear-done-by-rule" {
+		t.Errorf("path = %q", got.path)
+	}
+	var payload map[string]int64
+	_ = json.Unmarshal([]byte(got.body), &payload)
+	if payload["actionRuleId"] != 7 || payload["userId"] != 0 {
+		t.Errorf("payload = %v", payload)
 	}
 }
 
@@ -124,7 +169,7 @@ func TestExistingActionID(t *testing.T) {
 func TestDeleteNewActionsByRule(t *testing.T) {
 	c, got := serve(t, http.StatusOK, `{"deleted":3,"deletedIds":[1,2,3]}`)
 
-	n, err := c.DeleteNewActionsByRule(52, 7)
+	n, err := c.DeleteNewActionsByRule(52, 7, 0)
 	if err != nil {
 		t.Fatalf("DeleteNewActionsByRule: %v", err)
 	}
@@ -141,6 +186,17 @@ func TestDeleteNewActionsByRule(t *testing.T) {
 	}
 	if payload["userId"] != 52 || payload["actionRuleId"] != 7 {
 		t.Errorf("payload = %v", payload)
+	}
+	if _, ok := payload["exceptActionId"]; ok {
+		t.Error("exceptActionId sent although none was asked for")
+	}
+
+	if _, err := c.DeleteNewActionsByRule(52, 7, 9); err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal([]byte(got.body), &payload)
+	if payload["exceptActionId"] != 9 {
+		t.Errorf("payload = %v, want exceptActionId 9", payload)
 	}
 }
 
@@ -172,7 +228,7 @@ func TestRejectsNonOK(t *testing.T) {
 	if _, err := c.GetActionsForUser(52); err == nil {
 		t.Error("a 500 was accepted")
 	}
-	if _, err := c.DeleteNewActionsByRule(52, 7); err == nil {
+	if _, err := c.DeleteNewActionsByRule(52, 7, 0); err == nil {
 		t.Error("a 500 was accepted by DeleteNewActionsByRule")
 	}
 }

@@ -91,7 +91,9 @@ byte could split a character and store an invalid sequence.*
 
 **AG-IF-14** The request to ActionManager MUST carry, besides the action's
 fields, the owner, the rule's id, and the hidden options — or no hidden
-options at all when the routine declares no conditions.
+options at all when the routine declares no conditions. An update of an open
+action (AG-EVAL-09) MUST carry its title, type, description, priority and
+hidden options, and no status or assignment.
 *Reason: the rule's id is what withdrawal and the Action Guide's options are
 found by. "No conditions" leaves every option shown, the behaviour of actions
 from before conditions existed.*

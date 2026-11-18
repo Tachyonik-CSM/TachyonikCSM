@@ -210,22 +210,6 @@ func (g *Generator) ProcessRules() error {
 	return nil
 }
 
-// refreshHiddenOptions writes the freshly evaluated option set onto an action
-// that already exists.
-//
-// Best-effort: the action is correct either way, and failing an evaluation pass
-// over an option list would be a poor trade. ActionManager skips the write and
-// the broadcast when the set is unchanged, which is the usual case.
-func (g *Generator) refreshHiddenOptions(actionID int64, req actionmanager.CreateActionRequest) {
-	var hidden []int64
-	if req.HiddenOptions != nil {
-		hidden = *req.HiddenOptions
-	}
-	if err := g.actionMgr.SetHiddenOptions(actionID, hidden); err != nil {
-		logger.Warnf("Could not refresh the option set of action %d: %v", actionID, err)
-	}
-}
-
 // ProcessRuleForUser evaluates a single action rule for a single user and
 // creates actions if the rule's JS routine produces any. Returns the number
 // of actions created.
@@ -275,44 +259,21 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 			logger.Debugf("Rule %d is on-demand; leaving its actions for user %d alone", ruleID, userID)
 			return 0, nil
 		}
-		if n, derr := g.actionMgr.DeleteNewActionsByRule(userID, ruleID); derr != nil {
-			logger.Warnf("Stale-action cleanup failed for user %d rule %d: %v", userID, ruleID, derr)
-		} else if n > 0 {
-			logger.Infof("Deleted %d stale action(s) for user %d rule %d (rule no longer matches)", n, userID, ruleID)
-		}
+		g.withdraw(userID, ruleID)
 		return 0, nil
 	}
 
-	actionsCreated := 0
-	for _, actionReq := range actions {
-		existingID, err := g.actionMgr.ExistingActionID(userID, actionReq.Title)
-		if err != nil {
-			logger.Errorf("Error checking if action exists for user %d: %v", userID, err)
-			continue
-		}
-		if existingID != 0 {
-			// The action stays as it is, but which of its options apply may
-			// have changed since it was raised — the user may have installed
-			// the tool the condition asks about. This is the refresh.
-			g.refreshHiddenOptions(existingID, actionReq)
-			logger.Infof("Skipping existing action '%s' for user %d (rule %d)", actionReq.Title, userID, ruleID)
-			continue
-		}
-
-		actionReq.UserID = userID
-		ruleIDCopy := ruleID
-		actionReq.ActionRuleID = &ruleIDCopy
-
-		action, err := g.actionMgr.CreateAction(actionReq)
-		if err != nil {
-			return actionsCreated, fmt.Errorf("failed to create action for user %d: %w", userID, err)
-		}
-
-		logger.Infof("Successfully created action ID %d for user %d via trigger", action.ID, userID)
-		actionsCreated++
+	// The rule's open action is updated, or the action raised; a forced
+	// request raises it even while a Done one holds the rule back
+	// (AG-EVAL-26).
+	created, err := g.placeAction(userID, ruleID, firstAction(ruleID, actions)[0], force)
+	if err != nil {
+		return 0, err
 	}
-
-	return actionsCreated, nil
+	if created {
+		return 1, nil
+	}
+	return 0, nil
 }
 
 // countDeactivated counts the deactivated accounts among users.
@@ -368,43 +329,16 @@ func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User,
 				if !g.shouldWithdraw(ruleID, len(actions)) {
 					continue
 				}
-				if n, derr := g.actionMgr.DeleteNewActionsByRule(user.ID, ruleID); derr != nil {
-					logger.Warnf("Stale-action cleanup failed for user %d rule %d: %v", user.ID, ruleID, derr)
-				} else if n > 0 {
-					logger.Infof("Deleted %d stale action(s) for user %d rule %d (rule no longer matches)", n, user.ID, ruleID)
-				}
+				g.withdraw(user.ID, ruleID)
 				continue
 			}
 
-			for _, actionReq := range actions {
-				// Check if action already exists for this user
-				existingID, err := g.actionMgr.ExistingActionID(user.ID, actionReq.Title)
-				if err != nil {
-					logger.Errorf("Error checking if action exists for user %d: %v", user.ID, err)
-					continue
-				}
-
-				if existingID != 0 {
-					g.refreshHiddenOptions(existingID, actionReq)
-					logger.Debugf("Action '%s' already exists for user %d (%s), skipping",
-						actionReq.Title, user.ID, user.Username)
-					continue
-				}
-
-				logger.Infof("Creating action '%s' for user %d (%s) via JS rule",
-					actionReq.Title, user.ID, user.Username)
-
-				actionReq.UserID = user.ID
-				ruleIDCopy := ruleID
-				actionReq.ActionRuleID = &ruleIDCopy
-
-				action, err := g.actionMgr.CreateAction(actionReq)
-				if err != nil {
-					logger.Errorf("Failed to create action for user %d: %v", user.ID, err)
-					continue
-				}
-
-				logger.Infof("Successfully created action ID %d for user %d", action.ID, user.ID)
+			created, err := g.placeAction(user.ID, ruleID, firstAction(ruleID, actions)[0], false)
+			if err != nil {
+				logger.Errorf("%v", err)
+				continue
+			}
+			if created {
 				actionsCreated++
 			}
 		}
@@ -461,34 +395,14 @@ func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanag
 			if !g.shouldWithdraw(ruleID, len(actions)) {
 				continue
 			}
-			if n, derr := g.actionMgr.DeleteNewActionsByRuleExceptUser(ruleID, 0); derr != nil {
-				logger.Warnf("Shared stale-action cleanup failed for rule %d: %v", ruleID, derr)
-			} else if n > 0 {
-				logger.Infof("Deleted %d shared stale action(s) for rule %d (rule no longer matches)", n, ruleID)
-			}
+			g.withdrawShared(ruleID)
 			continue
 		}
 
-		for _, actionReq := range actions {
-			existingID, err := g.actionMgr.ExistingActionID(primaryID, actionReq.Title)
-			if err != nil {
-				logger.Errorf("Error checking if shared action exists (rule %d): %v", ruleID, err)
-				continue
-			}
-			if existingID != 0 {
-				g.refreshHiddenOptions(existingID, actionReq)
-				logger.Debugf("Shared action '%s' already exists under owner %d (rule %d), skipping", actionReq.Title, primaryID, ruleID)
-				continue
-			}
-			actionReq.UserID = primaryID
-			ruleIDCopy := ruleID
-			actionReq.ActionRuleID = &ruleIDCopy
-			action, err := g.actionMgr.CreateAction(actionReq)
-			if err != nil {
-				logger.Errorf("Failed to create shared action (rule %d): %v", ruleID, err)
-				continue
-			}
-			logger.Infof("Created shared action ID %d (rule %d, owner %d)", action.ID, ruleID, primaryID)
+		// Placed under the primary owner, as one action for the workspace.
+		if created, err := g.placeAction(primaryID, ruleID, firstAction(ruleID, actions)[0], false); err != nil {
+			logger.Errorf("Shared workspace: %v", err)
+		} else if created {
 			actionsCreated++
 		}
 

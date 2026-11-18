@@ -41,12 +41,28 @@ whenever the data they reason about changes. For each user it:
 2. Runs every loaded routine's `check(api)`; the routine reads what it needs —
    assets, the organisation, tools, existing actions — through `api`
 3. Calls `createAction(api)` for each rule that matches
-4. Creates the resulting action in ActionManager, unless the user already has it
-5. Withdraws the outstanding `New` actions of a rule that has stopped matching,
-   and leaves them alone for a rule that could not be decided
+4. Puts the resulting action in place in ActionManager. An action is the
+   rule's by its rule and owner, not by its title: if the user has an open
+   action of the rule (`New`, `Acknowledged`, `InProgress`), it is updated in
+   place — title, type, description, priority, options — and its status and
+   assignment stay the user's. Otherwise the action is created, unless a `Done`
+   action of the rule holds it back (see below)
+5. Withdraws the outstanding `New` actions of a rule that has stopped matching
+   and marks its `Done` actions cleared; it leaves them alone for a rule that
+   could not be decided
 
 Step 5 is what makes an action disappear once the user has done what it asked,
-rather than lingering as stale advice.
+rather than lingering as stale advice. A title that carries a number ("3 hosts
+not seen…") therefore changes in the one action rather than raising another.
+
+**A `Done` action comes back with its situation** (spec AG-EVAL-26). While the
+rule still matches, a `Done` action keeps it quiet: the user has dealt with it,
+and the data may not show that yet. Once the rule has evaluated to no action for
+that user, the `Done` action is marked cleared (`clearedAt` in ActionManager),
+and the next match raises a new action. A forced evaluation request — the user
+picking an option of type `Action` — raises it regardless. Older copies of one
+rule's open action, from before ActionManager refused them, are consolidated to
+the newest (AG-EVAL-27).
 
 **Which AI generates a routine is decided at generation time.** Before each
 generation, the module asks AIManager for its current setting. It uses the AI
@@ -521,8 +537,8 @@ Three behaviours worth knowing:
 - **A condition that throws leaves its option visible.** Hiding a step the user
   needs because a generated line was wrong is the worse failure.
 - **The set is refreshed, not frozen.** An action that already exists is not
-  re-created on a re-evaluation, so the evaluation updates its option set in
-  place; and the user dialog asks for a re-evaluation when it opens, so what it
+  re-created on a re-evaluation, so the evaluation updates its option set — with
+  its text — in place; and the user dialog asks for a re-evaluation when it opens, so what it
   offers reflects the situation now rather than when the action was raised.
 - **Validation notes, rather than rejects, a condition that answers the same way
   in every mock scenario.** Unlike `check()`, an option condition that no mock
@@ -597,11 +613,12 @@ Manager event → Watcher → 2s debounce → Generator → for each user:
                                                          which calls the managers' APIs
                                                       3. createAction(api) where it matched
                                                       4. Validate the action
-                                                      5. Create it in ActionManager,
-                                                         unless it already exists
-                                                      6. Withdraw stale New actions of
-                                                         rules that no longer match (not
-                                                         of rules left undecided)
+                                                      5. Update the rule's open action in
+                                                         ActionManager, or create it
+                                                      6. Withdraw stale New actions and
+                                                         clear Done ones of rules that no
+                                                         longer match (not of rules left
+                                                         undecided)
 ```
 
 ### Event-Driven Operation

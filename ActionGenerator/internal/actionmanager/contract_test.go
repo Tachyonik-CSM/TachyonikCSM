@@ -17,17 +17,31 @@ import (
 // The bodies and answers the client builds inline, named so the check can
 // walk them.
 type (
-	hiddenOptionsRequest struct {
-		ActionID      int64   `json:"actionId"`
+	refreshRequest struct {
+		Title         string  `json:"title"`
+		Type          string  `json:"type"`
+		Description   string  `json:"description"`
+		Priority      int     `json:"priority"`
 		HiddenOptions []int64 `json:"hiddenOptions"`
+	}
+	changedAnswer struct {
+		Changed bool `json:"changed"`
+	}
+	clearDoneRequest struct {
+		ActionRuleID int64 `json:"actionRuleId"`
+		UserID       int64 `json:"userId"`
+	}
+	clearDoneAnswer struct {
+		Cleared int `json:"cleared"`
 	}
 	actionsAnswer struct {
 		Actions []Action `json:"actions"`
 		Total   int      `json:"total"`
 	}
 	deleteByRuleRequest struct {
-		UserID       int64 `json:"userId"`
-		ActionRuleID int64 `json:"actionRuleId"`
+		UserID         int64 `json:"userId"`
+		ActionRuleID   int64 `json:"actionRuleId"`
+		ExceptActionID int64 `json:"exceptActionId"`
 	}
 	deleteByRuleSharedRequest struct {
 		ActionRuleID int64 `json:"actionRuleId"`
@@ -36,7 +50,8 @@ type (
 )
 
 var calls = []apicontract.Call{
-	{Method: "POST", Path: "/api/internal/actions/hidden-options", Request: hiddenOptionsRequest{}},
+	{Method: "POST", Path: "/api/internal/actions/{id}/refresh", Request: refreshRequest{}, Answer: changedAnswer{}},
+	{Method: "POST", Path: "/api/internal/actions/clear-done-by-rule", Request: clearDoneRequest{}, Answer: clearDoneAnswer{}},
 	{Method: "GET", Path: "/api/actions", Query: []string{"userId"}, Answer: actionsAnswer{}},
 	{Method: "POST", Path: "/api/actions", Request: CreateActionRequest{}, Answer: Action{}},
 	{Method: "POST", Path: "/api/internal/actions/delete-by-rule", Request: deleteByRuleRequest{}, Answer: deleteResponse{}},

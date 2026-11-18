@@ -17,6 +17,7 @@ package actionmanager
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"tachyonik/lib/restclient"
@@ -41,6 +42,26 @@ type Action struct {
 	Trigger     string `json:"trigger"`    // Trigger string
 	CreatedAt   string `json:"createdAt"`
 	ModifiedAt  string `json:"modifiedAt"` // ActionManager has no updatedAt
+	// ActionRuleID is the rule that raised it; nil for an action no rule
+	// raised. A rule's action is identified by its rule and owner (AG-EVAL-09).
+	ActionRuleID *int64 `json:"actionRuleId"`
+	// ClearedAt is set on a Done action once its rule evaluated to no action
+	// for the owner: it no longer holds the rule back (AG-EVAL-26).
+	ClearedAt *string `json:"clearedAt"`
+}
+
+// Open statuses: the action is still the owner's to deal with. Done is the
+// only other.
+const (
+	StatusNew          = "New"
+	StatusAcknowledged = "Acknowledged"
+	StatusInProgress   = "InProgress"
+	StatusDone         = "Done"
+)
+
+// IsOpen reports whether the action is not Done.
+func (a Action) IsOpen() bool {
+	return a.Status == StatusNew || a.Status == StatusAcknowledged || a.Status == StatusInProgress
 }
 
 // CreateActionRequest represents the request to create an action
@@ -63,18 +84,42 @@ type CreateActionRequest struct {
 	HiddenOptions *[]int64 `json:"hiddenOptions,omitempty"`
 }
 
-// SetHiddenOptions updates which of a rule's options do not apply to an action
-// that already exists.
-//
-// The action is not re-created on a re-evaluation — it is skipped as already
-// present — so without this a set decided when the action was raised would
-// still be on screen after the user installed the tool that changes it.
-func (c *Client) SetHiddenOptions(actionID int64, visible []int64) error {
-	if visible == nil {
-		visible = []int64{}
+// RefreshAction brings a rule's open action up to date with the rule's latest
+// evaluation: title, type, description, priority and the options that do not
+// apply (AG-EVAL-09). Status and assignment stay the user's. Reports whether
+// ActionManager changed anything; it writes and announces only then.
+func (c *Client) RefreshAction(actionID int64, req CreateActionRequest) (bool, error) {
+	payload := map[string]interface{}{
+		"title":       req.Title,
+		"type":        req.Type,
+		"description": req.Description,
+		"priority":    req.Priority,
 	}
-	payload := map[string]interface{}{"actionId": actionID, "hiddenOptions": visible}
-	return c.rc.JSON("POST", "/api/internal/actions/hidden-options", payload, nil, http.StatusOK)
+	if req.HiddenOptions != nil {
+		payload["hiddenOptions"] = *req.HiddenOptions
+	}
+	var result struct {
+		Changed bool `json:"changed"`
+	}
+	if err := c.rc.JSON("POST", fmt.Sprintf("/api/internal/actions/%d/refresh", actionID), payload, &result, http.StatusOK); err != nil {
+		return false, err
+	}
+	return result.Changed, nil
+}
+
+// ClearDoneActionsByRule marks a rule's Done actions of an owner (0: every
+// owner, a shared workspace) as cleared: the rule evaluated to no action, so
+// their situation has ended and the next match raises a new action
+// (AG-EVAL-26). Returns how many were marked.
+func (c *Client) ClearDoneActionsByRule(actionRuleID int64, userID int64) (int, error) {
+	payload := map[string]int64{"actionRuleId": actionRuleID, "userId": userID}
+	var result struct {
+		Cleared int `json:"cleared"`
+	}
+	if err := c.rc.JSON("POST", "/api/internal/actions/clear-done-by-rule", payload, &result, http.StatusOK); err != nil {
+		return 0, err
+	}
+	return result.Cleared, nil
 }
 
 // NewClient creates a new ActionManager API client
@@ -103,31 +148,40 @@ func (c *Client) CreateAction(req CreateActionRequest) (*Action, error) {
 	return &action, nil
 }
 
-// ActionExists reports whether the user already has an action with this title.
-// A filter over the list call rather than an endpoint of its own.
-func (c *Client) ActionExists(userID int64, title string) (bool, error) {
-	id, err := c.ExistingActionID(userID, title)
-	return id != 0, err
+// RuleActions are an owner's actions of one rule, sorted out as AG-EVAL-09
+// and -26 need them.
+type RuleActions struct {
+	// Open is the owner's open actions of the rule, newest first. Normally
+	// one; ActionManager refuses a second, but data from before it did may
+	// hold more (AG-EVAL-27).
+	Open []Action
+	// DoneUncleared is whether a Done action of the rule has not been
+	// cleared: it holds the rule back.
+	DoneUncleared bool
 }
 
-// ExistingActionID returns the id of the user's action with this title, or 0.
-//
-// The id, not just the fact: a re-evaluation that finds the action already
-// present still has to refresh which of its options apply, and that needs
-// something to address.
-func (c *Client) ExistingActionID(userID int64, title string) (int64, error) {
+// GetRuleActions returns the owner's actions of a rule. The title plays no
+// part: an action is the rule's by its rule id alone.
+func (c *Client) GetRuleActions(userID int64, actionRuleID int64) (RuleActions, error) {
 	actions, err := c.GetActionsForUser(userID)
 	if err != nil {
-		return 0, err
+		return RuleActions{}, err
 	}
-
-	for _, action := range actions {
-		if action.Title == title {
-			return action.ID, nil
+	var ra RuleActions
+	for _, a := range actions {
+		if a.ActionRuleID == nil || *a.ActionRuleID != actionRuleID || a.UserID != userID {
+			continue
+		}
+		switch {
+		case a.IsOpen():
+			ra.Open = append(ra.Open, a)
+		case a.Status == StatusDone && a.ClearedAt == nil:
+			ra.DoneUncleared = true
 		}
 	}
-
-	return 0, nil
+	// Newest first: ids grow with creation.
+	sort.Slice(ra.Open, func(i, j int) bool { return ra.Open[i].ID > ra.Open[j].ID })
+	return ra, nil
 }
 
 // deleteResponse is what both withdrawal endpoints answer with.
@@ -141,10 +195,16 @@ type deleteResponse struct {
 // iteration to garbage-collect suggestions the user hasn't touched once the
 // triggering rule stops matching the context.
 // Returns the number of actions actually deleted.
-func (c *Client) DeleteNewActionsByRule(userID int64, actionRuleID int64) (int, error) {
+//
+// exceptActionID, when not 0, is kept: the open action being updated while
+// its older copies are withdrawn (AG-EVAL-27).
+func (c *Client) DeleteNewActionsByRule(userID int64, actionRuleID int64, exceptActionID int64) (int, error) {
 	payload := map[string]int64{
 		"userId":       userID,
 		"actionRuleId": actionRuleID,
+	}
+	if exceptActionID != 0 {
+		payload["exceptActionId"] = exceptActionID
 	}
 	var result deleteResponse
 	if err := c.rc.JSON("POST", "/api/internal/actions/delete-by-rule", payload, &result, http.StatusOK); err != nil {

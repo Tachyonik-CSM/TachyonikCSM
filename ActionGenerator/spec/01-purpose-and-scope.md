@@ -96,9 +96,12 @@ tools, organisation, settings — nor carry out an action.
 on the user's request.*
 
 **AG-PUR-11** ActionGenerator MUST NOT change an action beyond creating it,
-updating its hidden options, and withdrawing it while it is `New`.
-*Reason: once a user has acknowledged, started or finished an action, it is
-theirs. ActionManager owns its life cycle.*
+updating what its rule's evaluation says about it — title, type, description,
+priority and hidden options (AG-EVAL-09) — while it is open, marking it cleared
+when it is `Done` (AG-EVAL-26), and withdrawing it while it is `New`.
+*Reason: once a user has acknowledged, started or finished an action, its
+status and assignment are theirs; the text describes the situation, which
+only the rule can tell. ActionManager owns its life cycle.*
 
 **AG-PUR-12** ActionGenerator MUST NOT decide, outside the routines, what
 advice a user gets: no rule, condition or action text is written in its code.
