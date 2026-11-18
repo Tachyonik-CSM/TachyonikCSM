@@ -5,6 +5,11 @@
 # (a misspelling), stops the service at startup with the reason on standard
 # error. Without a file, it runs on the defaults and the environment.
 #
+# A number, true/false or log-level value SourceAnalyser cannot use — here or
+# in a SOURCEANALYSER_* variable — stops it at startup with an error listing
+# every such setting and what it takes. A 0 here counts as an absent key.
+# True/false variables take true, false, 1 or 0, in any case.
+#
 # Configuration priority (highest wins):
 #   environment variables > config.yaml > built-in defaults
 #
@@ -35,23 +40,24 @@ ai_manager:
                                                             # Env: AIMANAGER_INTERNAL_SERVICE_KEY
 
 analyzer:
-  poll_interval: 5  # Seconds between polls for new sources to analyze (default: 5)
+  poll_interval: 5  # Seconds between polls for new sources to analyze, above 0 (default: 5)
                     # Env: SOURCEANALYSER_POLL_INTERVAL
   js_exec_timeout_seconds: 5  # Max seconds a single AI/feed-sourced JS analysis routine
                               # may run (load or analyze) before it is interrupted, guarding
-                              # against infinite loops / catastrophic regex. <= 0 disables.
+                              # against infinite loops / catastrophic regex. Above 0;
+                              # only SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS=0 disables it.
                               # (default: 5) — Env: SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS
   max_content_bytes: 65536  # Bytes downloaded and matched for a non-PDF source (also the
-                            # initial type-sniff read for any source). (default: 65536)
+                            # initial type-sniff read for any source). Above 0. (default: 65536)
                             # Env: SOURCEANALYSER_MAX_CONTENT_BYTES
   max_pdf_bytes: 33554432  # Max bytes of a PDF fetched for text extraction, bounding memory
-                           # on very large PDFs. (default: 33554432 = 32 MiB)
+                           # on very large PDFs. Above 0. (default: 33554432 = 32 MiB)
                            # Env: SOURCEANALYSER_MAX_PDF_BYTES
 
 # Heartbeat controls the liveness signal sent to SystemManager. SystemManager applies
 # its own grace period on top before declaring the service offline.
 heartbeat:
-  interval_seconds: 10  # Seconds between heartbeats (default: 10)
+  interval_seconds: 10  # Seconds between heartbeats, above 0 (default: 10)
                         # Env: SOURCEANALYSER_HEARTBEAT_INTERVAL_SECONDS
 
 # NOTE: to_console and to_file must be stated explicitly whenever this file
@@ -63,8 +69,8 @@ log:
   file_path: /home/tachyon/log/tachyonik-sourceanalyser.log  # Log file path (default: ./sourceanalyser.log)
                                                              # Env: SOURCEANALYSER_LOG_FILE
   to_console: false  # Write logs to stdout/stderr (built-in default: true; see NOTE above)
-                     # Env: SOURCEANALYSER_LOG_TO_CONSOLE (true/1 to enable)
+                     # Env: SOURCEANALYSER_LOG_TO_CONSOLE (true, false, 1 or 0)
   to_file: true      # Write logs to file_path (built-in default: true; see NOTE above)
-                     # Env: SOURCEANALYSER_LOG_TO_FILE (true/1 to enable)
-  level: INFO        # Log verbosity: DEBUG, INFO, WARN, ERROR (default: INFO)
+                     # Env: SOURCEANALYSER_LOG_TO_FILE (true, false, 1 or 0)
+  level: INFO        # Log verbosity: DEBUG, INFO, WARN, ERROR, any case (default: INFO)
                      # Env: SOURCEANALYSER_LOG_LEVEL

@@ -15,9 +15,9 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"strconv"
 
 	"gopkg.in/yaml.v3"
+	"tachyonik/lib/settings"
 )
 
 type Config struct {
@@ -63,7 +63,7 @@ type AnalyzerConfig struct {
 	// JSExecTimeoutSeconds bounds how long a single JS routine execution
 	// (load or analyze) may run before it is interrupted. Guards the daemon
 	// against infinite loops / catastrophic regex in AI- or feed-sourced
-	// routines. A value <= 0 disables the guard.
+	// routines. 0 disables the guard (from the environment only).
 	JSExecTimeoutSeconds int
 	// MaxContentBytes bounds the bytes downloaded and matched for a non-PDF
 	// source (and the initial sniff read for any source).
@@ -117,7 +117,9 @@ type FileConfig struct {
 // be read or parsed, or a key it does not know (a misspelt key would leave
 // its setting at the default without a word). Running on defaults the
 // operator did not mean is worse than not starting. A missing file is fine:
-// the defaults and the environment run a local development setup.
+// the defaults and the environment run a local development setup. A
+// number, true/false or log-level value it cannot use — from the file or
+// the environment — is refused as well, every one of them in one error.
 func Load() (*Config, error) {
 	// 1. Set built-in defaults
 	cfg := &Config{
@@ -171,19 +173,25 @@ func Load() (*Config, error) {
 		fileCfg = &fc
 	}
 
-	// 3. Apply config.yaml on top of defaults
+	// 3. Apply config.yaml on top of defaults, then 4. the environment on
+	// top (overrides everything). The reader collects every value that
+	// cannot be used, from both, and stops the service with the whole list.
+	r := settings.NewReader(configPath)
 	if fileCfg != nil {
-		applyFileConfig(cfg, fileCfg)
+		applyFileConfig(cfg, fileCfg, r)
 	}
-
-	// 4. Apply env var overrides on top (overrides everything)
-	applyEnvOverrides(cfg)
+	applyEnvOverrides(cfg, r)
+	if err := r.Err(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
 // applyFileConfig applies non-zero values from the parsed config.yaml onto cfg.
-func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
+// A 0 reads as an absent key (YAML cannot tell them apart); a number out of
+// bounds or an unknown log level is recorded in r.
+func applyFileConfig(cfg *Config, fileCfg *FileConfig, r *settings.Reader) {
 	if fileCfg.ResourceManager.URL != "" {
 		cfg.ResourceManager.URL = fileCfg.ResourceManager.URL
 	}
@@ -203,33 +211,26 @@ func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
 	if fileCfg.AIManager.InternalServiceKey != "" {
 		cfg.AIManager.InternalServiceKey = fileCfg.AIManager.InternalServiceKey
 	}
-	if fileCfg.Analyzer.PollInterval != 0 {
-		cfg.Analyzer.PollInterval = fileCfg.Analyzer.PollInterval
-	}
-	if fileCfg.Analyzer.JSExecTimeoutSeconds != 0 {
-		cfg.Analyzer.JSExecTimeoutSeconds = fileCfg.Analyzer.JSExecTimeoutSeconds
-	}
-	if fileCfg.Analyzer.MaxContentBytes != 0 {
-		cfg.Analyzer.MaxContentBytes = fileCfg.Analyzer.MaxContentBytes
-	}
-	if fileCfg.Analyzer.MaxPDFBytes != 0 {
-		cfg.Analyzer.MaxPDFBytes = fileCfg.Analyzer.MaxPDFBytes
-	}
-	if fileCfg.Heartbeat.IntervalSeconds > 0 {
-		cfg.Heartbeat.IntervalSeconds = fileCfg.Heartbeat.IntervalSeconds
-	}
+	// A ticker cannot run on 0 or fewer seconds, and a 0-byte limit downloads
+	// nothing to analyse, so every number here must be above 0. The JS budget
+	// can be switched off only from the environment (0), as the file cannot
+	// say 0.
+	r.FileInt("analyzer.poll_interval", fileCfg.Analyzer.PollInterval, &cfg.Analyzer.PollInterval, settings.Min(1))
+	r.FileInt("analyzer.js_exec_timeout_seconds", fileCfg.Analyzer.JSExecTimeoutSeconds, &cfg.Analyzer.JSExecTimeoutSeconds, settings.Min(1))
+	r.FileInt64("analyzer.max_content_bytes", fileCfg.Analyzer.MaxContentBytes, &cfg.Analyzer.MaxContentBytes, settings.Min(1))
+	r.FileInt64("analyzer.max_pdf_bytes", fileCfg.Analyzer.MaxPDFBytes, &cfg.Analyzer.MaxPDFBytes, settings.Min(1))
+	r.FileInt("heartbeat.interval_seconds", fileCfg.Heartbeat.IntervalSeconds, &cfg.Heartbeat.IntervalSeconds, settings.Min(1))
 	if fileCfg.Log.FilePath != "" {
 		cfg.Log.FilePath = fileCfg.Log.FilePath
 	}
-	if fileCfg.Log.Level != "" {
-		cfg.Log.Level = fileCfg.Log.Level
-	}
+	r.FileLevel("log.level", fileCfg.Log.Level, &cfg.Log.Level)
 	cfg.Log.ToConsole = fileCfg.Log.ToConsole
 	cfg.Log.ToFile = fileCfg.Log.ToFile
 }
 
-// applyEnvOverrides applies environment variable overrides onto cfg.
-func applyEnvOverrides(cfg *Config) {
+// applyEnvOverrides applies environment variable overrides onto cfg. An empty
+// variable counts as unset; a value it cannot use is recorded in r.
+func applyEnvOverrides(cfg *Config, r *settings.Reader) {
 	// ResourceManager — support both new and legacy env vars
 	if url := os.Getenv("RESOURCEMANAGER_URL"); url != "" {
 		cfg.ResourceManager.URL = url
@@ -252,43 +253,17 @@ func applyEnvOverrides(cfg *Config) {
 	if aiMgrKey := os.Getenv("AIMANAGER_INTERNAL_SERVICE_KEY"); aiMgrKey != "" {
 		cfg.AIManager.InternalServiceKey = aiMgrKey
 	}
-	if pollInterval := os.Getenv("SOURCEANALYSER_POLL_INTERVAL"); pollInterval != "" {
-		if interval, err := strconv.Atoi(pollInterval); err == nil {
-			cfg.Analyzer.PollInterval = interval
-		}
-	}
-	if t := os.Getenv("SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS"); t != "" {
-		if secs, err := strconv.Atoi(t); err == nil {
-			cfg.Analyzer.JSExecTimeoutSeconds = secs
-		}
-	}
-	if v := os.Getenv("SOURCEANALYSER_MAX_CONTENT_BYTES"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			cfg.Analyzer.MaxContentBytes = n
-		}
-	}
-	if v := os.Getenv("SOURCEANALYSER_MAX_PDF_BYTES"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			cfg.Analyzer.MaxPDFBytes = n
-		}
-	}
-	if interval := os.Getenv("SOURCEANALYSER_HEARTBEAT_INTERVAL_SECONDS"); interval != "" {
-		if n, err := strconv.Atoi(interval); err == nil && n > 0 {
-			cfg.Heartbeat.IntervalSeconds = n
-		}
-	}
+	r.Int("SOURCEANALYSER_POLL_INTERVAL", &cfg.Analyzer.PollInterval, settings.Min(1))
+	r.Int("SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS", &cfg.Analyzer.JSExecTimeoutSeconds, settings.Min(1), settings.ZeroMeansOff())
+	r.Int64("SOURCEANALYSER_MAX_CONTENT_BYTES", &cfg.Analyzer.MaxContentBytes, settings.Min(1))
+	r.Int64("SOURCEANALYSER_MAX_PDF_BYTES", &cfg.Analyzer.MaxPDFBytes, settings.Min(1))
+	r.Int("SOURCEANALYSER_HEARTBEAT_INTERVAL_SECONDS", &cfg.Heartbeat.IntervalSeconds, settings.Min(1))
 	if logPath := os.Getenv("SOURCEANALYSER_LOG_FILE"); logPath != "" {
 		cfg.Log.FilePath = logPath
 	}
-	if logConsole := os.Getenv("SOURCEANALYSER_LOG_TO_CONSOLE"); logConsole != "" {
-		cfg.Log.ToConsole = logConsole == "true" || logConsole == "1"
-	}
-	if logFile := os.Getenv("SOURCEANALYSER_LOG_TO_FILE"); logFile != "" {
-		cfg.Log.ToFile = logFile == "true" || logFile == "1"
-	}
-	if logLevel := os.Getenv("SOURCEANALYSER_LOG_LEVEL"); logLevel != "" {
-		cfg.Log.Level = logLevel
-	}
+	r.Bool("SOURCEANALYSER_LOG_TO_CONSOLE", &cfg.Log.ToConsole)
+	r.Bool("SOURCEANALYSER_LOG_TO_FILE", &cfg.Log.ToFile)
+	r.Level("SOURCEANALYSER_LOG_LEVEL", &cfg.Log.Level)
 
 	// Fall back to the ResourceManager internal service key if SystemManager key not explicitly set
 	if cfg.SystemManager.InternalServiceKey == "" {

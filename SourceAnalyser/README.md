@@ -168,7 +168,7 @@ ai_manager:
 
 analyzer:
   poll_interval: 5  # seconds between polls for new sources
-  js_exec_timeout_seconds: 5  # max seconds one JS analysis routine may run; <= 0 disables
+  js_exec_timeout_seconds: 5  # max seconds one JS analysis routine may run (above 0)
   max_content_bytes: 65536  # bytes downloaded/matched for a non-PDF source
   max_pdf_bytes: 33554432  # max bytes of a PDF fetched for text extraction (32 MiB)
 
@@ -199,15 +199,26 @@ Environment variables override configuration file values:
 | `SYSTEMMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for SystemManager (falls back to ResourceManager key) | _(empty)_ |
 | `SOURCEANALYSER_AI_MANAGER_URL` | AIManager API URL | `http://localhost:8085` |
 | `AIMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for AIManager | _(empty)_ |
-| `SOURCEANALYSER_POLL_INTERVAL` | Polling interval in seconds | `5` |
-| `SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS` | Max seconds a single JS analysis routine may run before being interrupted (guards against infinite loops / catastrophic regex in AI/feed-sourced routines); `<= 0` disables | `5` |
-| `SOURCEANALYSER_MAX_CONTENT_BYTES` | Bytes downloaded and matched for a non-PDF source (also the type-sniff read) | `65536` |
-| `SOURCEANALYSER_MAX_PDF_BYTES` | Max bytes of a PDF fetched for text extraction | `33554432` |
-| `SOURCEANALYSER_HEARTBEAT_INTERVAL_SECONDS` | Heartbeat interval in seconds | `10` |
+| `SOURCEANALYSER_POLL_INTERVAL` | Polling interval, in whole seconds above 0 | `5` |
+| `SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS` | Max seconds a single JS analysis routine may run before being interrupted (guards against infinite loops / catastrophic regex in AI/feed-sourced routines), in whole seconds above 0; `0` switches the guard off | `5` |
+| `SOURCEANALYSER_MAX_CONTENT_BYTES` | Bytes downloaded and matched for a non-PDF source (also the type-sniff read), a whole number above 0 | `65536` |
+| `SOURCEANALYSER_MAX_PDF_BYTES` | Max bytes of a PDF fetched for text extraction, a whole number above 0 | `33554432` |
+| `SOURCEANALYSER_HEARTBEAT_INTERVAL_SECONDS` | Heartbeat interval, in whole seconds above 0 | `10` |
 | `SOURCEANALYSER_LOG_FILE` | Log file path | `./sourceanalyser.log` |
-| `SOURCEANALYSER_LOG_TO_CONSOLE` | Write logs to console (`true`/`1`) | `true` |
-| `SOURCEANALYSER_LOG_TO_FILE` | Write logs to file (`true`/`1`) | `true` |
-| `SOURCEANALYSER_LOG_LEVEL` | Log verbosity (DEBUG, INFO, WARN, ERROR) | `INFO` |
+| `SOURCEANALYSER_LOG_TO_CONSOLE` | Write logs to console (`true`, `false`, `1` or `0`, any case) | `true` |
+| `SOURCEANALYSER_LOG_TO_FILE` | Write logs to file (`true`, `false`, `1` or `0`, any case) | `true` |
+| `SOURCEANALYSER_LOG_LEVEL` | Log verbosity (DEBUG, INFO, WARN, ERROR, any case) | `INFO` |
+
+A number, true/false or log-level value SourceAnalyser cannot use stops it at
+startup with exit code 1, whether it comes from a variable above or from the
+file, and the error lists every such setting with what it takes. An empty
+variable counts as unset; in the file a `0` counts as an absent key, so the JS
+guard can be switched off only with `SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS=0`.
+File values are checked too: intervals, the JS budget and byte limits must be
+above 0. Before 2026-11-18 such values were dropped without a word —
+`SOURCEANALYSER_LOG_TO_FILE=yes` even switched the file log off, and a negative
+`js_exec_timeout_seconds` in the file switched the guard off — so check a
+deployment's variables and file when upgrading.
 
 ### Configuration Priority
 
