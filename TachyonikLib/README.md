@@ -15,6 +15,7 @@ replace tachyonik/lib => ../TachyonikLib
 |---------|---------|
 | `logger` | Small leveled logger (DEBUG/INFO/WARN/ERROR) writing to console and/or file, with package-level helpers. `Startup(module, version)` writes the line every module logs first: `Starting Tachyonik <Module> <version> (<go version>, <os>/<arch>)`. |
 | `heartbeat` | Sends periodic liveness signals from a daemon (no HTTP server of its own) to SystemManager. Parameterized via `heartbeat.Config{ServiceName, …}`. |
+| `aicode` | Tidies the JavaScript a model returns before it is parsed: `Clean` strips a markdown fence and replaces typographic quotation marks. `Checksum(code)` is the SHA-256 every routine is stored with, and `VerifyChecksum(code, recorded)` refuses a routine whose checksum is missing or not its code's — called by every module before it runs a routine and by AIManager before it stores one. Used by ActionExecutor, ActionGenerator, SourceAnalyser, SourceImporter, ToolManager and AIManager. |
 | `aipick` | Decides which AI generates a routine, at the moment it is generated: the rule's own AI, otherwise the module's current default as AIManager reports it now, otherwise (AIManager unreachable) the AI loaded last. A `Choice` describes itself for errors and logs, e.g. `AI "claude opus 5" (id 6, anthropic, model claude-opus-5; module default)`, never with its URL or key. Used by every module that generates code. |
 | `aimwatcher` | Maintains one WebSocket connection to AIManager and dispatches analysis-rule changes, bulk feed imports, and module-AI-setting updates to caller-registered handlers, reconnecting automatically. |
 | `systemmanager` | Thin outbound client for reporting audit-trail events to SystemManager. Modules needing further endpoints embed this `Client` and add methods locally. |
@@ -103,18 +104,18 @@ All twelve service modules depend on this library:
 
 | Module | Packages used |
 |--------|---------------|
-| ActionExecutor | `logger`, `settings`, `heartbeat`, `aimwatcher`, `systemmanager`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
-| ActionGenerator | `logger`, `settings`, `heartbeat`, `aimwatcher`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
+| ActionExecutor | `logger`, `settings`, `aicode`, `heartbeat`, `aimwatcher`, `systemmanager`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
+| ActionGenerator | `logger`, `settings`, `aicode`, `heartbeat`, `aimwatcher`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
 | ActionManager | `logger`, `settings`, `listquery`, `apimcp` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
-| AIManager | `logger`, `settings`, `textextract`, `aiclient/*`, `apicatalogue`, `apimcp`, `apiregister` (its request type), `apibridge` (the dry run of bridge routines) |
+| AIManager | `logger`, `settings`, `aicode`, `textextract`, `aiclient/*`, `apicatalogue`, `apimcp`, `apiregister` (its request type), `apibridge` (the dry run of bridge routines) |
 | AssetManager | `logger`, `settings`, `systemmanager`, `listquery`, `apimcp`, `apiregister`, `apicatalogue` and `apibridge` (in tests) |
 | ChatAI | `logger`, `settings`, `aimwatcher`, `providererr` |
 | ResourceManager | `logger`, `settings`, `systemmanager`, `proxyrelease`, `listquery`, `apimcp` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
-| SourceAnalyser | `logger`, `settings`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
-| SourceImporter | `logger`, `settings`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
+| SourceAnalyser | `logger`, `settings`, `aicode`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
+| SourceImporter | `logger`, `settings`, `aicode`, `heartbeat`, `aimwatcher`, `systemmanager`, `restclient`, `textextract`, `aiclient/*` |
 | SystemManager | `logger`, `settings`, `listquery`, `apimcp` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
-| TachyonikProxy | `logger`, `settings` (and `proxyrelease` in a test, to check both copies of the release key agree) |
-| ToolManager | `logger`, `settings`, `aimwatcher`, `providererr`, `apimcp` (its own MCP server and the chat's generated tools) — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
+| TachyonikProxy | `logger`, `settings`, `aicode` (and `proxyrelease` in a test, to check both copies of the release key agree) |
+| ToolManager | `logger`, `settings`, `aicode`, `aimwatcher`, `providererr`, `apimcp` (its own MCP server and the chat's generated tools) — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 
 ## Versioning
 
