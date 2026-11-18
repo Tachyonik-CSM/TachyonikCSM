@@ -141,6 +141,7 @@ func main() {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	logger.Startup("SourceAnalyser", version.Version)
 
 	runDaemon(cfg)
 }
@@ -158,7 +159,6 @@ func runHelp() {
 
 // runDaemon starts the daemon with AIAnalyser, analysis rule watcher, and polling loop.
 func runDaemon(cfg *config.Config) {
-	logger.Info("Starting Tachyonik SourceAnalyser daemon...")
 	logger.Infof("Version: %s", version.Version)
 	logger.Info("Configuration loaded:")
 	logger.Infof("  AIManager URL: %s", cfg.AIManager.URL)

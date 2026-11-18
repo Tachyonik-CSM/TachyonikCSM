@@ -105,7 +105,7 @@ stripped to a numeric `x.y.z`, and injected at build time:
 
 `--match` is what keeps it independent — every other tag in the monorepo is
 ignored. Off-tag or dirty builds get a descriptive suffix (`1.1.2-3-gabc123`,
-`1.1.2-dirty`); a tree with no matching tag falls back to `0.0.0-dev`.
+`1.1.2-dirty`); a tree with no matching tag falls back to `0.0.0-dev`. The first line of every start names it — `Starting Tachyonik SourceAnalyser <version> (<go version>, <os>/<arch>)` — so a support log shows exactly what ran.
 
 Three build paths inject it, and all three must, or a build silently ships the
 fallback:
@@ -482,7 +482,7 @@ The shared logger prefixes each line with a level.
 
 ### Startup
 ```
-2026/01/07 10:00:00 [INFO] Starting Tachyonik SourceAnalyser daemon...
+2026/01/07 10:00:00 [INFO] Starting Tachyonik SourceAnalyser 1.3.0 (go1.24.4, linux/arm64)
 2026/01/07 10:00:00 [INFO] Version: 1.1.1
 2026/01/07 10:00:00 [INFO] Module AI settings loaded: AI=local-ollama, SystemPrompt=1832 chars
 2026/01/07 10:00:00 [INFO] Loaded 4 analysis rules (3 with active routines)
