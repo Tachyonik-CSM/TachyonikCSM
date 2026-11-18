@@ -115,22 +115,30 @@ Environment variables override configuration file values:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ASSETMANAGER_CONFIG` | Path to config file | `./config.yaml` |
-| `ASSETMANAGER_PORT` | Server port | `8081` |
+| `ASSETMANAGER_PORT` | Server port (1–65535) | `8081` |
 | `ASSETMANAGER_HOST` | Server host | `localhost` |
 | `ASSETMANAGER_INSTANCE_MODE` | Operating mode, `appliance` or `saas`; must match SystemManager's | `appliance` |
 | `ASSETMANAGER_DB_PATH` | SQLite database path | `/home/tachyon/data/AssetManager.db` |
 | `ASSETMANAGER_JWT_SECRET` | Secret the user tokens are checked with; must match SystemManager's. While it is the public placeholder or shorter than 32 characters, a `SECURITY` warning is logged at startup | (placeholder) |
 | `ASSETMANAGER_INTERNAL_SERVICE_KEY` | Key other services present to call this one; empty refuses every internal call | (empty) |
 | `ASSETMANAGER_LOG_FILE` | Log file path | `./assetmanager.log` |
-| `ASSETMANAGER_LOG_TO_CONSOLE` | Log to console (`true`/`1` or `false`/`0`) | `true` |
-| `ASSETMANAGER_LOG_TO_FILE` | Log to file (`true`/`1` or `false`/`0`) | `true` |
-| `ASSETMANAGER_LOG_LEVEL` | Log level (DEBUG, INFO, WARN, ERROR) | `INFO` |
+| `ASSETMANAGER_LOG_TO_CONSOLE` | Log to console: `true`, `false`, `1` or `0`, in any case | `true` |
+| `ASSETMANAGER_LOG_TO_FILE` | Log to file: `true`, `false`, `1` or `0`, in any case | `true` |
+| `ASSETMANAGER_LOG_LEVEL` | Log level: DEBUG, INFO, WARN or ERROR, in any case | `INFO` |
 | `ASSETMANAGER_RESOURCEMANAGER_URL` | ResourceManager base URL, for the source an asset came from | `http://localhost:8080` |
 | `ASSETMANAGER_RESOURCEMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for ResourceManager | (empty) |
 | `ASSETMANAGER_SYSTEMMANAGER_URL` | SystemManager base URL, for user limits, workspace members, the organisation, scores, statistics and audit events | `http://localhost:8083` |
 | `ASSETMANAGER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for SystemManager | (empty) |
 | `ASSETMANAGER_AIMANAGER_URL` | Local AIManager base URL for the per-appliance license (instance-wide host-asset cap). Set on an appliance; empty on the SaaS to disable the cap. | (empty) |
 | `ASSETMANAGER_AIMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for the AIManager license call | (empty) |
+
+A port, true/false or log-level value AssetManager cannot use stops it at startup
+with exit code 1 (AM-OPS-19), whether it comes from a variable above or from
+the file (`server.port`, `log.level`), and the error lists every such setting with what it
+takes. An empty variable counts as unset. Before 2026-11-18 such values were
+dropped without a word — `ASSETMANAGER_LOG_TO_FILE=yes` switched the file log
+off, and an unknown level fell back to INFO — so check a deployment's
+variables when upgrading.
 
 ### Per-appliance license (instance-wide host-asset cap)
 

@@ -18,10 +18,10 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"tachyonik/lib/settings"
 )
 
 type Config struct {
@@ -134,7 +134,9 @@ type FileConfig struct {
 //
 // It refuses a configuration it cannot use (AM-OPS-03, AM-OPS-16): a file
 // that exists but cannot be read or parsed, a key it does not know, or an
-// instance mode other than appliance or saas. Running on defaults instead —
+// instance mode other than appliance or saas, or a true/false or log-level
+// value it cannot use, from the file or the environment (AM-OPS-19). Every
+// such value is reported at once. Running on defaults instead —
 // the placeholder token secret, appliance mode, a developer's database path —
 // is worse than not starting. A missing file is fine: the defaults and the
 // environment run a local development setup (AM-OPS-01).
@@ -176,6 +178,10 @@ func Load() (*Config, error) {
 
 	// Try to load from config file
 	configPath := getEnv("ASSETMANAGER_CONFIG", "./config.yaml")
+	// Collects every true/false and log-level value that cannot be used,
+	// from the file and the environment, and the instance mode, and stops
+	// the service with the whole list below (AM-OPS-19).
+	r := settings.NewReader(configPath)
 	fileData, err := os.ReadFile(configPath)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -190,9 +196,7 @@ func Load() (*Config, error) {
 		}
 		{
 			// Apply config file values
-			if fileCfg.Server.Port != 0 {
-				cfg.Server.Port = strconv.Itoa(fileCfg.Server.Port)
-			}
+			r.FilePort("server.port", fileCfg.Server.Port, &cfg.Server.Port)
 			if fileCfg.Server.Host != "" {
 				cfg.Server.Host = fileCfg.Server.Host
 			}
@@ -226,9 +230,7 @@ func Load() (*Config, error) {
 			if fileCfg.Log.FilePath != "" {
 				cfg.Log.FilePath = fileCfg.Log.FilePath
 			}
-			if fileCfg.Log.Level != "" {
-				cfg.Log.Level = fileCfg.Log.Level
-			}
+			r.FileLevel("log.level", fileCfg.Log.Level, &cfg.Log.Level)
 			// Note: YAML booleans default to false, so we check if explicitly set
 			cfg.Log.ToConsole = fileCfg.Log.ToConsole
 			cfg.Log.ToFile = fileCfg.Log.ToFile
@@ -245,9 +247,7 @@ func Load() (*Config, error) {
 		cfg.Instance.Mode = mode
 		modeFrom = "ASSETMANAGER_INSTANCE_MODE"
 	}
-	if port := os.Getenv("ASSETMANAGER_PORT"); port != "" {
-		cfg.Server.Port = port
-	}
+	r.Port("ASSETMANAGER_PORT", &cfg.Server.Port)
 	if host := os.Getenv("ASSETMANAGER_HOST"); host != "" {
 		cfg.Server.Host = host
 	}
@@ -263,15 +263,9 @@ func Load() (*Config, error) {
 	if logPath := os.Getenv("ASSETMANAGER_LOG_FILE"); logPath != "" {
 		cfg.Log.FilePath = logPath
 	}
-	if logConsole := os.Getenv("ASSETMANAGER_LOG_TO_CONSOLE"); logConsole != "" {
-		cfg.Log.ToConsole = logConsole == "true" || logConsole == "1"
-	}
-	if logFile := os.Getenv("ASSETMANAGER_LOG_TO_FILE"); logFile != "" {
-		cfg.Log.ToFile = logFile == "true" || logFile == "1"
-	}
-	if logLevel := os.Getenv("ASSETMANAGER_LOG_LEVEL"); logLevel != "" {
-		cfg.Log.Level = logLevel
-	}
+	r.Bool("ASSETMANAGER_LOG_TO_CONSOLE", &cfg.Log.ToConsole)
+	r.Bool("ASSETMANAGER_LOG_TO_FILE", &cfg.Log.ToFile)
+	r.Level("ASSETMANAGER_LOG_LEVEL", &cfg.Log.Level)
 	// ASSETMANAGER_<SERVICE>_URL and ASSETMANAGER_<SERVICE>_INTERNAL_SERVICE_KEY.
 	for _, svc := range []struct {
 		dst    *ServiceConfig
@@ -293,9 +287,13 @@ func Load() (*Config, error) {
 	// stops the service; the case does not matter.
 	mode := strings.ToLower(strings.TrimSpace(cfg.Instance.Mode))
 	if mode != ModeAppliance && mode != ModeSaaS {
-		return nil, fmt.Errorf("%s is %q; it must be %q or %q", modeFrom, cfg.Instance.Mode, ModeAppliance, ModeSaaS)
+		r.Add(fmt.Errorf("%s is %q; it must be %q or %q", modeFrom, cfg.Instance.Mode, ModeAppliance, ModeSaaS))
 	}
 	cfg.Instance.Mode = mode
+
+	if err := r.Err(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }

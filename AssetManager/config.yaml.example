@@ -8,6 +8,11 @@
 # (default: ./config.yaml). Without a file, the defaults and the environment
 # apply. A file that cannot be read or parsed, or that contains a setting not
 # listed here (a misspelt key), stops AssetManager at startup with the reason.
+#
+# A true/false or log-level value AssetManager cannot use — here or in an
+# ASSETMANAGER_* variable — stops it at startup with an error listing every
+# such setting and what it takes. True/false variables take true, false, 1 or
+# 0, in any case; the log level DEBUG, INFO, WARN or ERROR, in any case.
 
 server:
   port: 8081       # HTTP port (default: 8081) — Env: ASSETMANAGER_PORT
@@ -76,8 +81,8 @@ log:
   file_path: /home/tachyon/log/tachyonik-assetmanager.log  # Log file path (default: ./assetmanager.log)
                                                            # Env: ASSETMANAGER_LOG_FILE
   to_console: false  # Write logs to stdout (built-in default: true; see NOTE above)
-                     # Env: ASSETMANAGER_LOG_TO_CONSOLE (true/1 to enable)
+                     # Env: ASSETMANAGER_LOG_TO_CONSOLE (true, false, 1 or 0)
   to_file: true      # Write logs to file_path (built-in default: true; see NOTE above)
-                     # Env: ASSETMANAGER_LOG_TO_FILE (true/1 to enable)
-  level: INFO        # Log verbosity: DEBUG, INFO, WARN, ERROR (default: INFO)
+                     # Env: ASSETMANAGER_LOG_TO_FILE (true, false, 1 or 0)
+  level: INFO        # Log verbosity: DEBUG, INFO, WARN or ERROR, any case (default: INFO); any other value stops AssetManager
                      # Env: ASSETMANAGER_LOG_LEVEL
