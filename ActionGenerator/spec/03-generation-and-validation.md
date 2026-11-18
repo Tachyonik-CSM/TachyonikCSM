@@ -19,13 +19,17 @@ not a side effect of saving a rule or of a rule having no routine.*
 
 **AG-GEN-02** Once a generation request has been handled, whatever its
 outcome, ActionGenerator MUST clear it in AIManager, with the reason when it
-failed. A request still standing at startup MUST be cleared with the reason
-that ActionGenerator was restarted before it could handle it.
+failed. When ActionGenerator first loads its rules, a request made before it
+started that is still standing MUST be cleared with the reason that
+ActionGenerator was restarted before it could handle it. A request made after
+the start MUST NOT be cleared this way.
 *Reason: a request left standing would be generated again on every change to
 the rule, in a loop. The reason belongs in the rule dialog, not only in this
 module's log. A request is handled when its rule's change is announced; one
-standing at startup was cut off by a stop (AG-OPS-09) or made while the daemon
-was not running, and no announcement will come for it any more.*
+made before the start was cut off by a stop (AG-OPS-09) or made while the
+daemon was not running, and no announcement will come for it any more. The
+first load is later than the start when AIManager could not be reached then
+(AG-OPS-08); by that time a new request may be being handled.*
 
 **AG-GEN-03** A rule without a rule prompt MUST be generated from the rule
 alone.

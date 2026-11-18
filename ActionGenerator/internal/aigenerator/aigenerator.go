@@ -590,19 +590,20 @@ func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
 // startup is cleared with.
 const interruptedRequestReason = "ActionGenerator was restarted before it could handle this generation request; request it again"
 
-// ClearStandingRequests clears every generation request still standing at
-// startup (AG-GEN-02). A request is handled when its rule's change is
-// announced, so one that is still set now was either cut off by a stop — an
-// AI call is not waited for (AG-OPS-09) — or asked for while ActionGenerator
-// was not running. Either way no announcement will come for it any more, and
-// the rule dialog would say "generating" for good. Call it after LoadRules
-// and before the rule watcher starts, so a request made from then on is not
-// mistaken for one.
-func (ag *AIActionGenerator) ClearStandingRequests() {
+// ClearStandingRequests clears the generation requests made before startedAt
+// (when this process started) that are still standing (AG-GEN-02). A request is
+// handled when its rule's change is announced, so one made before the start
+// was either cut off by a stop — an AI call is not waited for (AG-OPS-09) — or asked
+// for while ActionGenerator was not running. No announcement will come for it any
+// more, and the rule dialog would say "generating" for good. Call it after
+// the first successful LoadRules: at startup, or later when AIManager could
+// not be reached then. A request made after the start is left alone, since it
+// may be being handled right now.
+func (ag *AIActionGenerator) ClearStandingRequests(startedAt time.Time) {
 	ag.mu.Lock()
 	var standing []*aimanager.ActionRule
 	for _, rule := range ag.rules {
-		if rule.GenerateRequestedAt != nil {
+		if aicode.RequestedBefore(rule.GenerateRequestedAt, startedAt) {
 			standing = append(standing, rule)
 		}
 	}

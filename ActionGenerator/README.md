@@ -275,7 +275,10 @@ The daemon will:
 1. Load configuration from `config.yaml` and environment variables
 2. Initialise logging and the API clients
 3. Resolve its AI assignment and system prompt from AIManager
-4. Load the action rules and their active routines, building one executor per rule
+4. Load the action rules and their active routines, building one executor per rule.
+   If AIManager can't be reached yet, the daemon starts without rules and
+   tries again every 30 seconds and on every connect to AIManager, then
+   evaluates every rule (spec AG-OPS-08)
 5. Evaluate every rule for every user once, on startup
 6. Start the watchers (AssetManager, SystemManager, action rules, module AI
    settings) and the SystemManager heartbeat
@@ -294,8 +297,9 @@ Send `SIGINT` (Ctrl+C) or `SIGTERM` to shut down gracefully (spec AG-OPS-09):
    seconds (`stop_grace_period` in `deployment/docker/compose.yaml`).
 3. A routine generation in progress is not waited for: an AI call takes
    minutes. Its request, and any request made while the daemon was down, is
-   cleared at the next start with that reason, which the rule dialog shows —
-   request it again.
+   cleared at the next start, once the rules are loaded, with that reason,
+   which the rule dialog shows — request it again. Only requests made before
+   the start are cleared, so one made after it is never mistaken for one.
 4. The heartbeat and the log file are closed.
 
 ### Running as a Background Service
@@ -352,7 +356,7 @@ triggered by:
 | Startup | daemon start |
 | Manager WebSockets (AssetManager, SystemManager, ResourceManager, ActionManager, AIManager) | a message an API operation an active routine calls lists as `x-invalidated-by` (2s debounce); and on every (re)connect |
 | SystemManager WebSocket | `USER_CREATED`, `USER_DELETED`, whatever the routines read — they change whom the rules are evaluated for (2s debounce) |
-| Action-rule watcher | a rule created, edited or deleted; an evaluation request; a feed import; an API catalogue change |
+| Action-rule watcher | a rule created, edited or deleted; an evaluation request; a feed import; an API catalogue change; every reconnect to AIManager, after the rules are loaded again — the connection has missed the changes made while it was down |
 
 There is deliberately **no periodic sweep**: staleness is fixed by watching the
 data the routines read, not by re-running on a timer. The triggers follow from

@@ -41,6 +41,7 @@ import (
 	"tachyonik/lib/apiholder"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
+	"tachyonik/lib/reload"
 )
 
 // resolveAI looks up the AI entry from AIManager and creates the appropriate ChatClient.
@@ -149,6 +150,9 @@ func runHelp() {
 
 // runDaemon starts the daemon with per-rule JS executors, action rule watcher, and asset watcher.
 func runDaemon(cfg *config.Config) {
+	// Generation requests made before this moment are left behind by an
+	// earlier run (AG-GEN-02).
+	startedAt := time.Now()
 	logConfiguration(cfg)
 
 	c := newClients(cfg)
@@ -221,15 +225,28 @@ func runDaemon(cfg *config.Config) {
 	refreshTriggers := func() { triggers.Store(aiGen.Triggers()) }
 	extraTrigger := func(messageType string) bool { return triggers.Load().(map[string]bool)[messageType] }
 
-	// Load rules with per-rule active routines (does not require AI)
-	if err := aiGen.LoadRules(); err != nil {
-		logger.Errorf("Failed to load action rules: %v", err)
-	} else {
+	// The rules with their active routines (no AI needed). Loaded now, and
+	// again on every reconnect to AIManager and after a feed import; a load
+	// that fails is tried again every 30 s until one succeeds (AG-OPS-08).
+	// The first load that succeeds clears the generation requests an earlier
+	// run left standing (AG-GEN-02).
+	var requestsCleared atomic.Bool
+	loadRules := func() error {
+		if err := aiGen.LoadRules(); err != nil {
+			return err
+		}
 		gen.SetExecutors(aiGen.Executors())
 		gen.SetOnDemandRules(aiGen.OnDemandRules())
-		// Before the rule watcher starts: a request still standing now will
-		// get no announcement any more (AG-GEN-02).
-		aiGen.ClearStandingRequests()
+		refreshTriggers()
+		if requestsCleared.CompareAndSwap(false, true) {
+			aiGen.ClearStandingRequests(startedAt)
+		}
+		return nil
+	}
+	loadedAtStartup := true
+	if err := loadRules(); err != nil {
+		logger.Errorf("Failed to load action rules, trying again every %s: %v", reload.DefaultRetry, err)
+		loadedAtStartup = false
 	}
 	refreshTriggers()
 
@@ -275,6 +292,23 @@ func runDaemon(cfg *config.Config) {
 	// (AG-OPS-09): from then on nothing new is reacted to.
 	var stopWatching []func() error
 
+	// A later load is followed by a pass over every rule, as at startup.
+	ruleLoader := reload.New("the action rules", func() error {
+		if err := loadRules(); err != nil {
+			return err
+		}
+		if err := gen.ProcessRules(); err != nil {
+			logger.Errorf("Error processing rules after loading them: %v", err)
+		}
+		return nil
+	})
+	ruleLoader.Start()
+	stopWatching = append(stopWatching, func() error { ruleLoader.Stop(); return nil })
+	if !loadedAtStartup {
+		// Also when AIManager's WebSocket stays down while its API is back.
+		time.AfterFunc(reload.DefaultRetry, ruleLoader.Request)
+	}
+
 	// Start action rule watcher for rule changes and evaluation requests
 	arw, err := actionrulewatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, func(event actionrulewatcher.RuleChangeEvent) {
 		logger.Infof("Action rule %d changed (%s), regenerating...", event.RuleID, event.Type)
@@ -302,22 +336,25 @@ func runDaemon(cfg *config.Config) {
 			}
 			logger.Infof("Evaluation request for rule %d, user %d: created %d actions", event.RuleID, event.UserID, created)
 		})
-		// FEED_IMPORTED rebuilds rules + executors and refreshes module
-		// settings, then re-processes rules so any freshly imported
-		// active routines start firing immediately.
+		// FEED_IMPORTED refreshes module settings and reloads the rules,
+		// followed by a pass, so freshly imported active routines start
+		// firing immediately.
 		arw.SetFeedImportedHandler(func() {
 			logger.Info("FEED_IMPORTED: reloading action rules + module settings")
-			if err := aiGen.LoadRules(); err != nil {
-				logger.Errorf("Failed to reload action rules after feed import: %v", err)
-			} else {
-				gen.SetExecutors(aiGen.Executors())
-				gen.SetOnDemandRules(aiGen.OnDemandRules())
-			}
-			refreshTriggers()
 			refreshModuleSettings()
-			if err := gen.ProcessRules(); err != nil {
-				logger.Errorf("Error processing rules after feed import: %v", err)
+			ruleLoader.Request()
+		})
+		// Every (re)connect loads the rules again: a connection that was down
+		// has missed the changes announced meanwhile, and a startup that could
+		// not reach AIManager has no rules yet (AG-OPS-08). The first
+		// connection follows a successful startup load directly and needs none.
+		var connectedBefore atomic.Bool
+		arw.SetConnectHandler(func() {
+			if !connectedBefore.Swap(true) && loadedAtStartup {
+				return
 			}
+			logger.Info("Connected to AIManager: loading the action rules again")
+			ruleLoader.Request()
 		})
 		// A changed catalogue rebuilds the bridge and re-checks the active
 		// routines against it (PA-RT-06, -08).

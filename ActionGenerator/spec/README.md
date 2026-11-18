@@ -16,7 +16,7 @@ authoritative.
 | 3 | [Routine generation and validation](03-generation-and-validation.md) | How does a rule become a routine that may run? | Accepted |
 | 4 | [Interfaces](04-interfaces.md) | What do routines read and return, and how does ActionGenerator talk to the other services? | Accepted |
 | 5 | [Security and containment](05-security-and-containment.md) | Whose data reaches whom, and how is generated code kept in bounds? | Accepted |
-| 6 | [Operation](06-operation.md) | What does an operator rely on? | Draft |
+| 6 | [Operation](06-operation.md) | What does an operator rely on? | Accepted |
 
 ActionGenerator has no HTTP API of its own, and must not get one (project
 rule, see CLAUDE.md). There is therefore no `openapi.yaml` here: its contract

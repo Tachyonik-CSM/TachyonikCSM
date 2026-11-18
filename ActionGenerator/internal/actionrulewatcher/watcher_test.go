@@ -219,3 +219,27 @@ func TestCloseWithoutStart(t *testing.T) {
 		t.Errorf("Close without Start: %v", err)
 	}
 }
+
+// A connection reports itself, so the daemon can load what it missed
+// (AG-OPS-08). That it does so on every reconnect too is wswatcher's, and
+// tested there.
+func TestConnectIsReported(t *testing.T) {
+	srv := fakeAIManager(t, nil)
+
+	fired := make(chan struct{}, 1)
+	w, _ := New(srv.URL, "", func(RuleChangeEvent) {})
+	w.SetConnectHandler(func() {
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	})
+	w.Start()
+	defer w.Close()
+
+	select {
+	case <-fired:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the connection was not reported")
+	}
+}

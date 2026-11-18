@@ -7,7 +7,8 @@
 // effect without a restart. It also carries explicit requests to re-evaluate a
 // rule, which is how the UI's "test this rule" path reaches the daemon.
 //
-// It reconnects on its own when the connection drops, and debounces per rule:
+// It reconnects on its own when the connection drops — and reports every
+// (re)connect, so the daemon can load what it missed — and debounces per rule:
 // saving a rule several times in quick succession triggers one reload rather
 // than a burst of code generation.
 //
@@ -73,6 +74,7 @@ type Watcher struct {
 	onFeedImported        func()
 	onCatalogueUpdated    func()
 	onOther               func(messageType string)
+	onConnect             func()
 
 	ws *wswatcher.Watcher
 	db *wswatcher.Debouncer
@@ -119,6 +121,13 @@ func (w *Watcher) SetOtherMessageHandler(handler func(messageType string)) {
 	w.onOther = handler
 }
 
+// SetConnectHandler sets the callback fired on every successful (re)connect,
+// in its own goroutine: the moment to load what was missed while the
+// connection was down (AG-OPS-08).
+func (w *Watcher) SetConnectHandler(handler func()) {
+	w.onConnect = handler
+}
+
 // Start opens the connection and begins dispatching.
 func (w *Watcher) Start() {
 	w.db = wswatcher.NewDebouncer(w.debounceFor, "actionrulewatcher")
@@ -127,6 +136,11 @@ func (w *Watcher) Start() {
 		BaseURL:    w.aiManagerURL,
 		ServiceKey: w.internalServiceKey,
 		OnMessage:  w.dispatch,
+		OnConnect: func() {
+			if w.onConnect != nil {
+				w.onConnect()
+			}
+		},
 	})
 	w.ws.Start()
 }
