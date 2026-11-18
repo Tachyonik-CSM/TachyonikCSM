@@ -49,12 +49,17 @@ func TestAlteredCodeIsRefused(t *testing.T) {
 	}
 }
 
-// A routine stored before the hash was recorded has none. Refusing those would
-// disable every rule on an installation that has not regenerated since.
-func TestMissingHashIsAccepted(t *testing.T) {
+// A routine with no recorded hash is refused (AG-GEN-16): every routine is
+// stored with one, so a row without it was not written by generation or a
+// feed import.
+func TestMissingHashIsRefused(t *testing.T) {
 	r := &aimanager.Routine{ID: 1, Code: "var rules = [];"}
-	if err := verifyRoutineHash(r); err != nil {
-		t.Errorf("a routine with no recorded hash was refused: %v", err)
+	err := verifyRoutineHash(r)
+	if err == nil {
+		t.Fatal("a routine with no recorded hash was accepted")
+	}
+	if !strings.Contains(err.Error(), "SHA256") {
+		t.Errorf("error = %q, want it to name the missing hash", err)
 	}
 }
 

@@ -540,7 +540,8 @@ input on both sides.
   widen the platform's enums by inventing a value.
 - **Stored code is verified.** A routine's checksum is recorded when it is
   generated and checked when it is loaded, so code altered in the database after
-  validation is refused rather than run.
+  validation is refused rather than run. A routine with no checksum is refused
+  too: generation and feed imports always record one.
 
 ## Architecture
 

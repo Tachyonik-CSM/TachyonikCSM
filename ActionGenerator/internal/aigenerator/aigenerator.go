@@ -591,13 +591,14 @@ func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
 
 // verifyRoutineHash checks stored code against the SHA256 recorded with it.
 //
-// An empty stored hash is accepted: routines generated before the hash was
-// recorded have none, and refusing those would disable every rule on an
-// installation that has not regenerated since. A WRONG hash is refused — that
-// is the case this exists for.
+// A routine with no recorded hash is refused like one with a wrong hash
+// (AG-GEN-16): every routine is stored with one, by generation and by a feed
+// import alike, so a row without it was not written by either. (Routines from
+// before hashes were recorded were kept running once; none were left, so that
+// allowance was dropped on 2026-11-18.)
 func verifyRoutineHash(routine *aimanager.Routine) error {
 	if routine.SHA256 == "" {
-		return nil
+		return errors.New("no SHA256 is recorded for the stored code")
 	}
 	sum := sha256.Sum256([]byte(routine.Code))
 	if got := hex.EncodeToString(sum[:]); got != routine.SHA256 {
