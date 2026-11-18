@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"tachyonik/lib/aicode"
 	"testing"
 
 	"tachyonik/actionexecutor/internal/actionwatcher"
@@ -49,8 +50,8 @@ func TestAnActionWhoseRoutinePredatesTheAPIIsRefused(t *testing.T) {
 				{ID: 4, Title: "retrieve", ActiveRoutine: &routineID},
 			}})
 		case r.URL.Path == "/api/internal/routines/240":
-			_ = json.NewEncoder(w).Encode(aimanager.Routine{ID: 240, Status: "passed",
-				Code: `var executors = [{ name: "x", ruleId: 4, run: function (api) { return { status: "success" }; } }];`})
+			code := `var executors = [{ name: "x", ruleId: 4, run: function (api) { return { status: "success" }; } }];`
+			_ = json.NewEncoder(w).Encode(aimanager.Routine{ID: 240, Status: "passed", Code: code, SHA256: aicode.Checksum(code)})
 		case r.URL.Path == "/api/internal/action-options":
 			_, _ = w.Write([]byte(`{"actionOptions":[{"id":1,"actionRuleId":8,"type":"Execution","typeContext":"4"}]}`))
 		case r.URL.Path == "/api/user-execution-rule-settings":

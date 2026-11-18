@@ -18,8 +18,6 @@
 package aiexecutor
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +30,7 @@ import (
 	"tachyonik/actionexecutor/internal/executionrulewatcher"
 	"tachyonik/actionexecutor/internal/jsruntime"
 	"tachyonik/lib/aiclient"
+	"tachyonik/lib/aicode"
 	"tachyonik/lib/aipick"
 	"tachyonik/lib/apiholder"
 	"tachyonik/lib/logger"
@@ -131,6 +130,14 @@ func (ag *AIActionExecutor) loadActiveRoutine(rule *aimanager.ExecutionRule) {
 		logger.Warnf("Active routine %d for execution rule %d has status '%s'; the rule has no routine loaded",
 			routine.ID, rule.ID, routine.Status)
 		ag.hold(rule.ID, fmt.Sprintf("execution rule %d: its active routine %d has status %q", rule.ID, routine.ID, routine.Status))
+		return
+	}
+
+	// Run only the code that was generated and validated: a missing or wrong
+	// checksum means the stored code is not that (aicode.VerifyChecksum).
+	if err := aicode.VerifyChecksum(routine.Code, routine.SHA256); err != nil {
+		logger.Errorf("Refusing routine %d for execution rule %d (%s): %v", routine.ID, rule.ID, rule.Title, err)
+		ag.hold(rule.ID, fmt.Sprintf("execution rule %d: its active routine %d is refused: %v", rule.ID, routine.ID, err))
 		return
 	}
 
@@ -248,8 +255,7 @@ func (ag *AIActionExecutor) GenerateForRule(rule *aimanager.ExecutionRule) (*aim
 		return nil, fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
 	}
 
-	hash := sha256.Sum256([]byte(code))
-	sha256Hex := hex.EncodeToString(hash[:])
+	sha256Hex := aicode.Checksum(code)
 
 	version := fmt.Sprintf("v%s", time.Now().Format("20060102_150405"))
 

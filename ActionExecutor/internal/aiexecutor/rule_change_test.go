@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
+	"tachyonik/lib/aicode"
 	"testing"
 
 	"tachyonik/actionexecutor/internal/aimanager"
@@ -39,7 +40,7 @@ func TestAChangedRuleReloadsOnlyItself(t *testing.T) {
 			if r.URL.Path == "/api/internal/routines/104" {
 				fetched.Store(104)
 			}
-			_ = json.NewEncoder(w).Encode(aimanager.Routine{ID: 104, Code: sampleExecRoutine, Status: "passed"})
+			_ = json.NewEncoder(w).Encode(aimanager.Routine{ID: 104, Code: sampleExecRoutine, SHA256: aicode.Checksum(sampleExecRoutine), Status: "passed"})
 		default:
 			http.NotFound(w, r)
 		}

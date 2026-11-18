@@ -324,8 +324,9 @@ The routine lists' Test tabs run routines through AIManager's dry run
 ### Which routine runs
 
 Exactly the one AIManager marks as the rule's active routine. If it cannot be
-loaded — not *passed*, not found, not valid JavaScript, predating the platform
-API, or calling operations the catalogue no longer has — the rule has **no**
+loaded — not *passed*, without its checksum or with code that no longer
+matches it, not found, not valid JavaScript, predating the platform API, or
+calling operations the catalogue no longer has — the rule has **no**
 routine loaded and a run is refused with the reason, rather than the
 previously loaded routine going on in its place. A deleted rule is unloaded at
 once.

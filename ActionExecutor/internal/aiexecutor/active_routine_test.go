@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"tachyonik/lib/aicode"
 	"testing"
 
 	"tachyonik/actionexecutor/internal/aimanager"
@@ -26,6 +28,16 @@ import (
 // an AIManager that answers routine lookups with the given routine (or 404).
 func withLoadedRoutine(t *testing.T, routine *aimanager.Routine) *AIActionExecutor {
 	t.Helper()
+	// Stored as generation stores it, with its checksum, unless the test
+	// gives one (or "-" for none).
+	if routine != nil {
+		switch routine.SHA256 {
+		case "":
+			routine.SHA256 = aicode.Checksum(routine.Code)
+		case "-":
+			routine.SHA256 = ""
+		}
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if routine == nil {
 			http.NotFound(w, r)
@@ -76,5 +88,28 @@ func TestAPassedRoutineReplacesThePreviousOne(t *testing.T) {
 	ag.mu.Unlock()
 	if got := ag.GetRuntime(4); got == nil || got == before {
 		t.Error("a passed routine did not replace the previous one")
+	}
+}
+
+// Only the code that was generated runs: an active routine with no checksum,
+// or one its code no longer matches, is refused and the rule held back.
+func TestARoutineWithoutItsChecksumIsRefused(t *testing.T) {
+	for _, c := range []struct{ name, sha, want string }{
+		{"missing", "-", "no SHA256"},
+		{"wrong", aicode.Checksum("var executors = [];"), "does not match"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ag := withLoadedRoutine(t, &aimanager.Routine{ID: 240, Code: sampleExecRoutine, SHA256: c.sha, Status: "passed"})
+			next := int64(240)
+			ag.mu.Lock()
+			ag.loadActiveRoutine(&aimanager.ExecutionRule{ID: 4, Title: "r", ActiveRoutine: &next})
+			ag.mu.Unlock()
+			if why := ag.HeldBack(4); !strings.Contains(why, c.want) {
+				t.Errorf("held back for %q, want a refusal naming %q", why, c.want)
+			}
+			if ag.GetRuntime(4) != nil {
+				t.Error("a refused routine is still loaded")
+			}
+		})
 	}
 }
