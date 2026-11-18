@@ -14,6 +14,7 @@ replace tachyonik/lib => ../TachyonikLib
 | Package | Purpose |
 |---------|---------|
 | `logger` | Small leveled logger (DEBUG/INFO/WARN/ERROR) writing to console and/or file, with package-level helpers. `Startup(module, version)` writes the line every module logs first: `Starting Tachyonik <Module> <version> (<go version>, <os>/<arch>)`. |
+| `drain` | Lets a daemon stop without cutting a unit of work in half (an action rule evaluated for one user; an execution run and the report of its outcome). Units `Enter` a `Gate` and `Leave` it; on SIGINT/SIGTERM the daemon closes its watchers and calls `Stop` — nothing enters any more and a long pass sees `Stopping` — then `Wait(timeout)` lets the running units finish, and names those still running when the time is up, calling their `OnCutOff` so what was cut off is recorded. Used by ActionGenerator and ActionExecutor. |
 | `heartbeat` | Sends periodic liveness signals from a daemon (no HTTP server of its own) to SystemManager. Parameterized via `heartbeat.Config{ServiceName, …}`. |
 | `aicode` | Tidies the JavaScript a model returns before it is parsed: `Clean` strips a markdown fence and replaces typographic quotation marks. `Checksum(code)` is the SHA-256 every routine is stored with, and `VerifyChecksum(code, recorded)` refuses a routine whose checksum is missing or not its code's — called by every module before it runs a routine and by AIManager before it stores one. Used by ActionExecutor, ActionGenerator, SourceAnalyser, SourceImporter, ToolManager and AIManager. |
 | `aipick` | Decides which AI generates a routine, at the moment it is generated: the rule's own AI, otherwise the module's current default as AIManager reports it now, otherwise (AIManager unreachable) the AI loaded last. A `Choice` describes itself for errors and logs, e.g. `AI "claude opus 5" (id 6, anthropic, model claude-opus-5; module default)`, never with its URL or key. Used by every module that generates code. |
@@ -104,8 +105,8 @@ All twelve service modules depend on this library:
 
 | Module | Packages used |
 |--------|---------------|
-| ActionExecutor | `logger`, `settings`, `aicode`, `heartbeat`, `aimwatcher`, `systemmanager`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
-| ActionGenerator | `logger`, `settings`, `aicode`, `heartbeat`, `aimwatcher`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
+| ActionExecutor | `logger`, `settings`, `aicode`, `drain`, `heartbeat`, `aimwatcher`, `systemmanager`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
+| ActionGenerator | `logger`, `settings`, `aicode`, `drain`, `heartbeat`, `aimwatcher`, `aiclient/*`, `apibridge`, `apiholder`, `apicatalogue` |
 | ActionManager | `logger`, `settings`, `listquery`, `apimcp` — and `apiregister`, with `apicatalogue` and `apibridge` in tests |
 | AIManager | `logger`, `settings`, `aicode`, `textextract`, `aiclient/*`, `apicatalogue`, `apimcp`, `apiregister` (its request type), `apibridge` (the dry run of bridge routines) |
 | AssetManager | `logger`, `settings`, `systemmanager`, `listquery`, `apimcp`, `apiregister`, `apicatalogue` and `apibridge` (in tests) |
