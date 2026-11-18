@@ -243,9 +243,14 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 	}
 
 	// The user must exist: the request names one, and an action for an
-	// account SystemManager does not know would belong to nobody.
-	if _, err := g.systemMgr.GetUser(userID); err != nil {
+	// account SystemManager does not know would belong to nobody. A
+	// deactivated one is not evaluated (AG-EVAL-25).
+	user, err := g.systemMgr.GetUser(userID)
+	if err != nil {
 		return 0, fmt.Errorf("failed to get user %d: %w", userID, err)
+	}
+	if user.Deactivated() {
+		return 0, fmt.Errorf("user %d is deactivated; its actions are left as they are", userID)
 	}
 
 	actions, unknown, err := g.evaluate(executor, g.newPass(), userID, force)
@@ -310,13 +315,33 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 	return actionsCreated, nil
 }
 
+// countDeactivated counts the deactivated accounts among users.
+func countDeactivated(users []systemmanager.User) int {
+	n := 0
+	for _, u := range users {
+		if u.Deactivated() {
+			n++
+		}
+	}
+	return n
+}
+
 // processJSRules evaluates JS rules from all executors for all users
 func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor) (int, error) {
 	actionsCreated := 0
 	pass := g.newPass()
+	if n := countDeactivated(users); n > 0 {
+		logger.Infof("Not evaluating %d deactivated users: their actions are left as they are (AG-EVAL-25)", n)
+	}
 
 	for i := range users {
 		user := users[i]
+		// A deactivated account is not evaluated: its actions stay as they
+		// were until it is reactivated (AG-EVAL-25).
+		if user.Deactivated() {
+			logger.Debugf("Skipping deactivated user %d", user.ID)
+			continue
+		}
 
 		// Evaluate each per-rule executor
 		for ruleID, executor := range executors {

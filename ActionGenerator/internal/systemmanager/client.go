@@ -35,6 +35,15 @@ type User struct {
 	Role          string `json:"role"`
 	MaxHostAssets int    `json:"maxHostAssets"`
 	CreatedAt     string `json:"createdAt"`
+	// Active is false for an account an administrator deactivated. A
+	// SystemManager that does not send it predates deactivation: nil counts
+	// as active.
+	Active *bool `json:"active"`
+}
+
+// Deactivated reports whether an administrator deactivated the account.
+func (u User) Deactivated() bool {
+	return u.Active != nil && !*u.Active
 }
 
 // NewClient creates a new SystemManager API client
