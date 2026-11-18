@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -45,6 +46,7 @@ import (
 	"tachyonik/lib/drain"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
+	"tachyonik/lib/reload"
 	"tachyonik/lib/systemmanager"
 )
 
@@ -179,6 +181,9 @@ func runHelp() {
 
 // runDaemon starts the daemon: load rules, start watchers, pick up waiting run requests.
 func runDaemon(cfg *config.Config) {
+	// Generation requests made before this moment are left behind by an
+	// earlier run.
+	startedAt := time.Now()
 	logger.Info("Configuration loaded:")
 	logger.Infof("  AIManager URL: %s", cfg.AIManager.URL)
 	logger.Infof("  AI Timeout: %ds", cfg.AI.TimeoutSeconds)
@@ -228,13 +233,24 @@ func runDaemon(cfg *config.Config) {
 	loadAPICatalogue()
 	aiExec.SetCatalogue(apiCatalogue)
 
-	// Load execution rules and their active routines
-	if err := aiExec.LoadRules(); err != nil {
-		logger.Errorf("Failed to load execution rules: %v", err)
-	} else {
-		// Before the rule watcher starts: a request still standing now will
-		// get no announcement any more.
-		aiExec.ClearStandingRequests()
+	// The execution rules and their active routines. Loaded now, and again
+	// on every reconnect to AIManager and after a feed import; a load that
+	// fails is tried again every 30 s until one succeeds. The first load that
+	// succeeds clears the generation requests an earlier run left standing.
+	var requestsCleared atomic.Bool
+	loadRules := func() error {
+		if err := aiExec.LoadRules(); err != nil {
+			return err
+		}
+		if requestsCleared.CompareAndSwap(false, true) {
+			aiExec.ClearStandingRequests(startedAt)
+		}
+		return nil
+	}
+	loadedAtStartup := true
+	if err := loadRules(); err != nil {
+		logger.Errorf("Failed to load execution rules, trying again every %s: %v", reload.DefaultRetry, err)
+		loadedAtStartup = false
 	}
 
 	// Shared module-settings refresh — used by both the
@@ -277,19 +293,36 @@ func runDaemon(cfg *config.Config) {
 	manualRuns := manualrun.New(aiMgrClient, aiExec, runner)
 	manualRuns.SetGate(&gate)
 
+	// A later load is followed by the run requests still waiting: a run
+	// needs its rule's routine, so they are picked up once it is loaded.
+	// Picking up is safe to repeat — a request is claimed before it runs.
+	ruleLoader := reload.New("the execution rules", func() error {
+		if err := loadRules(); err != nil {
+			return err
+		}
+		manualRuns.PickUpPending()
+		return nil
+	})
+	ruleLoader.Start()
+	stopWatching = append(stopWatching, func() error { ruleLoader.Stop(); return nil })
+	if !loadedAtStartup {
+		// Also when AIManager's WebSocket stays down while its API is back.
+		time.AfterFunc(reload.DefaultRetry, ruleLoader.Request)
+	}
+
 	// Start execution rule watcher. FEED_IMPORTED triggers a full
 	// LoadRules() rebuild plus module-settings refresh; EXECUTION_REQUESTED
-	// is a user's request to run a rule now, and every (re)connect picks up
-	// the requests made while the connection was down.
+	// is a user's request to run a rule now. Every (re)connect loads the rules
+	// again — a connection that was down has missed the changes announced
+	// meanwhile, and a startup that could not reach AIManager has none yet —
+	// and then picks up the requests made while the connection was down.
 	erw, err := executionrulewatcher.New(cfg.AIManager.URL, cfg.AIManager.InternalServiceKey, func(event executionrulewatcher.RuleChangeEvent) {
 		logger.Infof("Execution rule %d changed (%s), regenerating...", event.RuleID, event.Type)
 		aiExec.HandleRuleChange(event)
 	}, func() {
 		logger.Info("FEED_IMPORTED: reloading execution rules + module settings")
-		if err := aiExec.LoadRules(); err != nil {
-			logger.Errorf("Failed to reload execution rules after feed import: %v", err)
-		}
 		refreshModuleSettings()
+		ruleLoader.Request()
 	})
 	if err != nil {
 		logger.Errorf("Failed to create execution rule watcher: %v", err)
@@ -303,7 +336,17 @@ func runDaemon(cfg *config.Config) {
 			}
 		})
 		erw.SetRunRequestHandler(manualRuns.OnRequested)
-		erw.SetConnectHandler(manualRuns.PickUpPending)
+		// The first connection follows a successful startup load directly
+		// and needs no second one.
+		var connectedBefore atomic.Bool
+		erw.SetConnectHandler(func() {
+			if !connectedBefore.Swap(true) && loadedAtStartup {
+				manualRuns.PickUpPending()
+				return
+			}
+			logger.Info("Connected to AIManager: loading the execution rules again")
+			ruleLoader.Request()
+		})
 		erw.Start()
 		stopWatching = append(stopWatching, erw.Close)
 		logger.Info("Execution rule watcher started")

@@ -181,10 +181,15 @@ What matters most:
 
 At startup the daemon loads the module settings and every execution rule with
 its active routine from AIManager and starts its watchers, then runs whatever
-run requests are waiting. A generation request still standing then — cut off
-by a stop, or made while the daemon was down — is cleared with that reason,
-which the rule dialog shows; request it again. A heartbeat is sent to
-SystemManager every `heartbeat.interval_seconds`.
+run requests are waiting. The rules are loaded again on every reconnect to
+AIManager, since the connection has missed the changes made while it was down,
+and the waiting run requests are picked up after that. If AIManager can't be
+reached at startup, the daemon starts without rules and tries again every 30
+seconds and on every connect. Once the rules are loaded for the first time, a
+generation request made before the start and still standing — cut off by a
+stop, or made while the daemon was down — is cleared with that reason, which
+the rule dialog shows; request it again. A request made after the start is left
+alone. A heartbeat is sent to SystemManager every `heartbeat.interval_seconds`.
 
 ### Stopping
 
