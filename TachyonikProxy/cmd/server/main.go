@@ -130,13 +130,14 @@ func runServer() {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	logger.Startup("TachyonikProxy", version)
 	// Kept running for a key it does not know (see config.UnknownKeys), but
 	// said in the proxy's own log, where an operator looks.
 	for _, k := range cfg.UnknownKeys() {
 		logger.Warnf("Configuration: unknown setting ignored (%s)", k)
 	}
 
-	logger.Infof("Starting Tachyonik TachyonikProxy '%s' (version %s)", cfg.Proxy.Name, version)
+	logger.Infof("Proxy: '%s'", cfg.Proxy.Name)
 	logger.Infof("Description: %s", cfg.Proxy.Description)
 	logAutoUpdateStatus()
 
