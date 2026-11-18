@@ -20,8 +20,6 @@ package toolscan
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -31,6 +29,7 @@ import (
 
 	"github.com/dop251/goja"
 
+	"tachyonik/lib/aicode"
 	"tachyonik/tachyonikproxy/internal/execenv"
 	"tachyonik/tachyonikproxy/internal/netscan"
 )
@@ -129,17 +128,15 @@ func (s *Scanner) Scan(routines []RoutineInput) []ToolResult {
 
 	var results []ToolResult
 	for _, routine := range routines {
-		// Verify SHA256 integrity
-		if routine.SHA256 != "" {
-			hash := sha256.Sum256([]byte(routine.Code))
-			actual := hex.EncodeToString(hash[:])
-			if actual != routine.SHA256 {
-				results = append(results, ToolResult{
-					Name:  routine.Name,
-					Error: fmt.Sprintf("SHA256 mismatch: expected %s, got %s", routine.SHA256, actual),
-				})
-				continue
-			}
+		// Run only the code that was generated and validated: a routine
+		// without its checksum, or whose code does not match it, is refused
+		// (TachyonikLib aicode.VerifyChecksum; ToolManager always sends one).
+		if err := aicode.VerifyChecksum(routine.Code, routine.SHA256); err != nil {
+			results = append(results, ToolResult{
+				Name:  routine.Name,
+				Error: "Routine refused: " + err.Error(),
+			})
+			continue
 		}
 
 		ruleResults := s.executeRuleCode(routine.Code)

@@ -327,7 +327,7 @@ Tool detection is **driven from ToolManager**, not from a hard-coded list inside
 ### How it works
 
 1. **ToolManager** sends a `tools/scan` JSON-RPC request to the proxy with a list of `RoutineInput { name, code, version, sha256 }` entries.
-2. **Integrity check**: for each routine the proxy computes `SHA-256(code)` and rejects any routine whose SHA does not match the declared digest. This prevents tampering on the wire and makes routine versions verifiable.
+2. **Integrity check**: for each routine the proxy computes `SHA-256(code)` and rejects any routine whose SHA does not match the declared digest, or that comes without one (an error result names it, and the routine is not run). ToolManager always sends the digest recorded when the routine was generated. This finds code changed after it was validated and makes routine versions verifiable. Before 2026-11-18 a routine without a digest was run unchecked.
 3. **Sandboxed execution**: each routine runs in a fresh `goja` VM with these host helpers exposed:
    - `which(name)` — wraps `exec.LookPath`; returns the absolute path of `name` on `$PATH`, or `""`.
    - `exec(cmd, args)` — runs a command and returns `{ output, exitCode }` (combined stdout/stderr; `exitCode = -1` if the command was not found).

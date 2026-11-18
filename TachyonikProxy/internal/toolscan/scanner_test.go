@@ -37,7 +37,7 @@ func TestScanner_RoutineTimeout(t *testing.T) {
 	scanner := New()
 
 	start := time.Now()
-	results := scanner.Scan([]RoutineInput{{Name: "evil-routine", Code: hostile}})
+	results := scanner.scanChecked([]RoutineInput{{Name: "evil-routine", Code: hostile}})
 	elapsed := time.Since(start)
 
 	// Timeout must fire well within an envelope of the constant. We
@@ -79,7 +79,7 @@ func TestScanner_StampsToolOverviewID(t *testing.T) {
 	`
 	oid := int64(7)
 	scanner := New()
-	results := scanner.Scan([]RoutineInput{{
+	results := scanner.scanChecked([]RoutineInput{{
 		Name:           "openvas",
 		Code:           code,
 		ToolOverviewID: &oid,
@@ -106,7 +106,7 @@ func TestScanner_NilToolOverviewID(t *testing.T) {
 		}];
 	`
 	scanner := New()
-	results := scanner.Scan([]RoutineInput{{
+	results := scanner.scanChecked([]RoutineInput{{
 		Name: "nmap",
 		Code: code,
 		// ToolOverviewID intentionally nil
@@ -136,7 +136,7 @@ func TestScanner_DetectArrayShape(t *testing.T) {
 		}];
 	`
 	scanner := New()
-	results := scanner.Scan([]RoutineInput{{Name: "openvas", Code: code}})
+	results := scanner.scanChecked([]RoutineInput{{Name: "openvas", Code: code}})
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d: %+v", len(results), results)
@@ -165,7 +165,7 @@ func TestScanner_DetectObjectShape_HostAutofilled(t *testing.T) {
 		}];
 	`
 	scanner := New()
-	results := scanner.Scan([]RoutineInput{{Name: "nmap", Code: code}})
+	results := scanner.scanChecked([]RoutineInput{{Name: "nmap", Code: code}})
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))

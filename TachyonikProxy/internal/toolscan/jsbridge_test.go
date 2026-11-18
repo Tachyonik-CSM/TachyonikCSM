@@ -52,7 +52,7 @@ func TestNetScan_SimplifiedOpenVASRule(t *testing.T) {
 		openvasHost("192.168.178.77"),
 	)})
 
-	results := s.Scan([]RoutineInput{{
+	results := s.scanChecked([]RoutineInput{{
 		Name: "openvas",
 		Code: `
 			var rules = [{
@@ -100,7 +100,7 @@ func TestNetScan_SimplifiedOpenVASRule(t *testing.T) {
 func TestNetScan_NotReadyIsDistinguishable(t *testing.T) {
 	s := NewWithNetScan(stubProvider{netscan.Snapshot{Network: "192.168.178.0/24"}})
 
-	results := s.Scan([]RoutineInput{{
+	results := s.scanChecked([]RoutineInput{{
 		Name: "readiness",
 		Code: `
 			var rules = [{
@@ -125,7 +125,7 @@ func TestNetScan_NotReadyIsDistinguishable(t *testing.T) {
 func TestNetScan_AbsentProviderStillUsable(t *testing.T) {
 	s := New() // no provider at all
 
-	results := s.Scan([]RoutineInput{{
+	results := s.scanChecked([]RoutineInput{{
 		Name: "absent",
 		Code: `
 			var rules = [{
@@ -154,7 +154,7 @@ func TestNetScan_TypedNilProviderDoesNotPanic(t *testing.T) {
 	var typedNil *netscan.Scanner
 	s := NewWithNetScan(typedNil)
 
-	results := s.Scan([]RoutineInput{{
+	results := s.scanChecked([]RoutineInput{{
 		Name: "typednil",
 		Code: `var rules = [{ name: "t", detect: function(){ return netscan.info().ready ? {name:"t"} : null; } }];`,
 	}})
@@ -170,7 +170,7 @@ func TestNetScan_FindMatchingAndGet(t *testing.T) {
 		netscan.Host{IP: "192.168.178.9", Port: 8443, Status: 200, Body: "nmap service"},
 	)})
 
-	results := s.Scan([]RoutineInput{{
+	results := s.scanChecked([]RoutineInput{{
 		Name: "lookups",
 		Code: `
 			var rules = [{
@@ -207,7 +207,7 @@ func TestHTTPGet(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	results := s.Scan([]RoutineInput{{
+	results := s.scanChecked([]RoutineInput{{
 		Name: "httpget",
 		Code: `
 			var rules = [{
@@ -234,7 +234,7 @@ func TestHTTPGet(t *testing.T) {
 func TestNetScan_DiscoveredHostIsPreserved(t *testing.T) {
 	s := NewWithNetScan(stubProvider{readySnapshot(openvasHost("192.168.178.42"))})
 
-	results := s.Scan([]RoutineInput{{
+	results := s.scanChecked([]RoutineInput{{
 		Name: "hostkeep",
 		Code: `
 			var rules = [{
@@ -262,7 +262,7 @@ func TestNetScan_DiscoveredHostIsPreserved(t *testing.T) {
 func TestBuiltinToolsDetectsHD(t *testing.T) {
 	s := New()
 	s.SetVersion("1.5.0")
-	results := s.Scan([]RoutineInput{{Name: "tachyonikhd", Code: `
+	results := s.scanChecked([]RoutineInput{{Name: "tachyonikhd", Code: `
 var rules = [{
   name: "tachyonikhd",
   description: "TachyonikHD",
