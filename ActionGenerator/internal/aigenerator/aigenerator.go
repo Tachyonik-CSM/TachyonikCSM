@@ -18,8 +18,6 @@
 package aigenerator
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +30,7 @@ import (
 	"tachyonik/actiongenerator/internal/config"
 	"tachyonik/actiongenerator/internal/jsruntime"
 	"tachyonik/lib/aiclient"
+	"tachyonik/lib/aicode"
 	"tachyonik/lib/aipick"
 	"tachyonik/lib/apibridge"
 	"tachyonik/lib/apiholder"
@@ -141,7 +140,7 @@ func (ag *AIActionGenerator) loadActiveRoutine(rule *aimanager.ActionRule) {
 	// able to write that row already has the database, so this is depth rather
 	// than a boundary — but the hash is computed and stored at generation time
 	// and was never read, which made it decoration.
-	if err := verifyRoutineHash(routine); err != nil {
+	if err := aicode.VerifyChecksum(routine.Code, routine.SHA256); err != nil {
 		logger.Errorf("Refusing routine %d for action rule %d (%s): %v",
 			routine.ID, rule.ID, rule.Title, err)
 		return
@@ -335,9 +334,7 @@ func (ag *AIActionGenerator) GenerateForRule(rule *aimanager.ActionRule) (*aiman
 		return nil, fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
 	}
 
-	// Compute SHA256
-	hash := sha256.Sum256([]byte(code))
-	sha256Hex := hex.EncodeToString(hash[:])
+	sha256Hex := aicode.Checksum(code)
 
 	version := fmt.Sprintf("v%s", time.Now().Format("20060102_150405"))
 
@@ -587,22 +584,4 @@ var errNoAIManager = errors.New("no AIManager client configured")
 // pickEntry converts AIManager's record into aipick's.
 func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
 	return &aipick.Entry{ID: e.ID, Name: e.Name, Provider: e.Provider, Model: e.Model, URL: e.URL, APIKey: e.APIKey}
-}
-
-// verifyRoutineHash checks stored code against the SHA256 recorded with it.
-//
-// A routine with no recorded hash is refused like one with a wrong hash
-// (AG-GEN-16): every routine is stored with one, by generation and by a feed
-// import alike, so a row without it was not written by either. (Routines from
-// before hashes were recorded were kept running once; none were left, so that
-// allowance was dropped on 2026-11-18.)
-func verifyRoutineHash(routine *aimanager.Routine) error {
-	if routine.SHA256 == "" {
-		return errors.New("no SHA256 is recorded for the stored code")
-	}
-	sum := sha256.Sum256([]byte(routine.Code))
-	if got := hex.EncodeToString(sum[:]); got != routine.SHA256 {
-		return fmt.Errorf("stored code does not match its recorded SHA256 (recorded %s, got %s)", routine.SHA256, got)
-	}
-	return nil
 }
