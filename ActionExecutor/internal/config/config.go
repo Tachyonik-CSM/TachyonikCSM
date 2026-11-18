@@ -22,10 +22,10 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"tachyonik/lib/settings"
 )
 
 type Config struct {
@@ -146,7 +146,9 @@ type FileConfig struct {
 // be read or parsed, or a key it does not know (a misspelt key would leave
 // its setting at the default without a word). Running on defaults the
 // operator did not mean is worse than not starting. A missing file is fine:
-// the defaults and the environment run a local development setup.
+// the defaults and the environment run a local development setup. A
+// number, true/false or log-level value it cannot use — from the file or
+// the environment — is refused as well, every one of them in one error.
 func Load() (*Config, error) {
 	cfg := &Config{
 		AssetManager: AssetManagerConfig{
@@ -200,16 +202,25 @@ func Load() (*Config, error) {
 		fileCfg = &fc
 	}
 
+	// The file on top of the defaults, the environment on top of both. The
+	// reader collects every value that cannot be used, from both, and stops
+	// the daemon with the whole list.
+	r := settings.NewReader(configPath)
 	if fileCfg != nil {
-		applyFileConfig(cfg, fileCfg)
+		applyFileConfig(cfg, fileCfg, r)
 	}
-
-	applyEnvOverrides(cfg)
+	applyEnvOverrides(cfg, r)
+	if err := r.Err(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
-func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
+// applyFileConfig applies non-zero values from the parsed config.yaml onto cfg.
+// A 0 reads as an absent key (YAML cannot tell them apart); a negative number
+// or an unknown log level is recorded in r.
+func applyFileConfig(cfg *Config, fileCfg *FileConfig, r *settings.Reader) {
 	if fileCfg.AssetManager.URL != "" {
 		cfg.AssetManager.URL = fileCfg.AssetManager.URL
 	}
@@ -246,26 +257,20 @@ func applyFileConfig(cfg *Config, fileCfg *FileConfig) {
 	if fileCfg.AIManager.InternalServiceKey != "" {
 		cfg.AIManager.InternalServiceKey = fileCfg.AIManager.InternalServiceKey
 	}
-	if fileCfg.AI.TimeoutSeconds > 0 {
-		cfg.AI.TimeoutSeconds = fileCfg.AI.TimeoutSeconds
-	}
-	if fileCfg.Heartbeat.IntervalSeconds > 0 {
-		cfg.Heartbeat.IntervalSeconds = fileCfg.Heartbeat.IntervalSeconds
-	}
-	if fileCfg.Execution.TimeoutSeconds > 0 {
-		cfg.Execution.TimeoutSeconds = fileCfg.Execution.TimeoutSeconds
-	}
+	r.FileInt("ai.timeout_seconds", fileCfg.AI.TimeoutSeconds, &cfg.AI.TimeoutSeconds, settings.Min(1))
+	r.FileInt("heartbeat.interval_seconds", fileCfg.Heartbeat.IntervalSeconds, &cfg.Heartbeat.IntervalSeconds, settings.Min(1))
+	r.FileInt("execution.timeout_seconds", fileCfg.Execution.TimeoutSeconds, &cfg.Execution.TimeoutSeconds, settings.Min(1))
 	if fileCfg.Log.FilePath != "" {
 		cfg.Log.FilePath = fileCfg.Log.FilePath
 	}
-	if fileCfg.Log.Level != "" {
-		cfg.Log.Level = fileCfg.Log.Level
-	}
+	r.FileLevel("log.level", fileCfg.Log.Level, &cfg.Log.Level)
 	cfg.Log.ToConsole = fileCfg.Log.ToConsole
 	cfg.Log.ToFile = fileCfg.Log.ToFile
 }
 
-func applyEnvOverrides(cfg *Config) {
+// applyEnvOverrides applies environment variable overrides onto cfg. An empty
+// variable counts as unset; a value it cannot use is recorded in r.
+func applyEnvOverrides(cfg *Config, r *settings.Reader) {
 	if url := os.Getenv("ASSETMANAGER_URL"); url != "" {
 		cfg.AssetManager.URL = url
 	}
@@ -302,33 +307,15 @@ func applyEnvOverrides(cfg *Config) {
 	if aiMgrKey := os.Getenv("AIMANAGER_INTERNAL_SERVICE_KEY"); aiMgrKey != "" {
 		cfg.AIManager.InternalServiceKey = aiMgrKey
 	}
-	if timeoutStr := os.Getenv("ACTIONEXECUTOR_AI_TIMEOUT_SECONDS"); timeoutStr != "" {
-		if v, err := strconv.Atoi(timeoutStr); err == nil && v > 0 {
-			cfg.AI.TimeoutSeconds = v
-		}
-	}
-	if interval := os.Getenv("ACTIONEXECUTOR_HEARTBEAT_INTERVAL_SECONDS"); interval != "" {
-		if n, err := strconv.Atoi(interval); err == nil && n > 0 {
-			cfg.Heartbeat.IntervalSeconds = n
-		}
-	}
-	if v := os.Getenv("ACTIONEXECUTOR_EXECUTION_TIMEOUT_SECONDS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			cfg.Execution.TimeoutSeconds = n
-		}
-	}
+	r.Int("ACTIONEXECUTOR_AI_TIMEOUT_SECONDS", &cfg.AI.TimeoutSeconds, settings.Min(1))
+	r.Int("ACTIONEXECUTOR_HEARTBEAT_INTERVAL_SECONDS", &cfg.Heartbeat.IntervalSeconds, settings.Min(1))
+	r.Int("ACTIONEXECUTOR_EXECUTION_TIMEOUT_SECONDS", &cfg.Execution.TimeoutSeconds, settings.Min(1))
 	if logPath := os.Getenv("ACTIONEXECUTOR_LOG_FILE"); logPath != "" {
 		cfg.Log.FilePath = logPath
 	}
-	if logConsole := os.Getenv("ACTIONEXECUTOR_LOG_TO_CONSOLE"); logConsole != "" {
-		cfg.Log.ToConsole = logConsole == "true" || logConsole == "1"
-	}
-	if logFile := os.Getenv("ACTIONEXECUTOR_LOG_TO_FILE"); logFile != "" {
-		cfg.Log.ToFile = logFile == "true" || logFile == "1"
-	}
-	if logLevel := os.Getenv("ACTIONEXECUTOR_LOG_LEVEL"); logLevel != "" {
-		cfg.Log.Level = logLevel
-	}
+	r.Bool("ACTIONEXECUTOR_LOG_TO_CONSOLE", &cfg.Log.ToConsole)
+	r.Bool("ACTIONEXECUTOR_LOG_TO_FILE", &cfg.Log.ToFile)
+	r.Level("ACTIONEXECUTOR_LOG_LEVEL", &cfg.Log.Level)
 }
 
 // ExecutionTimeout is the time limit of one routine run.

@@ -150,6 +150,17 @@ Priority, highest first: environment variables, `config.yaml`, built-in
 defaults. `ACTIONEXECUTOR_CONFIG` overrides the file location (default
 `./config.yaml`).
 
+A number, true/false or log-level value ActionExecutor cannot use stops it at
+startup with exit code 1, whether it comes from an environment variable or from
+the file, and the error lists every such setting with what it takes. The AI
+timeout, the run time limit and the heartbeat interval take a whole number of
+seconds above 0; `ACTIONEXECUTOR_LOG_TO_CONSOLE` and `ACTIONEXECUTOR_LOG_TO_FILE`
+take `true`, `false`, `1` or `0`, in any case; the log level takes DEBUG, INFO,
+WARN or ERROR, in any case. An empty variable counts as unset; in the file a
+`0` counts as an absent key. Before 2026-11-18 such values were dropped without
+a word — `ACTIONEXECUTOR_LOG_TO_FILE=yes` even switched the file log off — so
+check a deployment's variables when upgrading.
+
 What matters most:
 
 | Option | Why |

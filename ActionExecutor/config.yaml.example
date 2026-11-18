@@ -5,6 +5,11 @@
 # (a misspelling), stops the service at startup with the reason on standard
 # error. Without a file, it runs on the defaults and the environment.
 #
+# A number, true/false or log-level value ActionExecutor cannot use — here or
+# in an ACTIONEXECUTOR_* variable — stops it at startup with an error listing
+# every such setting and what it takes. A 0 here counts as an absent key.
+# True/false variables take true, false, 1 or 0, in any case.
+#
 # Configuration priority (highest wins):
 #   environment variables > config.yaml > built-in defaults
 #
@@ -75,7 +80,7 @@ ai_manager:
                                                             # Env: AIMANAGER_INTERNAL_SERVICE_KEY
 
 ai:
-  timeout_seconds: 300  # Timeout for one routine-generation request to the AI (default: 300)
+  timeout_seconds: 300  # Timeout for one routine-generation request to the AI, seconds above 0 (default: 300)
                         # Env: ACTIONEXECUTOR_AI_TIMEOUT_SECONDS
 
 execution:
@@ -84,11 +89,11 @@ execution:
   # manager still under way is cancelled. One call may take up to this limit,
   # as a tool run does. The WebUI waits for a manual run's result at least
   # this long.
-  timeout_seconds: 280  # (default: 280)
+  timeout_seconds: 280  # Seconds above 0 (default: 280)
                         # Env: ACTIONEXECUTOR_EXECUTION_TIMEOUT_SECONDS
 
 heartbeat:
-  interval_seconds: 10  # How often liveness is reported to SystemManager (default: 10)
+  interval_seconds: 10  # How often liveness is reported to SystemManager, seconds above 0 (default: 10)
                         # Env: ACTIONEXECUTOR_HEARTBEAT_INTERVAL_SECONDS
 
 log:
@@ -96,7 +101,7 @@ log:
                                    # Env: ACTIONEXECUTOR_LOG_FILE
   # Set both of these explicitly: once a config.yaml is read, an omitted one
   # counts as false (the defaults, both true, apply only without a file).
-  to_console: true                 # Env: ACTIONEXECUTOR_LOG_TO_CONSOLE (true/1)
-  to_file: true                    # Env: ACTIONEXECUTOR_LOG_TO_FILE (true/1)
-  level: INFO                      # DEBUG, INFO, WARN or ERROR (default: INFO)
+  to_console: true                 # Env: ACTIONEXECUTOR_LOG_TO_CONSOLE (true, false, 1 or 0)
+  to_file: true                    # Env: ACTIONEXECUTOR_LOG_TO_FILE (true, false, 1 or 0)
+  level: INFO                      # DEBUG, INFO, WARN or ERROR, any case (default: INFO)
                                    # Env: ACTIONEXECUTOR_LOG_LEVEL
