@@ -344,7 +344,10 @@ importer sets itself (`sourceId`, `sourceLabel`, `userId` — declared in
 
 ### Which routine runs
 
-Each import rule runs its *active* routine. A routine becomes active when an
+Each import rule runs its *active* routine, and only when its code matches the
+SHA-256 recorded with it at generation: a routine without one, or whose code
+changed after it was validated, is refused and the rule runs no routine. The
+single-routine import test refuses it too. A routine becomes active when an
 administrator picks it, or — when the generation request asked for it ("Make
 new routine the active routine" in the Edit Import Rule dialog) — when it
 passed: SourceImporter then names it the rule's active routine as it clears the

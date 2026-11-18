@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"tachyonik/lib/aicode"
 	"testing"
 
 	"tachyonik/lib/apicontract"
@@ -63,7 +64,7 @@ func newFakeAIManager(t *testing.T, routine, file string) *fakeAIManager {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id": 5, "rule": 1, "type": "SourceImporter", "status": "passed"}`))
 		case r.Method == "GET" && r.URL.Path == "/api/internal/routines/5":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 5, "rule": 1, "code": routine, "status": "draft"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 5, "rule": 1, "code": routine, "sha256": aicode.Checksum(routine), "status": "draft"})
 		case r.Method == "GET" && r.URL.Path == "/api/sources/9/file":
 			w.Header().Set("X-Original-Filename", "scan.txt")
 			_, _ = w.Write([]byte(file))
