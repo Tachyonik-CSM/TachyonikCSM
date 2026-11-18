@@ -303,7 +303,9 @@ routine implementing it, then validates and stores the routine back in AIManager
    model, a SHA-256 of the code, and any validation log
 
 Only a routine stored as `passed` and marked *active* is ever loaded for real
-analysis. A routine becomes active when an administrator picks it, or — when the
+analysis, and only when its code matches the SHA-256 recorded with it: a
+routine without one, or whose code changed after it was validated, is refused
+and the rule runs no routine. The WebUI's routine test refuses it too. A routine becomes active when an administrator picks it, or — when the
 generation request asked for it ("Make new routine the active routine" in the
 Edit Analysis Rule dialog) — when it passed: SourceAnalyser then names it the
 rule's active routine as it clears the request, and loads it from AIManager's

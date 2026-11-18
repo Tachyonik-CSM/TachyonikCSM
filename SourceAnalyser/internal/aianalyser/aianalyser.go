@@ -12,8 +12,6 @@
 package aianalyser
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -22,6 +20,7 @@ import (
 	"time"
 
 	"tachyonik/lib/aiclient"
+	"tachyonik/lib/aicode"
 	"tachyonik/lib/aimwatcher"
 	"tachyonik/lib/aipick"
 	"tachyonik/lib/logger"
@@ -137,6 +136,14 @@ func (a *AIAnalyser) loadExecutorForRuleLocked(rule *aimanager.AnalysisRule) {
 		return
 	}
 
+	// Run only the code that was generated and validated: a missing or wrong
+	// checksum means the stored code is not that (aicode.VerifyChecksum).
+	if err := aicode.VerifyChecksum(routine.Code, routine.SHA256); err != nil {
+		logger.Errorf("Refusing routine %d for rule %d (%s): %v", routine.ID, rule.ID, rule.Type, err)
+		delete(a.executors, rule.ID)
+		return
+	}
+
 	executor := jsruntime.New(time.Duration(a.cfg.Analyzer.JSExecTimeoutSeconds) * time.Second)
 	if err := executor.LoadFromString(routine.Code); err != nil {
 		logger.Errorf("Failed to load routine %d code for rule %d (%s): %v",
@@ -248,9 +255,7 @@ func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule, useNow bool) 
 		return nil, fmt.Errorf("code generation failed for rule %d with %s: %w", rule.ID, choice.Describe(), err)
 	}
 
-	// Compute SHA256
-	hash := sha256.Sum256([]byte(code))
-	sha256Hex := hex.EncodeToString(hash[:])
+	sha256Hex := aicode.Checksum(code)
 
 	now := time.Now()
 	version := fmt.Sprintf("v%s", now.Format("20060102_150405"))
@@ -387,6 +392,9 @@ func (a *AIAnalyser) AnalyzeSourceWithRoutine(ctx jsruntime.RuleContext, routine
 	routine, err := a.aiMgrClient.GetRoutine(routineID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch test routine %d: %w", routineID, err)
+	}
+	if err := aicode.VerifyChecksum(routine.Code, routine.SHA256); err != nil {
+		return nil, fmt.Errorf("test routine %d is refused: %w", routineID, err)
 	}
 
 	executor := jsruntime.New(time.Duration(a.cfg.Analyzer.JSExecTimeoutSeconds) * time.Second)
