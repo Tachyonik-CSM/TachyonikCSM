@@ -158,7 +158,7 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 			if currentCount >= smUser.MaxDetections {
 				// Coalesced into one summary audit per (user, source) — see limitaudit.go.
 				h.limitAudit.record(detectionLimit, userID, currentCount, smUser.MaxDetections, sourceLabel, sourceID)
-				http.Error(w, fmt.Sprintf("Detection limit reached (%d/%d)", currentCount, smUser.MaxDetections), http.StatusForbidden)
+				respondError(w, http.StatusForbidden, fmt.Sprintf("Detection limit reached (%d/%d)", currentCount, smUser.MaxDetections))
 				return
 			}
 		}

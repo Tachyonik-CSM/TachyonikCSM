@@ -163,7 +163,7 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 			if currentCount >= smUser.MaxVulnerabilities {
 				// Coalesced into one summary audit per (user, source) — see limitaudit.go.
 				h.limitAudit.record(vulnerabilityLimit, userID, currentCount, smUser.MaxVulnerabilities, sourceLabel, sourceID)
-				http.Error(w, fmt.Sprintf("Vulnerability limit reached (%d/%d)", currentCount, smUser.MaxVulnerabilities), http.StatusForbidden)
+				respondError(w, http.StatusForbidden, fmt.Sprintf("Vulnerability limit reached (%d/%d)", currentCount, smUser.MaxVulnerabilities))
 				return
 			}
 		}

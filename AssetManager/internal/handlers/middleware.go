@@ -78,7 +78,7 @@ func RequireInternalService(cfg *config.Config) func(http.Handler) http.Handler 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !internalKeyValid(cfg, r.Header.Get("X-Internal-Service-Key")) {
-				http.Error(w, "Internal service authentication required", http.StatusUnauthorized)
+				respondError(w, http.StatusUnauthorized, "Internal service authentication required")
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(internalContext(r)))
@@ -110,7 +110,7 @@ func AuthMiddleware(cfg *config.Config, accounts *accountChecker) func(http.Hand
 			// Check for internal service key first (only if server has one configured)
 			if internalKey := r.Header.Get("X-Internal-Service-Key"); internalKey != "" && cfg.Auth.InternalServiceKey != "" {
 				if !internalKeyValid(cfg, internalKey) {
-					http.Error(w, "Invalid internal service key", http.StatusUnauthorized)
+					respondError(w, http.StatusUnauthorized, "Invalid internal service key")
 					return
 				}
 				next.ServeHTTP(w, r.WithContext(internalContext(r)))
@@ -119,22 +119,22 @@ func AuthMiddleware(cfg *config.Config, accounts *accountChecker) func(http.Hand
 
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, "Authorization header required", http.StatusUnauthorized)
+				respondError(w, http.StatusUnauthorized, "Authorization header required")
 				return
 			}
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+				respondError(w, http.StatusUnauthorized, "Invalid authorization header format")
 				return
 			}
 
 			claims, err := ParseJWT(cfg, parts[1])
 			if err != nil {
-				http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+				respondError(w, http.StatusUnauthorized, "Invalid or expired token")
 				return
 			}
 			if status, msg := accountRefusal(accounts, claims.UserID); status != 0 {
-				http.Error(w, msg, status)
+				respondError(w, status, msg)
 				return
 			}
 
@@ -179,7 +179,7 @@ func BodyLimitMiddleware(next http.Handler) http.Handler {
 			limit = MaxCoverageRequestBytes
 		}
 		if r.ContentLength > limit {
-			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			respondError(w, http.StatusRequestEntityTooLarge, "Request body too large")
 			return
 		}
 		if r.Body != nil {

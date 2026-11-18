@@ -19,8 +19,7 @@ info:
     reported what. Every change is also announced over the WebSocket `/ws`,
     whose messages are listed in 03-api.md.
 
-    Errors are answered as `{"error": "<message>"}` (AM-API-02). Known
-    deviation: some refusals are plain text (03-api.md, D1).
+    Errors are answered as `{"error": "<message>"}` (AM-API-02).
 servers:
   - url: http://localhost:8081
 security:
@@ -402,7 +401,7 @@ paths:
         "201": { description: "The vulnerability as stored.", content: { application/json: { schema: { $ref: "#/components/schemas/Vulnerability" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/LimitPlainText" }
+        "403": { $ref: "#/components/responses/LimitReached" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/LimitsUnavailable" }
     delete:
@@ -515,7 +514,7 @@ paths:
         "201": { description: "The detection as stored.", content: { application/json: { schema: { $ref: "#/components/schemas/Detection" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/LimitPlainText" }
+        "403": { $ref: "#/components/responses/LimitReached" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/LimitsUnavailable" }
     delete:
@@ -676,10 +675,9 @@ paths:
         "202": { description: A notification was taken. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: "The internal service key was presented (AM-SEC-23), or the account is deactivated (AM-SEC-03; known deviation, plain text, D1)."
+          description: "The internal service key was presented (AM-SEC-23), or the account is deactivated (AM-SEC-03)."
           content:
             application/json: { schema: { $ref: "#/components/schemas/Error" } }
-            text/plain: { schema: { type: string } }
 
   /health:
     get:
@@ -708,7 +706,7 @@ paths:
       responses:
         "200": { description: "Metrics in the Prometheus text format.", content: { text/plain: { schema: { type: string } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { description: "The account is deactivated (AM-SEC-03). Known deviation, plain text (D1).", content: { text/plain: { schema: { type: string } } } }
+        "403": { description: "The account is deactivated (AM-SEC-03).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
 components:
   # The answers of the bridge operations in the mock scenarios
@@ -1318,11 +1316,11 @@ components:
 
   responses:
     BadRequest: { description: "The request cannot be read or is invalid, including a list filter with a rule that cannot be read (AM-API-05).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-    Unauthorized: { description: "Not authenticated (AM-SEC-01). Known deviation, plain text (D1).", content: { text/plain: { schema: { type: string } } } }
+    Unauthorized: { description: "Not authenticated (AM-SEC-01).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     Forbidden: { description: "Not allowed, a limit was reached, or the account is deactivated.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-    LimitPlainText: { description: "The limit was reached (AM-DATA-35). Known deviation, plain text (D1).", content: { text/plain: { schema: { type: string } } } }
+    LimitReached: { description: "The limit was reached (AM-DATA-35).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     NotFound: { description: "No such record in the visible set (AM-SEC-11).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-    TooLarge: { description: "The body exceeds its limit (AM-SEC-20). Known deviation, plain text (D1).", content: { text/plain: { schema: { type: string } } } }
+    TooLarge: { description: "The body exceeds its limit (AM-SEC-20).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     ServerError: { description: "The request failed.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     LimitsUnavailable: { description: "SystemManager could not be asked for the owner's limits, so nothing new was created (AM-DATA-44). Try again.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     ChangeResult:

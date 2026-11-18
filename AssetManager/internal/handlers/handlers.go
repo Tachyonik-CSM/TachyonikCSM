@@ -295,17 +295,17 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	tokenString := strings.TrimSpace(r.Header.Get("Sec-Websocket-Protocol"))
 	if tokenString == "" {
 		logger.Warnf("WebSocket: rejecting unauthenticated connection (no token offered as Sec-WebSocket-Protocol) from %s origin %q", r.RemoteAddr, r.Header.Get("Origin"))
-		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 	claims, err := ParseJWT(h.config, tokenString)
 	if err != nil {
 		logger.Warnf("WebSocket: rejecting connection with invalid/expired token from %s origin %q: %v", r.RemoteAddr, r.Header.Get("Origin"), err)
-		http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
 		return
 	}
 	if status, msg := accountRefusal(h.accounts, claims.UserID); status != 0 {
-		http.Error(w, msg, status)
+		respondError(w, status, msg)
 		return
 	}
 
