@@ -76,11 +76,18 @@ type fakeRunner struct {
 	subjects []string
 	notRun   []string // subject: why
 	refused  []string // rule: subject: why
+	cutOff   []string // rule: subject
 	out      *jsruntime.ExecResult
 	err      error
+	// started and release, when set, hold Execute until release is closed.
+	started, release chan struct{}
 }
 
 func (f *fakeRunner) Execute(_ int64, _ *jsruntime.JSExecutorRuntime, auth run.AuthContext, subject string) (*jsruntime.ExecResult, error) {
+	if f.release != nil {
+		close(f.started)
+		<-f.release
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runs = append(f.runs, auth)
@@ -92,6 +99,12 @@ func (f *fakeRunner) RecordNotRun(_ int64, subject, why string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.notRun = append(f.notRun, subject+": "+why)
+}
+
+func (f *fakeRunner) RecordCutOff(ruleID, _ int64, subject string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cutOff = append(f.cutOff, fmt.Sprintf("%d: %s", ruleID, subject))
 }
 
 func (f *fakeRunner) Refuse(ruleID, _ int64, subject, why string) {

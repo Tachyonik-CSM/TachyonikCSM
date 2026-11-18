@@ -470,3 +470,31 @@ var errNoAIManager = errors.New("no AIManager client configured")
 func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
 	return &aipick.Entry{ID: e.ID, Name: e.Name, Provider: e.Provider, Model: e.Model, URL: e.URL, APIKey: e.APIKey}
 }
+
+// interruptedRequestReason is what a generation request still standing at
+// startup is cleared with.
+const interruptedRequestReason = "ActionExecutor was restarted before it could handle this generation request; request it again"
+
+// ClearStandingRequests clears every generation request still standing at
+// startup. A request is handled when its rule's change is announced, so one
+// that is still set now was either cut off by a stop — an AI call is not
+// waited for — or asked for while ActionExecutor was not running. No
+// announcement will come for it any more, and the rule dialog would say
+// "generating" for good. Call it after LoadRules and before the rule watcher
+// starts, so a request made from then on is not mistaken for one.
+func (ag *AIActionExecutor) ClearStandingRequests() {
+	ag.mu.RLock()
+	var standing []*aimanager.ExecutionRule
+	for _, rule := range ag.rules {
+		if rule.GenerateRequestedAt != nil {
+			standing = append(standing, rule)
+		}
+	}
+	ag.mu.RUnlock()
+	for _, rule := range standing {
+		logger.Warnf("Clearing the generation request of execution rule %d (%s): %s", rule.ID, rule.Title, interruptedRequestReason)
+		if err := ag.aiMgrClient.ClearGenerateRequest(rule.ID, interruptedRequestReason, 0); err != nil {
+			logger.Errorf("Failed to clear the generation request of execution rule %d: %v", rule.ID, err)
+		}
+	}
+}

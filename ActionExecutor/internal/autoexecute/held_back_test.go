@@ -16,7 +16,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"tachyonik/lib/aicode"
 	"testing"
 
 	"tachyonik/actionexecutor/internal/actionwatcher"
@@ -24,6 +23,7 @@ import (
 	"tachyonik/actionexecutor/internal/aimanager"
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/run"
+	"tachyonik/lib/aicode"
 )
 
 type audits struct {

@@ -181,8 +181,28 @@ What matters most:
 
 At startup the daemon loads the module settings and every execution rule with
 its active routine from AIManager and starts its watchers, then runs whatever
-run requests are waiting. It stops on SIGINT or SIGTERM. A heartbeat is sent to
+run requests are waiting. A generation request still standing then — cut off
+by a stop, or made while the daemon was down — is cleared with that reason,
+which the rule dialog shows; request it again. A heartbeat is sent to
 SystemManager every `heartbeat.interval_seconds`.
+
+### Stopping
+
+On SIGINT or SIGTERM a run and the report of its outcome are not cut apart:
+
+1. The watchers are closed, so no new run starts. A manual run requested from
+   now on stays pending and is run at the next start; an action created now is
+   not executed automatically and stays for the user.
+2. The runs in progress — manual or automatic — finish and are reported and
+   audited as usual, for up to 60 seconds. A run can take up to
+   `execution.timeout_seconds` (280 by default), too long to wait out, so one
+   still going then is named in a warning, reported to AIManager as failed
+   ("cut off by a stop"), its manual request answered with that, and audited —
+   rather than disappearing. What it had already done is not known.
+3. A routine generation in progress is not waited for; its request is cleared
+   at the next start (see above).
+4. The heartbeat and the log are closed. The container is given 75 seconds
+   (`stop_grace_period` in `deployment/docker/compose.yaml`).
 
 Logs go to the console and/or `log.file_path`, at `log.level`.
 

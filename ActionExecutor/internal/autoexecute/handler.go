@@ -16,6 +16,7 @@
 package autoexecute
 
 import (
+	"fmt"
 	"strconv"
 
 	"tachyonik/actionexecutor/internal/actionwatcher"
@@ -25,6 +26,7 @@ import (
 	"tachyonik/actionexecutor/internal/run"
 	"tachyonik/actionexecutor/internal/runaudit"
 	"tachyonik/actionexecutor/internal/servicecall"
+	"tachyonik/lib/drain"
 	"tachyonik/lib/logger"
 )
 
@@ -38,7 +40,13 @@ type Handler struct {
 	// deleting the action), with the service key on the user's behalf.
 	calls *servicecall.Client
 	cfg   *config.Config
+	// gate lets a stop wait for a run in progress (SetGate); nil: none.
+	gate *drain.Gate
 }
+
+// SetGate makes every automatic run a unit of the daemon's stop gate: one
+// asked for after the stop is not started, and one cut off is recorded.
+func (h *Handler) SetGate(g *drain.Gate) { h.gate = g }
 
 // New creates a new auto-execute handler.
 func New(
@@ -117,6 +125,18 @@ func (h *Handler) OnActionCreated(action actionwatcher.Action) {
 	}
 
 	auth := run.AuthContext{UserID: action.UserID}
+
+	// The run and what follows it — deleting the action it carried out —
+	// are one unit a stop lets finish.
+	if h.gate != nil {
+		unit := h.gate.Enter(fmt.Sprintf("the automatic run of execution rule %d for action %d", executionRuleID, action.ID),
+			func() { h.runner.RecordCutOff(executionRuleID, action.UserID, subject) })
+		if unit == nil {
+			logger.Warnf("autoexecute: action %d not executed: ActionExecutor is stopping", action.ID)
+			return
+		}
+		defer unit.Leave()
+	}
 
 	logger.Infof("autoexecute: auto-executing rule %d for action %d (user %d)",
 		executionRuleID, action.ID, action.UserID)

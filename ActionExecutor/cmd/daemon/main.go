@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,6 +42,7 @@ import (
 	"tachyonik/lib/aimwatcher"
 	libbridge "tachyonik/lib/apibridge"
 	"tachyonik/lib/apiholder"
+	"tachyonik/lib/drain"
 	"tachyonik/lib/heartbeat"
 	"tachyonik/lib/logger"
 	"tachyonik/lib/systemmanager"
@@ -229,6 +231,10 @@ func runDaemon(cfg *config.Config) {
 	// Load execution rules and their active routines
 	if err := aiExec.LoadRules(); err != nil {
 		logger.Errorf("Failed to load execution rules: %v", err)
+	} else {
+		// Before the rule watcher starts: a request still standing now will
+		// get no announcement any more.
+		aiExec.ClearStandingRequests()
 	}
 
 	// Shared module-settings refresh — used by both the
@@ -261,7 +267,15 @@ func runDaemon(cfg *config.Config) {
 	runner.SetCatalogue(apiCatalogue)
 
 	// Manual runs: a user's Execute arrives as a request from AIManager.
+	// Every run — manual or automatic — is a unit a stop lets finish, and
+	// records when it has to cut it off (TachyonikLib drain).
+	var gate drain.Gate
+	// The watchers that start runs, closed first on a stop: from then on
+	// nothing new is reacted to.
+	var stopWatching []func() error
+
 	manualRuns := manualrun.New(aiMgrClient, aiExec, runner)
+	manualRuns.SetGate(&gate)
 
 	// Start execution rule watcher. FEED_IMPORTED triggers a full
 	// LoadRules() rebuild plus module-settings refresh; EXECUTION_REQUESTED
@@ -291,21 +305,23 @@ func runDaemon(cfg *config.Config) {
 		erw.SetRunRequestHandler(manualRuns.OnRequested)
 		erw.SetConnectHandler(manualRuns.PickUpPending)
 		erw.Start()
-		defer erw.Close()
+		stopWatching = append(stopWatching, erw.Close)
 		logger.Info("Execution rule watcher started")
 	}
 
 	// Create auto-execute handler and start action watcher
 	autoExecHandler := autoexecute.New(aiMgrClient, aiExec, runner, cfg)
+	autoExecHandler.SetGate(&gate)
 	aw := actionwatcher.New(cfg.ActionManager.URL, cfg.ActionManager.InternalServiceKey, func(action actionwatcher.Action) {
 		go autoExecHandler.OnActionCreated(action)
 	})
 	aw.Start()
-	defer aw.Close()
+	stopWatching = append(stopWatching, aw.Close)
 	logger.Info("ActionManager action watcher started (auto-execute)")
 
 	// Start liveness heartbeat to SystemManager.
-	heartbeat.Start(context.Background(), heartbeat.Config{
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
+	heartbeat.Start(heartbeatCtx, heartbeat.Config{
 		ServiceName:        "ActionExecutor",
 		IntervalSeconds:    cfg.Heartbeat.IntervalSeconds,
 		SystemManagerURL:   cfg.SystemManager.URL,
@@ -320,5 +336,25 @@ func runDaemon(cfg *config.Config) {
 	<-quit
 
 	logger.Info("Shutting down ActionExecutor daemon...")
+
+	// Stop reacting to messages, let the runs in progress finish — a run and
+	// the report of its outcome belong together — then close the rest. A run
+	// still going when the wait is up is reported and audited as cut off. A
+	// generation in progress is not waited for; its request is cleared at the
+	// next start.
+	for _, closeWatcher := range stopWatching {
+		_ = closeWatcher()
+	}
+	gate.Stop()
+	if running := gate.Wait(shutdownDrain); len(running) > 0 {
+		logger.Warnf("Stopping although %s did not finish within %s; recorded as cut off", strings.Join(running, ", "), shutdownDrain)
+	}
+	stopHeartbeat()
 	logger.Info("Daemon stopped")
 }
+
+// shutdownDrain bounds how long a stop waits for the runs in progress. A run
+// may take up to execution.timeout_seconds (280 s by default) — too long to
+// wait out on every stop — so a longer one is cut off and recorded. The
+// container is given 75 s (stop_grace_period in compose.yaml).
+const shutdownDrain = 60 * time.Second

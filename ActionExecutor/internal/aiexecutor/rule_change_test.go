@@ -15,12 +15,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
-	"tachyonik/lib/aicode"
 	"testing"
 
 	"tachyonik/actionexecutor/internal/aimanager"
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/executionrulewatcher"
+	"tachyonik/lib/aicode"
 )
 
 func TestAChangedRuleReloadsOnlyItself(t *testing.T) {

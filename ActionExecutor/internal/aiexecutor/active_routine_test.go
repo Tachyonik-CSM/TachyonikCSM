@@ -16,12 +16,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"tachyonik/lib/aicode"
 	"testing"
 
 	"tachyonik/actionexecutor/internal/aimanager"
 	"tachyonik/actionexecutor/internal/config"
 	"tachyonik/actionexecutor/internal/jsruntime"
+	"tachyonik/lib/aicode"
 )
 
 // withLoadedRoutine is an executor with rule 4 running sampleExecRoutine, and

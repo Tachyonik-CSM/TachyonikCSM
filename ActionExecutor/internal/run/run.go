@@ -129,6 +129,15 @@ func (r *Runner) Refuse(ruleID, userID int64, subject, why string) {
 	r.record(userID, subject, errors.New(why), "", "", nil)
 }
 
+// CutOffReason is what a run cut off by a stop is reported and audited with.
+const CutOffReason = "cut off by a stop of ActionExecutor before it finished; what it had already done is not known"
+
+// RecordCutOff reports and audits a run a stop cut off before it finished,
+// so it is on record although its result never came (drain.Unit OnCutOff).
+func (r *Runner) RecordCutOff(ruleID, userID int64, subject string) {
+	r.Refuse(ruleID, userID, subject, CutOffReason)
+}
+
 // RecordNotRun audits a run that could not start — no such rule, no active
 // routine — so a request that came to nothing is on record too.
 func (r *Runner) RecordNotRun(userID int64, subject, why string) {

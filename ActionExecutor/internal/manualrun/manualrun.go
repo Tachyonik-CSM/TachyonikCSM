@@ -19,12 +19,14 @@ package manualrun
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"tachyonik/actionexecutor/internal/aimanager"
 	"tachyonik/actionexecutor/internal/executionrulewatcher"
 	"tachyonik/actionexecutor/internal/jsruntime"
 	"tachyonik/actionexecutor/internal/run"
 	"tachyonik/actionexecutor/internal/runaudit"
+	"tachyonik/lib/drain"
 	"tachyonik/lib/logger"
 )
 
@@ -40,6 +42,7 @@ type Runner interface {
 	Execute(ruleID int64, rt *jsruntime.JSExecutorRuntime, auth run.AuthContext, subject string) (*jsruntime.ExecResult, error)
 	RecordNotRun(userID int64, subject, why string)
 	Refuse(ruleID, userID int64, subject, why string)
+	RecordCutOff(ruleID, userID int64, subject string)
 }
 
 // Rules are the loaded execution rules and their routines (package aiexecutor).
@@ -56,7 +59,15 @@ type Handler struct {
 	requests Requests
 	rules    Rules
 	runner   Runner
+	// gate lets a stop wait for a run in progress (SetGate); nil: none.
+	gate *drain.Gate
 }
+
+// SetGate makes every manual run a unit of the daemon's stop gate. A request
+// arriving after the stop is left pending — it is picked up at the next
+// start — and one cut off is reported failed and audited, instead of waiting
+// for AIManager to give up on it.
+func (h *Handler) SetGate(g *drain.Gate) { h.gate = g }
 
 // New creates a Handler.
 func New(requests Requests, rules Rules, runner Runner) *Handler {
@@ -85,6 +96,24 @@ func (h *Handler) PickUpPending() {
 }
 
 func (h *Handler) handle(id int64) {
+	// What a cut-off must report, set once the request is claimed and its
+	// run about to start; read by the stop's goroutine, hence atomic.
+	var running atomic.Pointer[cutOff]
+	if h.gate != nil {
+		unit := h.gate.Enter(fmt.Sprintf("the run of execution request %d", id), func() {
+			if c := running.Load(); c != nil {
+				h.runner.RecordCutOff(c.ruleID, c.userID, c.subject)
+				if err := h.requests.ReportExecutionRequest(id, false, failure(run.CutOffReason)); err != nil {
+					logger.Errorf("manualrun: failed to report request %d as cut off: %v", id, err)
+				}
+			}
+		})
+		if unit == nil {
+			logger.Infof("manualrun: request %d left pending: ActionExecutor is stopping", id)
+			return
+		}
+		defer unit.Leave()
+	}
 	req, err := h.requests.ClaimExecutionRequest(id)
 	if errors.Is(err, aimanager.ErrNotClaimable) {
 		logger.Debugf("manualrun: request %d is no longer pending; skipped", id)
@@ -95,7 +124,7 @@ func (h *Handler) handle(id int64) {
 		return
 	}
 
-	done, outcome := h.run(req)
+	done, outcome := h.run(req, &running)
 	if err := h.requests.ReportExecutionRequest(req.ID, done, outcome); err != nil {
 		logger.Errorf("manualrun: failed to report the outcome of request %d: %v", req.ID, err)
 	}
@@ -104,7 +133,7 @@ func (h *Handler) handle(id int64) {
 // run carries out a claimed request and words its outcome: done when the
 // routine produced a result — whatever status it reported — and not done when
 // there was nothing to run or the run itself failed.
-func (h *Handler) run(req *aimanager.ExecutionRequest) (bool, aimanager.ExecutionOutcome) {
+func (h *Handler) run(req *aimanager.ExecutionRequest, running *atomic.Pointer[cutOff]) (bool, aimanager.ExecutionOutcome) {
 	rule := h.rules.GetRule(req.ExecutionRuleID)
 	if rule == nil {
 		why := fmt.Sprintf("execution rule %d not found", req.ExecutionRuleID)
@@ -127,6 +156,7 @@ func (h *Handler) run(req *aimanager.ExecutionRequest) (bool, aimanager.Executio
 		return false, failure(why)
 	}
 
+	running.Store(&cutOff{ruleID: rule.ID, userID: req.UserID, subject: subject})
 	logger.Infof("manualrun: running rule %d for user %d (request %d)", rule.ID, req.UserID, req.ID)
 	auth := run.AuthContext{UserID: req.UserID, UserRole: req.UserRole}
 	result, err := h.runner.Execute(rule.ID, rt, auth, subject)
@@ -146,6 +176,13 @@ func (h *Handler) run(req *aimanager.ExecutionRequest) (bool, aimanager.Executio
 		logger.Warnf("manualrun: rule %d for user %d returned status=error: %s", rule.ID, req.UserID, result.Message)
 	}
 	return true, outcome
+}
+
+// cutOff is what a stop that cuts the run off reports: the run's rule, user
+// and audit subject.
+type cutOff struct {
+	ruleID, userID int64
+	subject        string
 }
 
 func failure(reason string) aimanager.ExecutionOutcome {
