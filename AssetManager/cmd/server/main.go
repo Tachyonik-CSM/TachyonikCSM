@@ -72,7 +72,7 @@ func main() {
 		defer logFile.Close()
 	}
 
-	logger.Infof("Starting Tachyonik AssetManager server %s...", version.Version)
+	logger.Startup("AssetManager", version.Version)
 	logger.Info("Configuration loaded:")
 	logger.Infof("  Database Path: %s", cfg.Database.Path)
 	logger.Infof("  Server: %s:%s", cfg.Server.Host, cfg.Server.Port)

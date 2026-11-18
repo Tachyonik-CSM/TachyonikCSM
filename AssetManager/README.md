@@ -68,7 +68,7 @@ stripped to a numeric `x.y.z`, and injected at build time:
 
 `--match` is what keeps it independent — every other tag in the monorepo is
 ignored. Off-tag or dirty builds get a descriptive suffix (`1.0.0-3-gabc123`,
-`1.0.0-dirty`); a tree with no matching tag falls back to `0.0.0-dev`. The
+`1.0.0-dirty`); a tree with no matching tag falls back to `0.0.0-dev`. The first line of every start names it — `Starting Tachyonik AssetManager <version> (<go version>, <os>/<arch>)` — so a support log shows exactly what ran. The
 running version is also logged at startup.
 
 Three build paths inject it, and all three must, or a build silently ships the
