@@ -73,3 +73,18 @@ func TestAnUnusableFileValueStopsTheService(t *testing.T) {
 		t.Errorf("level = %q, want WARN", got)
 	}
 }
+
+func TestEveryFaultIsReportedAtOnce(t *testing.T) {
+	withConfig(t, "heartbeat:\n  interval_seconds: -10\n")
+	t.Setenv("ACTIONGENERATOR_LOG_TO_FILE", "yes")
+	t.Setenv("ACTIONGENERATOR_AI_TIMEOUT_SECONDS", "x")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, s := range []string{"heartbeat.interval_seconds", "ACTIONGENERATOR_LOG_TO_FILE", "ACTIONGENERATOR_AI_TIMEOUT_SECONDS"} {
+		if !strings.Contains(err.Error(), s) {
+			t.Errorf("%s missing from %v", s, err)
+		}
+	}
+}

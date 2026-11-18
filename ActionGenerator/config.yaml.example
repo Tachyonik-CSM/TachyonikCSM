@@ -96,8 +96,8 @@ heartbeat:
                         # Env: ACTIONGENERATOR_HEARTBEAT_INTERVAL_SECONDS
 
 # A value ActionGenerator cannot use — a negative number, an unknown log level,
-# here or in an environment variable — stops it at startup with an error naming
-# the setting. A 0 here counts as an absent key.
+# here or in an environment variable — stops it at startup with an error listing
+# every such setting and what it takes. A 0 here counts as an absent key.
 #
 # NOTE: to_console and to_file must be stated explicitly whenever this file
 # exists. Unlike every other setting, they are applied unconditionally rather

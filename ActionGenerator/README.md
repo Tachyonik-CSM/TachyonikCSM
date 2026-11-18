@@ -249,8 +249,9 @@ Environment variables override configuration file values:
 | `ACTIONGENERATOR_LOG_LEVEL` | Log level (DEBUG, INFO, WARN, ERROR, any case) | `INFO` |
 
 A value ActionGenerator cannot use stops it at startup with exit code 1 and an
-error on standard error naming the setting, whether it comes from a variable
-above or from the file (a negative number, an unknown log level). An empty
+error on standard error listing every such setting with what it takes, whether
+it comes from a variable above or from the file (a negative number, an unknown
+log level). An empty
 variable counts as unset. Before 2026-11-18 such a value was ignored without a
 word — `ACTIONGENERATOR_LOG_TO_FILE=yes` even switched the file log off — so
 check a deployment's variables when upgrading (spec AG-OPS-15).
