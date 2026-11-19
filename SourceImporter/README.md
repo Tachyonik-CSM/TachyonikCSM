@@ -416,6 +416,10 @@ AssetManager with the source and owner added (see [What a routine
 returns](#what-a-routine-returns)). Which records a routine may return, and
 every field of them, is AssetManager's own API document, not this module.
 
+The owner is the source's owner. A source without one (user id 0) is not
+imported: the import fails with "the source has no owner", since AssetManager
+refuses every record a service creates without an existing owner (AM-SEC-13).
+
 ### Adding a file type
 
 1. Make sure SourceAnalyser recognises the format: its analysis rule assigns the

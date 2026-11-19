@@ -39,7 +39,7 @@ type CreateAssetRequest struct {
 	Type        string `json:"type"`
 	SourceID    int64  `json:"sourceId"`    // ResourceManager source id
 	SourceLabel string `json:"sourceLabel"` // denormalised filename
-	UserID      int64  `json:"userId,omitempty"`
+	UserID      int64  `json:"userId"`      // always sent: AssetManager refuses a create without an owner (AM-SEC-13)
 	LastSeen    string `json:"lastSeen,omitempty"`
 	// The scan coverage the import read for this asset, left out when the
 	// routine gave none. AssetManager keeps the source's earlier values then.
@@ -74,7 +74,7 @@ type CreateVulnerabilityRequest struct {
 	// id and its filename.
 	SourceID    int64  `json:"sourceId"`
 	SourceLabel string `json:"sourceLabel"`
-	UserID      int64  `json:"userId,omitempty"`
+	UserID      int64  `json:"userId"` // always sent: AssetManager refuses a create without an owner (AM-SEC-13)
 	LastSeen    string `json:"lastSeen,omitempty"`
 }
 
@@ -99,7 +99,7 @@ type CreateDetectionRequest struct {
 	// id and its filename.
 	SourceID    int64  `json:"sourceId"`
 	SourceLabel string `json:"sourceLabel"`
-	UserID      int64  `json:"userId,omitempty"`
+	UserID      int64  `json:"userId"` // always sent: AssetManager refuses a create without an owner (AM-SEC-13)
 	LastSeen    string `json:"lastSeen,omitempty"`
 }
 

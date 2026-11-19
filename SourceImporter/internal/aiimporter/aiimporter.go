@@ -323,6 +323,13 @@ func (ai *AIImporter) storeRoutine(code string, ruleID int64, version, model, sh
 // ImportSource executes the AI-generated import for a source.
 // Returns import notes string on success.
 func (ai *AIImporter) ImportSource(source *rscmanager.Source) (string, error) {
+	// Every record is created for the source's owner, and AssetManager
+	// refuses a record without one (AM-SEC-13). Said once here rather than
+	// in one refusal per record.
+	if source.UserID <= 0 {
+		return "", fmt.Errorf("the source has no owner (user id %d), so its records would belong to no one", source.UserID)
+	}
+
 	// Find matching rule
 	rule := ai.FindMatchingRule(source.SourceType)
 	if rule == nil {
