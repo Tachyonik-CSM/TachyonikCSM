@@ -774,6 +774,8 @@ A browser connection is checked again while it is open (AM-SEC-24):
 - every minute, each connected user's account is checked as for a request. A deactivated or deleted account has its connections closed with close code `1008`; otherwise the user's workspace members are looked up again, so a user who left a workspace stops receiving its messages and one who joined starts, without reconnecting;
 - when SystemManager cannot be asked, the connection stays open but receives only the user's own records until the next check.
 
+A client should not reconnect after close code `1008` with the same token: the handshake would be refused. The WebUI reconnects only when a newer token has been stored since (the token was refreshed).
+
 ### Connection
 
 ```javascript
