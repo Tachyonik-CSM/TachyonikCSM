@@ -142,54 +142,6 @@ func (db *DB) deleteFindingsWhere(k findingKind, where string, args []interface{
 	return ids, nil
 }
 
-// clearFindingSource unlinks the findings matching the source scope from their
-// source, keeping the records, and returns their IDs with their owners.
-func (db *DB) clearFindingSource(k findingKind, sourceID int64, userID int64) ([]Owned, error) {
-	where, args := sourceScope(sourceID, userID, nil)
-	ids := []Owned{}
-	if err := db.Select(&ids, "SELECT id, user_id FROM "+k.table+" WHERE "+where, args...); err != nil {
-		return nil, fmt.Errorf("failed to get %s IDs: %w", k.noun, err)
-	}
-	if len(ids) == 0 {
-		return ids, nil
-	}
-	if _, err := db.Exec("UPDATE "+k.table+" SET source_id = NULL, source_label = '', modified_at = ? WHERE "+where, append([]interface{}{time.Now()}, args...)...); err != nil {
-		return nil, fmt.Errorf("failed to clear %s sources: %w", k.noun, err)
-	}
-	return ids, nil
-}
-
-// deleteFindingsByIDs deletes those of ids that belong to the user and that no
-// source owns (no source id, and an empty or blank label): a record an import
-// made is
-// removed with its source, not one by one. Every other ID — someone else's,
-// sourced, unknown, or one whose delete failed — is returned as skipped.
-func (db *DB) deleteFindingsByIDs(k findingKind, ids []int64, userID int64) (deleted []int64, skipped []int64, err error) {
-	if len(ids) == 0 {
-		return []int64{}, []int64{}, nil
-	}
-	for _, id := range ids {
-		var owner struct {
-			SourceID    *int64 `db:"source_id"`
-			SourceLabel string `db:"source_label"`
-		}
-		if err := db.Get(&owner, "SELECT source_id, source_label FROM "+k.table+" WHERE id = ? AND user_id = ?", id, userID); err != nil {
-			skipped = append(skipped, id)
-			continue
-		}
-		if owner.SourceID != nil || strings.TrimSpace(owner.SourceLabel) != "" {
-			skipped = append(skipped, id)
-			continue
-		}
-		if _, err := db.Exec("DELETE FROM "+k.table+" WHERE id = ? AND user_id = ?", id, userID); err != nil {
-			skipped = append(skipped, id)
-			continue
-		}
-		deleted = append(deleted, id)
-	}
-	return deleted, skipped, nil
-}
-
 // sourceIDArg is a source id as a query argument: NULL for 0, no id known.
 func sourceIDArg(id int64) interface{} {
 	if id > 0 {

@@ -86,7 +86,7 @@ func TestLastScanned(t *testing.T) {
 	if v := lastScanned(t, db, "10.0.0.1", "Host"); v == nil || !v.Equal(*ago(20)) {
 		t.Fatalf("after deleting the detection: last_scanned = %v, want %v", v, ago(20))
 	}
-	if _, _, err := db.DeleteVulnerabilitiesByIDs([]int64{vuln.ID}, 7); err != nil {
+	if _, err := db.Exec("DELETE FROM vulnerabilities WHERE id = ?", vuln.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpdateAllAssetLastScanned(); err != nil {

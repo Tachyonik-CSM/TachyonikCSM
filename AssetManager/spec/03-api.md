@@ -14,15 +14,18 @@ them is in [4. Security and tenancy](04-security-and-tenancy.md).
 
 | Path | GET | POST | PATCH | DELETE |
 |---|---|---|---|---|
-| `/api/assets` | list | create, or report again | | by id |
+| `/api/assets` | list | create, or report again (service) | | |
 | `/api/assets/{id}` | one | | type | |
-| `/api/assets/by-source` | | | keep without the source | delete |
+| `/api/assets/by-source` | | | | when the source is deleted (service) |
 | `/api/assets/stale` | | | | after a re-import (service) |
-| `/api/assets/scan-coverage` | | apply a table | | |
+| `/api/assets/scan-coverage` | | apply a table (service) | | |
 | `/api/assets/stats` | statistics | | | |
-| `/api/vulnerabilities`, `/api/detections` | list | create | | by id |
-| `…/by-source` | | | keep without the source | delete |
+| `/api/vulnerabilities`, `/api/detections` | list | create (service) | | |
+| `…/by-source` | | | | when the source is deleted (service) |
 | `…/stale` | | | | after a re-import (service) |
+
+No record is created or deleted by hand (AM-PUR-20): there is no deletion by
+id and no keeping a source's records without it.
 | `/api/internal/…` | user ids, usage (AM-DATA-45) | score recalculation | move a user's records | delete a user's records |
 | `/api/mcp` | | the MCP server (AM-API-15) | | |
 | `/health`, `/ready`, `/metrics` | see [5. Operation](05-operation.md) | | | |
@@ -119,9 +122,8 @@ which both the old and the new form work, the old one logged as deprecated.
 *Reason: the services are updated one after another, not at once. An example
 is `source` on finding create requests (AM-DATA-16).*
 
-**AM-API-13** Every deletion and unlinking MUST answer alike, for assets,
-vulnerabilities and detections, by id, by source, unlinking a source and
-stale:
+**AM-API-13** Every deletion MUST answer alike, for assets, vulnerabilities
+and detections, by source and stale:
 
 ```json
 {"deleted": 2, "deletedIds": [17, 18],
@@ -130,11 +132,10 @@ stale:
 ```
 
 - `deleted`: the records that are gone.
-- `updated`: the records that remain but changed: they lost the source, or an
-  asset was recomputed because another source still reports it.
-- `skipped`: records named by id that were not deleted: one a source still
-  reports (AM-DATA-27), or one outside the caller's own records (AM-SEC-10,
-  counted as skipped per AM-SEC-11).
+- `updated`: the records that remain but changed: an asset recomputed because
+  another source still reports it.
+- `skipped`: always 0 and `[]` since deletion by id was removed (AM-PUR-20);
+  kept so the answer stays the same.
 
 Every pair MUST be present, 0 and `[]` when it does not apply, and each count
 MUST be the length of its list.
@@ -194,8 +195,8 @@ catalogue, and MUST follow the catalogue's rules
   operation, `assetManager` (PA-CAT-03);
 - the operations routines may use are marked `x-bridge: read` — `assets.list`,
   `assets.get`, `assets.stats`, `vulnerabilities.list`, `detections.list` —
-  or `x-bridge: write` — `assets.create`, `assets.update`,
-  `assets.deleteByIds` (PA-CAT-04);
+  or `x-bridge: write` — `assets.update` only: a routine creates and removes
+  no record, it creates a source instead (AM-PUR-20, PA-CAT-04);
 - the bridge names the user by `X-User-ID`, which answers with the user's
   visible set (AM-PUR-10), and never by the query `userId`, which narrows it
   to that one user (`x-bridge-bound`, PA-CAT-05, PA-BR-07);

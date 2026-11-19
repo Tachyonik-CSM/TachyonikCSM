@@ -201,8 +201,8 @@ func (h *Handler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	if req.SourceID != nil && *req.SourceID > 0 {
 		sourceID = *req.SourceID
 	}
-	if sourceID == 0 && sourceLabel == "" {
-		respondError(w, http.StatusBadRequest, "Source is required (supply sourceId and sourceLabel)")
+	if sourceID == 0 {
+		respondError(w, http.StatusBadRequest, sourceRequired)
 		return
 	}
 	logger.Infof("CreateAsset: validation passed (sourceID=%d, sourceLabel=%q)", sourceID, sourceLabel)
@@ -316,123 +316,6 @@ func (h *Handler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, status, result.Asset)
 }
 
-// DeleteAssetsBySource deletes all assets associated with a source
-func (h *Handler) DeleteAssetsBySource(w http.ResponseWriter, r *http.Request) {
-	// The source reference, "filename (ID: N)", as ResourceManager sends it.
-	sourceRef := r.URL.Query().Get("source")
-	if sourceRef == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
-		return
-	}
-	sourceID, _ := database.ParseSourceRef(sourceRef)
-	if sourceID == 0 {
-		respondError(w, http.StatusBadRequest, "source parameter must include '(ID: N)' suffix")
-		return
-	}
-
-	// For internal service requests, use the provided user ID or system user
-	var userID int64
-	if IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Internal service request - delete for all users (pass 0 to indicate no user filter)
-		userID = 0
-	} else {
-		// Regular user request - only delete assets belonging to this user
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
-	}
-
-	// Check if request is from internal service
-	if !IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Regular user request - validate source doesn't exist in ResourceManager
-		source, err := h.rscManagerClient.GetSource(sourceID)
-		if err != nil {
-			logger.Errorf("Failed to verify source existence: %v", err)
-			respondError(w, http.StatusInternalServerError, "Failed to verify source existence")
-			return
-		}
-
-		if source != nil {
-			// Source exists - deny deletion regardless of ownership
-			respondError(w, http.StatusForbidden,
-				"Cannot delete assets while the source still exists. Please delete the source first.")
-			return
-		}
-	}
-
-	// Capture affected user IDs before deletion (for score recalculation)
-	affectedUserIDs, _ := h.db.GetUserIDsByAssetSource(sourceID, userID)
-
-	// Delete assets
-	// Those that keep other sources are recomputed from them.
-	deletedIDs, keptIDs, err := h.db.DeleteAssetsBySource(sourceID, userID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to delete assets")
-		return
-	}
-
-	// Announce each deletion to the owner's workspace and the services
-	h.announce(ws.TypeAssetDeleted, deletedIDs)
-	h.announceAssetsUpdated(keptIDs)
-
-	// Trigger organisation score recalculation for affected users
-	if len(deletedIDs) > 0 || len(keptIDs) > 0 {
-		for _, uid := range affectedUserIDs {
-			go h.recalculateOrganisationScore(uid)
-			h.emitTotalAssets(uid)
-		}
-	}
-
-	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), database.IDs(keptIDs), nil).
-		withMessage(fmt.Sprintf("Deleted %d asset(s)", len(deletedIDs))))
-}
-
-// ClearAssetSourcesBySource clears the source field for all assets associated with a source
-func (h *Handler) ClearAssetSourcesBySource(w http.ResponseWriter, r *http.Request) {
-	// Get source from query parameter
-	sourceRef := r.URL.Query().Get("source")
-	if sourceRef == "" {
-		respondError(w, http.StatusBadRequest, "source parameter is required")
-		return
-	}
-	sourceID, _ := database.ParseSourceRef(sourceRef)
-	if sourceID == 0 {
-		respondError(w, http.StatusBadRequest, "source parameter must include '(ID: N)' suffix")
-		return
-	}
-
-	// For internal service requests, use the provided user ID or system user
-	var userID int64
-	if IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Internal service request - clear for all users (pass 0 to indicate no user filter)
-		userID = 0
-	} else {
-		// Regular user request - only clear assets belonging to this user
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
-	}
-
-	// Clear asset sources
-	updatedIDs, err := h.db.ClearAssetSourceBySource(sourceID, userID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to clear asset sources")
-		return
-	}
-
-	// Announce each change to the owner's workspace and the services
-	h.announce(ws.TypeAssetUpdated, updatedIDs)
-
-	respondJSON(w, http.StatusOK, changeResult(nil, database.IDs(updatedIDs), nil).
-		withMessage(fmt.Sprintf("Cleared source for %d asset(s)", len(updatedIDs))))
-}
-
 // DeleteStaleAssetsBySource deletes assets associated with a source that were modified before a given timestamp
 // This is used during re-import to clean up records that were not updated
 func (h *Handler) DeleteStaleAssetsBySource(w http.ResponseWriter, r *http.Request) {
@@ -492,69 +375,6 @@ func (h *Handler) DeleteStaleAssetsBySource(w http.ResponseWriter, r *http.Reque
 
 	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), database.IDs(keptIDs), nil).
 		withMessage(fmt.Sprintf("Deleted %d stale asset(s)", len(deletedIDs))))
-}
-
-// DeleteAssetsByIDsRequest represents the request to delete assets by IDs
-type DeleteAssetsByIDsRequest struct {
-	IDs []int64 `json:"ids"`
-}
-
-// DeleteAssetsByIDs deletes assets by their IDs (only if source is NULL or empty)
-func (h *Handler) DeleteAssetsByIDs(w http.ResponseWriter, r *http.Request) {
-	logger.Infof("DeleteAssetsByIDs: handler called")
-
-	userID, ok := GetUserID(r)
-	if !ok {
-		logger.Infof("DeleteAssetsByIDs: user ID not found in context")
-		respondError(w, http.StatusUnauthorized, "User ID not found in context")
-		return
-	}
-	logger.Infof("DeleteAssetsByIDs: userID=%d", userID)
-
-	var req DeleteAssetsByIDsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Infof("DeleteAssetsByIDs: failed to decode request body: %v", err)
-		respondError(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
-	logger.Infof("DeleteAssetsByIDs: received IDs=%v", req.IDs)
-
-	if len(req.IDs) == 0 {
-		logger.Infof("DeleteAssetsByIDs: no IDs provided")
-		respondError(w, http.StatusBadRequest, "No IDs provided")
-		return
-	}
-
-	// Delete assets (only those with empty source)
-	deleted, skipped, err := h.db.DeleteAssetsByIDs(req.IDs, userID)
-	if err != nil {
-		logger.Errorf("Failed to delete assets: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to delete assets")
-		return
-	}
-
-	// Broadcast deletion to WebSocket clients
-	for _, id := range deleted {
-		// Scoped to the deleting user's tenant so other tenants don't
-		// receive its delete events. (SECURITY: CRIT-3)
-		msg, _ := ws.NewMessage(ws.TypeAssetDeleted, ws.AssetDeletedPayload{ID: id})
-		h.hub.BroadcastScoped(msg, []int64{userID})
-	}
-
-	// Trigger organisation score recalculation
-	if len(deleted) > 0 {
-		go h.recalculateOrganisationScore(userID)
-	}
-
-	logger.Infof("Deleted %d assets, skipped %d (still linked to a source, or with findings)", len(deleted), len(skipped))
-
-	if len(deleted) > 0 {
-		h.emitAudit(userID, "Info", fmt.Sprintf("User removed %d asset(s)", len(deleted)))
-		h.emitTotalAssets(userID)
-	}
-
-	respondJSON(w, http.StatusOK, changeResult(deleted, nil, skipped).
-		withMessage(fmt.Sprintf("Deleted %d asset(s), skipped %d (still linked to a source, or with findings)", len(deleted), len(skipped))))
 }
 
 // respondJSON writes a JSON response

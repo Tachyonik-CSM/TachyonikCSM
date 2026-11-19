@@ -137,6 +137,10 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sourceID, sourceLabel := findingSource("vulnerability", req.SourceID, req.SourceLabel, req.Source)
+	if sourceID == 0 {
+		respondError(w, http.StatusBadRequest, sourceRequired)
+		return
+	}
 
 	// Enforce vulnerability limit
 	if h.systemManagerClient != nil {
@@ -224,96 +228,6 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, vulnerability)
 }
 
-// DeleteVulnerabilitiesBySource deletes all vulnerabilities associated with a source
-func (h *Handler) DeleteVulnerabilitiesBySource(w http.ResponseWriter, r *http.Request) {
-	source, sourceID, refOK := sourceIDParam(w, r)
-	if !refOK {
-		return
-	}
-
-	// Determine user ID based on request type
-	var userID int64
-	if IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Internal service request - delete for all users (userID=0)
-		userID = 0
-	} else {
-		// Regular user request - get user ID from JWT context
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
-	}
-
-	// The hosts concerned, with their owners: on the internal path userID is
-	// 0, and refreshing "for user 0" would match no asset.
-	affectedHosts, _ := h.db.VulnerabilityHostRefsBySource(sourceID, userID)
-
-	// Delete vulnerabilities
-	deletedIDs, err := h.db.DeleteVulnerabilitiesBySource(sourceID, userID)
-	if err != nil {
-		logger.Errorf("Failed to delete vulnerabilities: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to delete vulnerabilities")
-		return
-	}
-
-	h.refreshHosts(affectedHosts)
-
-	// Announce each deletion to the owner's workspace and the services
-	h.announce(ws.TypeVulnerabilityDeleted, deletedIDs)
-
-	logger.Infof("Deleted %d vulnerabilities for source: %s", len(deletedIDs), source)
-
-	// A host's findings moved its score, and each owner's count changed.
-	if len(deletedIDs) > 0 {
-		for _, uid := range usersOf(affectedHosts) {
-			go h.recalculateOrganisationScore(uid)
-			h.emitTotalVulnerabilities(uid)
-		}
-	}
-
-	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).withLegacyIDs(database.IDs(deletedIDs)))
-}
-
-// ClearVulnerabilitySourcesBySource clears the source field for all vulnerabilities associated with a source
-func (h *Handler) ClearVulnerabilitySourcesBySource(w http.ResponseWriter, r *http.Request) {
-	source, sourceID, refOK := sourceIDParam(w, r)
-	if !refOK {
-		return
-	}
-
-	// Determine user ID based on request type
-	var userID int64
-	if IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Internal service request - clear for all users (userID=0)
-		userID = 0
-	} else {
-		// Regular user request - get user ID from JWT context
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
-	}
-
-	// Clear vulnerability sources
-	updatedIDs, err := h.db.ClearVulnerabilitySourceBySource(sourceID, userID)
-	if err != nil {
-		logger.Errorf("Failed to clear vulnerability sources: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to clear vulnerability sources")
-		return
-	}
-
-	// Announce each change to the owner's workspace and the services
-	h.announce(ws.TypeVulnerabilityUpdated, updatedIDs)
-
-	logger.Infof("Cleared source for %d vulnerabilities for source: %s", len(updatedIDs), source)
-
-	respondJSON(w, http.StatusOK, changeResult(nil, database.IDs(updatedIDs), nil).withLegacyIDs(database.IDs(updatedIDs)))
-}
-
 // DeleteStaleVulnerabilitiesBySource deletes vulnerabilities associated with a source that were modified before a given timestamp
 // This is used during re-import to clean up records that were not updated
 func (h *Handler) DeleteStaleVulnerabilitiesBySource(w http.ResponseWriter, r *http.Request) {
@@ -368,64 +282,4 @@ func (h *Handler) DeleteStaleVulnerabilitiesBySource(w http.ResponseWriter, r *h
 
 	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).
 		withMessage(fmt.Sprintf("Deleted %d stale vulnerability(ies)", len(deletedIDs))))
-}
-
-// DeleteVulnerabilitiesByIDsRequest represents the request to delete vulnerabilities by IDs
-type DeleteVulnerabilitiesByIDsRequest struct {
-	IDs []int64 `json:"ids"`
-}
-
-// DeleteVulnerabilitiesByIDs deletes vulnerabilities by their IDs (only if source is NULL or empty)
-func (h *Handler) DeleteVulnerabilitiesByIDs(w http.ResponseWriter, r *http.Request) {
-	userID, ok := GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "User ID not found in context")
-		return
-	}
-
-	var req DeleteVulnerabilitiesByIDsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
-
-	if len(req.IDs) == 0 {
-		respondError(w, http.StatusBadRequest, "No IDs provided")
-		return
-	}
-
-	// Get affected hosts before deletion
-	affectedHosts, _ := h.db.GetVulnerabilityHostsByIDs(req.IDs, userID)
-
-	// Delete vulnerabilities (only those with empty source)
-	deleted, skipped, err := h.db.DeleteVulnerabilitiesByIDs(req.IDs, userID)
-	if err != nil {
-		logger.Errorf("Failed to delete vulnerabilities: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to delete vulnerabilities")
-		return
-	}
-
-	h.refreshHosts(database.HostRefsOf(affectedHosts, userID))
-
-	// Broadcast deletion to WebSocket clients
-	for _, id := range deleted {
-		// Scoped to the deleting user's tenant so other tenants don't
-		// receive its delete events. (SECURITY: CRIT-3)
-		msg, _ := ws.NewMessage(ws.TypeVulnerabilityDeleted, map[string]int64{"id": id})
-		h.hub.BroadcastScoped(msg, []int64{userID})
-	}
-
-	// Trigger organisation score recalculation
-	if len(deleted) > 0 {
-		go h.recalculateOrganisationScore(userID)
-	}
-
-	logger.Infof("Deleted %d vulnerabilities, skipped %d (source not empty)", len(deleted), len(skipped))
-
-	if len(deleted) > 0 {
-		h.emitAudit(userID, "Info", fmt.Sprintf("User removed %d vulnerability/vulnerabilities", len(deleted)))
-		h.emitTotalVulnerabilities(userID)
-	}
-
-	respondJSON(w, http.StatusOK, changeResult(deleted, nil, skipped))
 }

@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// The one answer of every deletion and unlinking (AM-API-13): by id, by
-// source, unlinking a source and stale, for assets, vulnerabilities and
-// detections alike.
+// The one answer of every deletion (AM-API-13): by source and stale, for
+// assets, vulnerabilities and detections alike. Deletion by id and unlinking
+// a source are gone (AM-PUR-20); the answer keeps their fields.
 //
 // They used to answer in four shapes — counts with a message, counts with
 // "ids", counts with "deletedIds" — so a client could update its list after
@@ -14,19 +14,19 @@
 
 package handlers
 
-// ChangeResult says what a deletion or an unlinking did, by id. Every pair is
+// ChangeResult says what a deletion did, by id. Every pair is
 // always present, empty when it does not apply, so a client reads every
 // answer the same way.
 type ChangeResult struct {
 	// Deleted: the records that are gone.
 	Deleted    int     `json:"deleted"`
 	DeletedIDs []int64 `json:"deletedIds"`
-	// Updated: the records that remain but changed — lost the source, or
-	// were recomputed because another source still reports them.
+	// Updated: the records that remain but changed — recomputed because
+	// another source still reports them.
 	Updated    int     `json:"updated"`
 	UpdatedIDs []int64 `json:"updatedIds"`
-	// Skipped: records named by id that were not deleted — one a source still
-	// reports, or one outside the caller's own records (AM-SEC-10, AM-SEC-11).
+	// Skipped: always empty since deletion by id was removed (AM-PUR-20);
+	// kept so every answer reads the same.
 	Skipped    int     `json:"skipped"`
 	SkippedIDs []int64 `json:"skippedIds"`
 

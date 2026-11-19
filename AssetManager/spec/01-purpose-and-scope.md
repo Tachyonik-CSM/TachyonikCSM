@@ -37,10 +37,11 @@ detections, and for every asset the sources that reported it.
 *Reason: everything else in this list follows from having that record in one
 place.*
 
-**AM-PUR-02** AssetManager MUST accept this data from imports and other
-services, and from users within the limits of [4. Security and tenancy](04-security-and-tenancy.md).
-*Reason: the data arrives from SourceImporter, from execution routines and
-from users, never from AssetManager's own observation.*
+**AM-PUR-02** AssetManager MUST accept this data only from the import of a
+source, by a service (AM-PUR-20).
+*Reason: the data arrives from SourceImporter, never from AssetManager's own
+observation, and not from users or routines directly: a routine that adds
+hosts creates a source.*
 
 **AM-PUR-03** AssetManager MUST keep an asset's derived values — severity,
 score, last seen, last scanned — computed from the evidence that still refers
@@ -96,6 +97,15 @@ records for.
 *Reason: SystemManager knows who exists; AssetManager must not keep the data
 of someone who does not.*
 
+**AM-PUR-20** The sources MUST rule AssetManager's content. A record MUST be
+created only by a service importing a source, and MUST be removed only when
+its source is deleted or re-imported (AM-PUR-04, -05) — an asset only once no
+remaining source refers to it — or when its owner's account goes (AM-PUR-11).
+No one, user or routine, MAY create or delete a record by hand.
+*Reason: a record means "a source reports this". One entered or deleted by
+hand would say something no source says, and would outlive, or anticipate,
+the evidence (decided 2026-11-19).*
+
 ## 4. Non-goals
 
 **AM-PUR-12** AssetManager MUST NOT derive scan coverage, an asset's
@@ -145,11 +155,11 @@ routines.*
 
 | Caller | For |
 |---|---|
-| **WebUI** | Lists, filters and deletes a user's assets, vulnerabilities and detections; follows changes over the WebSocket |
+| **WebUI** | Lists and filters a user's assets, vulnerabilities and detections, and changes an asset's type; follows changes over the WebSocket |
 | **SourceImporter** | Creates the assets, vulnerabilities and detections an import extracts; applies scan coverage tables; deletes what a re-import left stale |
-| **ResourceManager** | Deletes, or unlinks, a source's records when the source is deleted |
+| **ResourceManager** | Deletes a source's records when the source is deleted |
 | **ActionGenerator** | Reads assets and their statistics as the context rules are evaluated against; follows changes over the WebSocket to re-evaluate |
-| **ActionExecutor** | Lets execution routines read, create, change (the type only) and delete assets, and read findings |
+| **ActionExecutor** | Lets execution routines read assets and findings and change an asset's type; a routine that adds hosts creates a source in ResourceManager |
 | **SystemManager** | Asks for a score recalculation, deletes or transfers a user's records, and asks which users AssetManager holds records for |
 
 ### Whom AssetManager calls
@@ -158,7 +168,7 @@ routines.*
 |---|---|---|
 | **SystemManager** | A user's limits and whether the account is active; the members of a shared workspace; the organisation's declared estate | reads |
 | | The Exposure and Coverage sub-scores; statistics entries (totals); audit events | sends |
-| **ResourceManager** | Whether a source still exists, before a user may delete its records directly | reads |
+| **ResourceManager** | Whether each source the records refer to still exists, for the sources' sweep (AM-DATA-46) | reads |
 | **AIManager** | The appliance's licensed host-asset count (appliance only) | reads |
 
 AssetManager calls no other service, and sends nothing outside the platform.

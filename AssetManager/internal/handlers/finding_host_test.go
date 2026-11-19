@@ -4,8 +4,8 @@
 
 // Pins AM-DATA-13: a finding always has the host asset of its owner. Creating
 // a finding reports its host, linked to the finding's source, so deleting a
-// source, a re-import and deleting by id remove a finding's asset only
-// together with the finding. A finding that would need a new host asset is
+// source and a re-import remove a finding's asset only together with the
+// finding. A finding that would need a new host asset is
 // held to the host asset limit (AM-DATA-33, AM-DATA-44). After each scenario
 // no finding may be left without its asset.
 
@@ -55,7 +55,6 @@ func call(t *testing.T, handler http.HandlerFunc, method, target, body string) (
 func bySource(label string, id int) string {
 	return "?source=" + url.QueryEscape(label+" (ID: "+strconv.Itoa(id)+")")
 }
-
 
 func TestAFindingCreatesItsHostAssetLinkedToItsSource(t *testing.T) {
 	h := scopedHandler(t)
@@ -151,30 +150,6 @@ func TestAReimportWithoutTheHostButWithItsFindingKeepsTheAsset(t *testing.T) {
 	}
 	noFindingWithoutItsAsset(t, h)
 }
-
-func TestAnAssetWithFindingsIsNotDeletedById(t *testing.T) {
-	h := scopedHandler(t)
-	// A hand-made vulnerability on the hand-made host 10.0.0.7: no links.
-	w := httptest.NewRecorder()
-	h.CreateVulnerability(w, callAs("POST", "/api/vulnerabilities", `{"name":"CVE-5","host":"10.0.0.7","port":"22","severity":30}`, 7, false))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("%d %s", w.Code, w.Body)
-	}
-	a := hostAsset(t, h, 7, "10.0.0.7")
-	if a == nil || len(a.Sources) != 0 {
-		t.Fatalf("asset %+v, want 10.0.0.7 without a link", a)
-	}
-	w = httptest.NewRecorder()
-	h.DeleteAssetsByIDs(w, callAs("DELETE", "/api/assets", `{"ids":[`+strconv.FormatInt(a.ID, 10)+`]}`, 7, false))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "with findings") {
-		t.Errorf("delete: %d %s", w.Code, w.Body)
-	}
-	if hostAsset(t, h, 7, "10.0.0.7") == nil {
-		t.Error("an asset with a vulnerability on it was deleted")
-	}
-	noFindingWithoutItsAsset(t, h)
-}
-
 
 func TestAFindingOnANewHostIsHeldToTheHostAssetLimit(t *testing.T) {
 	h := limitedHandler(t, false) // user 7 holds 10.0.0.7, the one host allowed

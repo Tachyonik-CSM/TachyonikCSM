@@ -225,9 +225,7 @@ func (h *Handler) SetupRoutes() http.Handler {
 	api.HandleFunc("/assets/stats", h.GetAssetStats).Methods("GET", "OPTIONS")
 	api.HandleFunc("/assets", h.ListAssets).Methods("GET", "OPTIONS")
 	api.HandleFunc("/assets", h.CreateAsset).Methods("POST", "OPTIONS")
-	api.HandleFunc("/assets", h.DeleteAssetsByIDs).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/assets/by-source", h.DeleteAssetsBySource).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/assets/by-source", h.ClearAssetSourcesBySource).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/assets/stale", h.DeleteStaleAssetsBySource).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/assets/scan-coverage", h.ApplyScanCoverage).Methods("POST", "OPTIONS")
 	// One asset by id, owner-scoped; a PATCH may change the type only.
@@ -235,15 +233,11 @@ func (h *Handler) SetupRoutes() http.Handler {
 	api.HandleFunc("/assets/{id:[0-9]+}", h.UpdateAsset).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/vulnerabilities", h.ListVulnerabilities).Methods("GET", "OPTIONS")
 	api.HandleFunc("/vulnerabilities", h.CreateVulnerability).Methods("POST", "OPTIONS")
-	api.HandleFunc("/vulnerabilities", h.DeleteVulnerabilitiesByIDs).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/vulnerabilities/by-source", h.DeleteVulnerabilitiesBySource).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/vulnerabilities/by-source", h.ClearVulnerabilitySourcesBySource).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/vulnerabilities/stale", h.DeleteStaleVulnerabilitiesBySource).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/detections", h.ListDetections).Methods("GET", "OPTIONS")
 	api.HandleFunc("/detections", h.CreateDetection).Methods("POST", "OPTIONS")
-	api.HandleFunc("/detections", h.DeleteDetectionsByIDs).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/detections/by-source", h.DeleteDetectionsBySource).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/detections/by-source", h.ClearDetectionSourcesBySource).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/detections/stale", h.DeleteStaleDetectionsBySource).Methods("DELETE", "OPTIONS")
 	// The manager's MCP server, for a signed-in user only (PA-MCP-04, -06):
 	// its tool calls are replayed through r, so the API's own checks apply.

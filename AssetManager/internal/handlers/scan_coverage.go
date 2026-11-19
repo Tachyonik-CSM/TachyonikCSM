@@ -56,8 +56,8 @@ func (h *Handler) ApplyScanCoverage(w http.ResponseWriter, r *http.Request) {
 	if req.SourceID != nil {
 		sourceID = *req.SourceID
 	}
-	if sourceID <= 0 && req.SourceLabel == "" {
-		respondError(w, http.StatusBadRequest, "Source is required (supply sourceId+sourceLabel)")
+	if sourceID <= 0 {
+		respondError(w, http.StatusBadRequest, sourceRequired)
 		return
 	}
 

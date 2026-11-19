@@ -259,35 +259,53 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/assets` | List all assets for the authenticated user. Each carries `lastSeen`, `lastScanned` (null when never scanned), `lastScanCoverageVerification` and `scanCoverageIntervalDays` (null until an import reports them). Optional `?filter=<json>` with columns `name`, `type`, `severity`, `score`, `lastSeenDays`, `lastScannedDays`, `coverageVerifiedDays` (days ago; never counts as very long ago), `scanCoverageIntervalDays` (an asset without one counts as a very long interval) and `detections` (how many detections name the asset's host, among the listed users': with `severity = 0`, `> 0` is the statistics' *No Threat* and `= 0` their *Unmanaged*). `lastScannedDays`, `coverageVerifiedDays` and `scanCoverageIntervalDays` also take the operators `is set` and `is not set`, without a value: `is not set` selects the never scanned, never verified and unmonitored assets (a date that cannot be read counts as not set), the same ones the older `> 99999` still finds |
-| `POST` | `/api/assets` | Create a new asset |
-| `DELETE` | `/api/assets` | Bulk delete assets by ID list (only sourceless assets without vulnerabilities or detections on their host; the others are skipped) |
-| `DELETE` | `/api/assets/by-source` | Delete all assets associated with a source reference |
-| `PATCH` | `/api/assets/by-source` | Clear the source field on assets matching a source reference |
+| `POST` | `/api/assets` | Create an asset, or report it again, for an import (internal only) |
+| `DELETE` | `/api/assets/by-source` | When ResourceManager deletes a source: remove its links and the assets left without one (internal only) |
 | `DELETE` | `/api/assets/stale` | After a re-import: remove the source's asset links that no import has touched since the given timestamp (`asset_source.modified_at`), and the assets left without a source (internal only) |
-| `POST` | `/api/assets/scan-coverage` | Apply a scan coverage table from one source: `{"userId", "sourceId", "sourceLabel", "entries": [{"target", "scanCoverageIntervalDays", "scanCoverageVerifiedAt"}]}` (a service must name the user, as for creating an asset; a user is the token's). See [Scan coverage tables](#scan-coverage-tables). Answers with `covered` and `created` asset IDs and the counts of `hostnames`, `unmatched`, `invalid` and `refused` entries |
+| `POST` | `/api/assets/scan-coverage` | Apply a scan coverage table from one source: `{"userId", "sourceId", "sourceLabel", "entries": [{"target", "scanCoverageIntervalDays", "scanCoverageVerifiedAt"}]}` (internal only; the service names the user and the source id, as for creating an asset). See [Scan coverage tables](#scan-coverage-tables). Answers with `covered` and `created` asset IDs and the counts of `hostnames`, `unmatched`, `invalid` and `refused` entries |
 | `GET` | `/api/assets/stats` | Get aggregated asset statistics for the current user: counts by severity band, plus host assets by last seen (`hostsSeen30d` ≤ 30 days, `hostsSeen180d` 31–180 days, `hostsSeenOlder` > 180 days or unreadable) and by last scanned (`hostsScanned2d` ≤ 2 days, `hostsScanned10d` > 2 to 10 days, `hostsScannedOlder` > 10 days, `hostsNeverScanned` none or unreadable) and by scan coverage interval (`hostsMonitored2d` every 1–2 days, `hostsMonitored10d` every 3–10 days, `hostsMonitoredOlder` less often, `hostsUnmonitored` no interval) |
 | `GET` | `/api/assets/{id}` | One asset, if it is the caller's (or their group's); `404` otherwise |
 | `PATCH` | `/api/assets/{id}` | Change one asset's **type** (`{"type": "Host"}`; "host" in any casing is stored as "Host"). Severity and score are computed from the asset's findings and the name links them, so a body with any other field is refused with `400`. Same scoping as GET |
 | `GET` | `/api/vulnerabilities` | List all vulnerabilities for the authenticated user |
-| `POST` | `/api/vulnerabilities` | Create a new vulnerability, and report its host asset (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
-| `DELETE` | `/api/vulnerabilities` | Bulk delete vulnerabilities by ID list (only sourceless) |
-| `DELETE` | `/api/vulnerabilities/by-source` | Delete all vulnerabilities associated with a source reference |
-| `PATCH` | `/api/vulnerabilities/by-source` | Clear the source field on vulnerabilities matching a source |
+| `POST` | `/api/vulnerabilities` | Create a vulnerability for an import, and report its host asset (internal only) (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
+| `DELETE` | `/api/vulnerabilities/by-source` | When ResourceManager deletes a source: delete its vulnerabilities (internal only) |
 | `DELETE` | `/api/vulnerabilities/stale` | Delete vulnerabilities not modified since a given timestamp (internal only) |
 | `GET` | `/api/detections` | List all detections for the authenticated user |
-| `POST` | `/api/detections` | Create a new detection, and report its host asset (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
-| `DELETE` | `/api/detections` | Bulk delete detections by ID list (only sourceless) |
-| `DELETE` | `/api/detections/by-source` | Delete all detections associated with a source reference |
-| `PATCH` | `/api/detections/by-source` | Clear the source field on detections matching a source |
+| `POST` | `/api/detections` | Create a detection for an import, and report its host asset (internal only) (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
+| `DELETE` | `/api/detections/by-source` | When ResourceManager deletes a source: delete its detections (internal only) |
 | `DELETE` | `/api/detections/stale` | Delete detections not modified since a given timestamp (internal only) |
 | `POST` | `/api/internal/organisation/recalculate-score` | Recalculate the organisation score for a user (internal only) |
 | `GET` | `/api/internal/users/ids` | Distinct user ids this service holds data for. SystemManager's orphan sweep diffs it against the live users and purges the strays (internal only) |
 | `GET` | `/api/internal/users/usage` | How many host assets, vulnerabilities and detections each user holds and the instance in all, counted as the limits count them, whether all users' host assets count against each limit (appliance), and the licensed number while a licence caps them (AM-DATA-45). SystemManager shows them in Admin → Users (internal only) |
 | `POST` | `/api/mcp` | The MCP server, for a signed-in user's session only (see *MCP server*) |
 
+#### The sources rule the records
+
+AssetManager holds what the sources report, and nothing else (AM-PUR-20):
+
+- **Only an import creates records:** `POST /api/assets`, `/api/vulnerabilities`,
+  `/api/detections` and `/api/assets/scan-coverage` are for services. A user gets
+  `403` (`Records are created only by importing a source`), and every create must
+  name its source by `sourceId` (`400` otherwise). A routine that adds hosts creates
+  a source in ResourceManager instead.
+- **Only the source removes them:** a record goes when its source is deleted
+  (ResourceManager calls the `by-source` endpoints) or re-imported (the `stale`
+  endpoints), and an asset only once no remaining source refers to it. There is no
+  deletion by id and no keeping a source's records without it; a user gets `403`
+  on `by-source`.
+- **The sources' sweep** (AM-DATA-46) catches what a deletion missed: a minute after
+  the start and then every hour, AssetManager asks ResourceManager about each source
+  id its records refer to and removes the records of a source ResourceManager answers
+  with its own `404 {"error": "Source not found"}`, as deleting the source would. Any
+  other answer leaves the source alone until the next round. Records that name no
+  source id at all (findings without one, links known by a label only, assets without
+  a link) are removed by the sweep too. Each round logs what it removed.
+- **Deleting an account** still removes all its records (SystemManager's internal
+  endpoints).
+
 #### Findings and their source
 
-A vulnerability or detection names the source it came from as an asset does: `sourceId`, the ResourceManager source id, and `sourceLabel`, its filename. Both are left out for a finding entered by hand. Lists and change messages carry the same two fields (`sourceId` is `null` when only the name is known).
+A vulnerability or detection names the source it came from as an asset does: `sourceId`, the ResourceManager source id (required), and `sourceLabel`, its filename. Lists and change messages carry the same two fields (`sourceId` is `null` when only the name is known).
 
 For one release, a create request that has neither still has its older `source` string `"filename (ID: N)"` read instead; the first such request of each kind is logged with a warning, so a deployment can tell whether anything still sends it. The fallback is removed in the next release.
 
@@ -307,15 +325,14 @@ most that many while `total` still counts every match. All three are
 optional; without them a list is answered as before. An unknown field or
 order, `order` without `sort`, or a limit outside 1–500 is refused with `400`.
 
-The `by-source` and `stale` endpoints are called with the source reference `?source=filename (ID: N)` and find a source's findings by the id in it — so a renamed file still finds its own. A reference without `(ID: N)` is refused with `400`. Deleting by ID removes only findings that no source owns: no `sourceId` and no `sourceLabel`.
+The `by-source` and `stale` endpoints are called with the source reference `?source=filename (ID: N)` and find a source's findings by the id in it — so a renamed file still finds its own. A reference without `(ID: N)` is refused with `400`. Both are for services only.
 
-**Every deletion and unlinking answers alike** (AM-API-13), whatever the kind
-(assets, vulnerabilities, detections) and the way (by id, by source,
-unlinking a source, stale): `deleted`/`deletedIds` for the records that are
-gone, `updated`/`updatedIds` for those that remain but changed (lost the
-source, or an asset another source still reports, recomputed), and
-`skipped`/`skippedIds` for those named by id that were not deleted (a source
-still reports them, or they are not the caller's own). Every pair is always
+**Every deletion answers alike** (AM-API-13), whatever the kind (assets,
+vulnerabilities, detections) and the way (by source, stale):
+`deleted`/`deletedIds` for the records that are gone, `updated`/`updatedIds`
+for those that remain but changed (an asset another source still reports,
+recomputed), and `skipped`/`skippedIds`, always empty since deletion by id was
+removed. Every pair is always
 present, `0` and `[]` when it does not apply, so a client can update its
 lists from the ids. The earlier fields — `message`, and `ids` on the finding
 by-source answers — are still sent for one release and then removed.
@@ -387,12 +404,13 @@ curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
 
 #### Create Asset
 
-Creates a new asset for the authenticated user.
+Creates an asset for an import, or reports it again (internal only: a user is
+refused with `403`, see [The sources rule the records](#the-sources-rule-the-records)).
 
 **Request:**
 ```
 POST /api/assets
-Authorization: Bearer <JWT_TOKEN>
+X-Internal-Service-Key: <KEY>
 Content-Type: application/json
 ```
 
@@ -409,9 +427,9 @@ Content-Type: application/json
 **Request Fields:**
 - `name`: Asset name/identifier (required, string)
 - `type`: Asset type (required, string). The types are a fixed set, for now only `Host`; a case variant such as `host` is stored as `Host`, any other type is refused with `400`. Assets of another type stored before the set was fixed are kept, reported in a startup warning, and can be retyped with `PATCH /api/assets/{id}`
-- `sourceId`: ResourceManager id of the source the asset came from (integer)
-- `sourceLabel`: The source's filename (string). At least one of `sourceId` and `sourceLabel` is required; without either the request is refused with `400`. (The `"filename (ID: N)"` string once accepted as `source` is no longer read.)
-- `userId`: The owner. Honoured only from an internal service, and required from one unless the `X-User-ID` header names the owner: a service that names no owner, or `0`, is refused with `400` (`userId is required: a service must name the owner`), and so is an owner SystemManager does not know (`userId names no user`) — such records would be seen by no one and held to no limit (AM-SEC-13). A user's record is always their own
+- `sourceId`: ResourceManager id of the source the asset came from (required, integer ≥ 1; without it the request is refused with `400`)
+- `sourceLabel`: The source's filename (string). (The `"filename (ID: N)"` string once accepted as `source` is no longer read.)
+- `userId`: The owner, required unless the `X-User-ID` header names it: naming no owner, or `0`, is refused with `400` (`userId is required: a service must name the owner`), and so is an owner SystemManager does not know (`userId names no user`) — such records would be seen by no one and held to no limit (AM-SEC-13)
 - `lastSeen`: When the source saw the asset (optional, ISO 8601)
 - `scanCoverageVerifiedAt`: When the source verified that the asset is part of a scheduled vulnerability scan (optional, ISO 8601)
 - `scanCoverageIntervalDays`: Shortest interval, in whole days, of a scheduled vulnerability scan that includes the asset (optional, integer ≥ 1)
@@ -435,24 +453,13 @@ The two scan coverage values are **only ever set** this way, by an import or ano
 **Status Codes:**
 - `201 Created`: Asset successfully created
 - `200 OK`: The asset already existed and is now linked to this source as well
-- `400 Bad Request`: Invalid request body or missing required fields
-- `401 Unauthorized`: Missing or invalid JWT token (for user requests)
+- `400 Bad Request`: Invalid request body, missing required fields (`sourceId` among them), or no owner named
+- `401 Unauthorized`: Missing or invalid internal service key
+- `403 Forbidden`: A user's request (records are created only by importing a source), or the host asset limit is reached
 - `500 Internal Server Error`: Database error
 
 **Example:**
 ```bash
-# Regular user request (requires JWT token)
-curl -X POST \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "192.168.1.1",
-    "type": "Host",
-    "sourceId": 15,
-    "sourceLabel": "openvas-report.xml"
-  }' \
-  http://localhost:8081/api/assets
-
 # Internal service request (requires internal service key)
 curl -X POST \
   -H "X-Internal-Service-Key: YOUR_INTERNAL_SERVICE_KEY" \
@@ -468,20 +475,20 @@ curl -X POST \
 ```
 
 **Notes:**
-- For user requests, the `userId` is automatically extracted from the JWT token
-- For internal service requests, include `userId` in the request body
+- Only a service creates records (SourceImporter, for an import); include `userId` and `sourceId` in the request body
 - This endpoint announces an `ASSET_CREATED` WebSocket message to the owner's workspace (see [Who receives which message](#who-receives-which-message))
 
 ---
 
 #### Delete Assets by Source
 
-Deletes all assets associated with a specific source reference.
+When ResourceManager deletes a source: removes its links and the assets left
+without one (internal only; a user is refused with `403`).
 
 **Request:**
 ```
 DELETE /api/assets/by-source?source=<SOURCE_REF>
-Authorization: Bearer <JWT_TOKEN>
+X-Internal-Service-Key: <KEY>
 ```
 
 **Query Parameters:**
@@ -508,18 +515,13 @@ Authorization: Bearer <JWT_TOKEN>
 
 **Status Codes:**
 - `200 OK`: Assets successfully deleted
-- `400 Bad Request`: Missing `source` query parameter
-- `401 Unauthorized`: Missing or invalid JWT token (for user requests)
-- `403 Forbidden`: Source still exists (cannot delete assets while source exists)
-- `500 Internal Server Error`: Database error or failed to verify source existence
+- `400 Bad Request`: Missing `source` query parameter, or one without `(ID: N)`
+- `401 Unauthorized`: Missing or invalid internal service key
+- `403 Forbidden`: A user's request: records go only with their source
+- `500 Internal Server Error`: Database error
 
 **Example:**
 ```bash
-# Regular user request (requires JWT token)
-curl -X DELETE \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  'http://localhost:8081/api/assets/by-source?source=openvas-report.xml%20(ID:%2015)'
-
 # Internal service request (requires internal service key)
 curl -X DELETE \
   -H "X-Internal-Service-Key: YOUR_INTERNAL_SERVICE_KEY" \
@@ -527,10 +529,8 @@ curl -X DELETE \
 ```
 
 **Notes:**
-- For user requests, deletion is only allowed if the source no longer exists in ResourceManager
-- For internal service requests, this validation is bypassed
-- For user requests, only assets belonging to the authenticated user are deleted
-- For internal service requests, assets for all users matching the `source` are deleted
+- Only a service calls it: ResourceManager, when it deletes the source (the sources' sweep does the same for a source deleted while AssetManager did not answer)
+- The source's links of every owner are removed, and the assets left without one deleted
 - This endpoint announces an `ASSET_DELETED` WebSocket message for each deleted asset, to that asset's owner's workspace
 - URL-encode the `source` parameter in curl commands (spaces become `%20`, colons become `%3A`)
 
@@ -608,36 +608,36 @@ source (or touched, when the link exists). So:
 - a routine may return findings without listing their hosts;
 - deleting a source, or a re-import, removes an asset only together with the
   last finding on it, as it removes an asset only with its last link;
-- an asset with findings on its host is skipped by `DELETE /api/assets`;
-  delete the findings first;
 - a finding on a new host is held to the host asset limit: at the limit it is
   refused with `403` (`Host asset limit reached`), while SystemManager cannot
   be asked with `503`. Findings on hosts that have their asset are not
   affected.
 
-A finding entered by hand has no source; its asset then has no link.
 Migration v7 created the host assets that findings stored before this rule
 were missing, linked to their sources and without applying the limits.
 
 #### Create Vulnerability
 
-Creates a new vulnerability for the authenticated user, and reports its host
+Creates a vulnerability for an import (internal only), and reports its host
 asset (see [Findings and their host asset](#findings-and-their-host-asset)).
 
 **Request:**
 ```
 POST /api/vulnerabilities
-Authorization: Bearer <JWT_TOKEN>
+X-Internal-Service-Key: <KEY>
 Content-Type: application/json
 ```
 
 **Request Body:**
 ```json
 {
+  "userId": 5,
   "name": "CVE-2024-1234",
   "host": "192.168.222.131",
   "port": "80/tcp",
-  "severity": 75
+  "severity": 75,
+  "sourceId": 15,
+  "sourceLabel": "openvas-report.xml"
 }
 ```
 
@@ -646,7 +646,8 @@ Content-Type: application/json
 - `host`: Host IP address or hostname (required, string)
 - `port`: Port specification like "80/tcp" (required, string)
 - `severity`: Severity score 0-100 (required, integer, CVSS * 100)
-- `userId`: The owner. Honoured only from an internal service, and required from one unless the `X-User-ID` header names the owner: a service that names no owner, or `0`, is refused with `400` (`userId is required: a service must name the owner`), and so is an owner SystemManager does not know (`userId names no user`) — such records would be seen by no one and held to no limit (AM-SEC-13). A user's record is always their own
+- `sourceId`, `sourceLabel`: The source, as for an asset (`sourceId` required; see [Findings and their source](#findings-and-their-source))
+- `userId`: The owner, required unless the `X-User-ID` header names it: naming no owner, or `0`, is refused with `400` (`userId is required: a service must name the owner`), and so is an owner SystemManager does not know (`userId names no user`) — such records would be seen by no one and held to no limit (AM-SEC-13)
 
 **Response:**
 ```json
@@ -664,24 +665,13 @@ Content-Type: application/json
 
 **Status Codes:**
 - `201 Created`: Vulnerability successfully created
-- `400 Bad Request`: Invalid request body, missing required fields, or severity out of range
-- `401 Unauthorized`: Missing or invalid JWT token (for user requests)
+- `400 Bad Request`: Invalid request body, missing required fields (`sourceId` among them), severity out of range, or no owner named
+- `401 Unauthorized`: Missing or invalid internal service key
+- `403 Forbidden`: A user's request (records are created only by importing a source), or a limit is reached
 - `500 Internal Server Error`: Database error
 
 **Example:**
 ```bash
-# Regular user request (requires JWT token)
-curl -X POST \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "CVE-2024-1234",
-    "host": "192.168.222.131",
-    "port": "80/tcp",
-    "severity": 75
-  }' \
-  http://localhost:8081/api/vulnerabilities
-
 # Internal service request (requires internal service key)
 curl -X POST \
   -H "X-Internal-Service-Key: YOUR_INTERNAL_SERVICE_KEY" \
@@ -691,14 +681,15 @@ curl -X POST \
     "name": "CVE-2024-1234",
     "host": "192.168.222.131",
     "port": "80/tcp",
-    "severity": 75
+    "severity": 75,
+    "sourceId": 15,
+    "sourceLabel": "openvas-report.xml"
   }' \
   http://localhost:8081/api/vulnerabilities
 ```
 
 **Notes:**
-- For user requests, the `userId` is automatically extracted from the JWT token
-- For internal service requests, include `userId` in the request body
+- Only a service creates records; include `userId` and `sourceId` in the request body
 - Severity must be between 0 and 100 (inclusive)
 - To convert CVSS score to severity: `severity = CVSS * 100`
 - To convert severity to CVSS: `CVSS = severity / 100.0`

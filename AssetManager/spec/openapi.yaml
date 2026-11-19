@@ -100,11 +100,11 @@ paths:
         "500": { $ref: "#/components/responses/ServerError" }
     post:
       operationId: assets.create
-      x-bridge: write
       tags: [Assets]
       summary: Create an asset, or report an existing one again
       description: |
-        Upserts by owner, name and type (AM-DATA-01) and links the asset to
+        Service only: records are created by importing a source, and a user is
+        refused with 403 (AM-PUR-20, AM-SEC-12). Upserts by owner, name and type (AM-DATA-01) and links the asset to
         the source (AM-DATA-08, -09). 201 when the asset is new, 200 when it
         existed. A new host asset beyond the limit is refused with 403
         (AM-DATA-33, -34), and with 503 while SystemManager cannot be asked
@@ -118,17 +118,16 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, type]
+              required: [name, type, sourceId]
               properties:
                 name: { type: string, description: "The asset's name. For a host, its IP address (AM-DATA-05) — or its hostname when the source names no address; one asset per owner, name and type (AM-DATA-01)." }
                 type: { type: string, enum: [Host], description: "The asset type; Host is the only one (AM-DATA-02). Matched ignoring case; any other type is refused with 400." }
-                sourceId: { type: integer, description: The ResourceManager source id. }
+                sourceId: { type: integer, minimum: 1, description: "The ResourceManager source id; without it the asset is refused with 400 (AM-DATA-07)." }
                 sourceLabel: { type: string, description: The source's filename. }
-                userId: { type: integer, x-bridge-bound: user, description: "The owner; honoured from a service only (AM-SEC-12), and required from one unless X-User-ID names the owner: a service naming no owner, or 0, is refused with 400, as is an owner SystemManager does not know when a new host asset is created (AM-SEC-13, AM-DATA-33). The API bridge sets it to the user a routine runs for." }
+                userId: { type: integer, description: "The owner; required unless X-User-ID names the owner: naming no owner, or 0, is refused with 400, as is an owner SystemManager does not know when a new host asset is created (AM-SEC-13, AM-DATA-33)." }
                 lastSeen: { type: string, description: "When the source saw the asset. RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. Left out, empty or unreadable: the time of the request (AM-API-07)." }
                 scanCoverageVerifiedAt: { type: string, description: "When the source verified that the asset is in a scheduled vulnerability scan — only as the source states it (AM-DATA-29). RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. An unreadable time is left out with a warning (AM-API-07)." }
                 scanCoverageIntervalDays: { type: integer, minimum: 1, description: "The shortest interval, in whole days, of a scheduled vulnerability scan that includes the asset, as the source states it (a weekly schedule is 7). Below 1 is ignored with a warning (AM-DATA-29)." }
-              description: At least one of sourceId and sourceLabel is required (AM-DATA-07).
       responses:
         "200": { description: "An existing asset, reported again.", content: { application/json: { schema: { $ref: "#/components/schemas/Asset" } } } }
         "201": { description: "A new asset.", content: { application/json: { schema: { $ref: "#/components/schemas/Asset" } } } }
@@ -137,21 +136,6 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/LimitsUnavailable" }
-    delete:
-      operationId: assets.deleteByIds
-      x-bridge: write
-      tags: [Assets]
-      summary: Delete the caller's own assets by id
-      description: Only assets without a link and without findings on their host are deleted; the others are skipped (AM-DATA-27, AM-SEC-10).
-      requestBody: { $ref: "#/components/requestBodies/Ids" }
-      parameters:
-        - $ref: "#/components/parameters/actingRole"
-        - $ref: "#/components/parameters/actingUser"
-      responses:
-        "200": { $ref: "#/components/responses/ChangeResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "500": { $ref: "#/components/responses/ServerError" }
 
   /api/assets/{id}:
     parameters:
@@ -213,24 +197,14 @@ paths:
       tags: [Assets]
       summary: Delete a source's assets
       description: |
-        Removes the source's links and the assets left without one (AM-DATA-24).
-        A user may do so only once the source no longer exists (AM-DATA-26),
-        and only for their own assets; a service acts for every owner (AM-SEC-14).
+        Removes the source's links and the assets left without one (AM-DATA-24),
+        of every owner (AM-SEC-14). Service only (AM-SEC-15): ResourceManager
+        calls it when it deletes the source (AM-PUR-20).
       responses:
         "200": { $ref: "#/components/responses/ChangeResult" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "500": { $ref: "#/components/responses/ServerError" }
-    patch:
-      operationId: assets.clearSourcesBySource
-      tags: [Assets]
-      summary: Keep a source's assets, without the source
-      description: Removes the source's links and keeps the assets (AM-DATA-25).
-      responses:
-        "200": { $ref: "#/components/responses/ChangeResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/assets/stale:
@@ -254,7 +228,7 @@ paths:
       tags: [Assets]
       summary: Apply a scan coverage table
       description: |
-        Applied target by target (AM-DATA-31, -32). Body up to 32 MiB
+        Service only (AM-PUR-20, AM-SEC-12). Applied target by target (AM-DATA-31, -32). Body up to 32 MiB
         (AM-SEC-20). When an address would create a host asset while
         SystemManager cannot be asked for the limit, the table is answered
         with 503 instead of the outcome; what was applied before stays
@@ -265,10 +239,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [entries]
+              required: [entries, sourceId]
               properties:
                 userId: { type: integer, description: "The owner; honoured from a service only, and required from one unless X-User-ID names the owner: a service naming no owner, or 0, is refused with 400, as is an owner SystemManager does not know when an address would create a host asset (AM-SEC-13)." }
-                sourceId: { type: integer }
+                sourceId: { type: integer, minimum: 1, description: "The ResourceManager source id; required (AM-DATA-07)." }
                 sourceLabel: { type: string }
                 entries:
                   type: array
@@ -279,7 +253,6 @@ paths:
                       target: { type: string, description: 'What the schedule scans, as the table states it: an IP address ("192.168.1.5"), a CIDR network ("192.168.1.0/24"), an address range ("192.168.1.1-192.168.1.50") or a hostname. An address covers its host asset, created when missing; a network or range covers the existing host assets inside it; a hostname is skipped (AM-DATA-31).' }
                       scanCoverageIntervalDays: { type: integer, minimum: 1, description: "The schedule's interval in whole days, at least 1; below 1 the entry counts as invalid (AM-DATA-31)." }
                       scanCoverageVerifiedAt: { type: string, description: "When the table verified the schedule. RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. An unreadable time is left out with a warning (AM-API-07)." }
-              description: At least one of sourceId and sourceLabel is required.
       responses:
         "200":
           description: The outcome.
@@ -386,7 +359,7 @@ paths:
       operationId: vulnerabilities.create
       tags: [Vulnerabilities]
       summary: Create a vulnerability
-      description: Also reports its host asset (AM-DATA-13); see `host`.
+      description: Service only (AM-PUR-20, AM-SEC-12). Also reports its host asset (AM-DATA-13); see `host`.
       requestBody:
         required: true
         content:
@@ -405,17 +378,6 @@ paths:
         "403": { $ref: "#/components/responses/LimitReached" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/LimitsUnavailable" }
-    delete:
-      operationId: vulnerabilities.deleteByIds
-      tags: [Vulnerabilities]
-      summary: Delete the caller's own vulnerabilities by id
-      description: Only those without a source (AM-DATA-27).
-      requestBody: { $ref: "#/components/requestBodies/Ids" }
-      responses:
-        "200": { $ref: "#/components/responses/ChangeResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "500": { $ref: "#/components/responses/ServerError" }
 
   /api/vulnerabilities/by-source:
     parameters:
@@ -424,21 +386,12 @@ paths:
       operationId: vulnerabilities.deleteBySource
       tags: [Vulnerabilities]
       summary: Delete a source's vulnerabilities
-      description: Found by the source id (AM-DATA-12, -24).
+      description: Found by the source id (AM-DATA-12, -24), of every owner (AM-SEC-14). Service only (AM-SEC-15).
       responses:
         "200": { $ref: "#/components/responses/ChangeResult" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "500": { $ref: "#/components/responses/ServerError" }
-    patch:
-      operationId: vulnerabilities.clearSourcesBySource
-      tags: [Vulnerabilities]
-      summary: Keep a source's vulnerabilities, without the source
-      description: Clears sourceId and sourceLabel (AM-DATA-25).
-      responses:
-        "200": { $ref: "#/components/responses/ChangeResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/vulnerabilities/stale:
@@ -506,7 +459,7 @@ paths:
       operationId: detections.create
       tags: [Detections]
       summary: Create a detection
-      description: Also reports its host asset (AM-DATA-13); see `host`.
+      description: Service only (AM-PUR-20, AM-SEC-12). Also reports its host asset (AM-DATA-13); see `host`.
       requestBody:
         required: true
         content:
@@ -519,17 +472,6 @@ paths:
         "403": { $ref: "#/components/responses/LimitReached" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/LimitsUnavailable" }
-    delete:
-      operationId: detections.deleteByIds
-      tags: [Detections]
-      summary: Delete the caller's own detections by id
-      description: Only those without a source (AM-DATA-27).
-      requestBody: { $ref: "#/components/requestBodies/Ids" }
-      responses:
-        "200": { $ref: "#/components/responses/ChangeResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "500": { $ref: "#/components/responses/ServerError" }
 
   /api/detections/by-source:
     parameters:
@@ -538,19 +480,12 @@ paths:
       operationId: detections.deleteBySource
       tags: [Detections]
       summary: Delete a source's detections
+      description: Found by the source id (AM-DATA-12, -24), of every owner (AM-SEC-14). Service only (AM-SEC-15).
       responses:
         "200": { $ref: "#/components/responses/ChangeResult" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "500": { $ref: "#/components/responses/ServerError" }
-    patch:
-      operationId: detections.clearSourcesBySource
-      tags: [Detections]
-      summary: Keep a source's detections, without the source
-      responses:
-        "200": { $ref: "#/components/responses/ChangeResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/detections/stale:
@@ -1359,17 +1294,6 @@ components:
       description: When the re-import started, RFC 3339.
       schema: { type: string, format: date-time }
 
-  requestBodies:
-    Ids:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [ids]
-            properties:
-              ids: { type: array, minItems: 1, items: { type: integer } }
-
   responses:
     BadRequest: { description: "The request cannot be read or is invalid, including a list filter with a rule that cannot be read (AM-API-05).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     Unauthorized: { description: "Not authenticated (AM-SEC-01).", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
@@ -1381,11 +1305,10 @@ components:
     LimitsUnavailable: { description: "SystemManager could not be asked for the owner's limits, so nothing new was created (AM-DATA-44). Try again.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     ChangeResult:
       description: |
-        What a deletion or an unlinking did (AM-API-13). Every pair is present,
-        0 and [] when it does not apply. `updated` names records that remain
-        but changed (lost the source, or an asset another source still
-        reports, recomputed); `skipped` names records given by id that were not
-        deleted (still reported by a source, or not the caller's own).
+        What a deletion did (AM-API-13). Every pair is present, 0 and [] when
+        it does not apply. `updated` names records that remain but changed (an
+        asset another source still reports, recomputed); `skipped` is always
+        empty since deletion by id was removed (AM-PUR-20).
       content:
         application/json:
           schema:
@@ -1461,7 +1384,7 @@ components:
         name: { type: string, description: "What was found, e.g. the scanner's name of the test or finding." }
         host: { type: string, description: "The host asset it is on, exactly as that asset is named — for a host, its address (AM-DATA-05). Creating the finding reports that host asset of the owner: created when missing, linked to the finding's source (AM-DATA-13). A new host asset beyond the host asset limit refuses the finding with 403 (AM-DATA-33), and with 503 while SystemManager cannot be asked (AM-DATA-44)." }
         port: { type: string, examples: ["80/tcp"], description: 'Where on the host: "port/protocol" ("443/tcp", "53/udp"), or "-" when the finding concerns no port or the port is unknown. Must not be empty.' }
-        sourceId: { type: integer }
+        sourceId: { type: integer, minimum: 1, description: "The ResourceManager source id. Required — for one release the older source string may stand in for it; a finding without either is refused with 400 (AM-DATA-11)." }
         sourceLabel: { type: string }
         source:
           type: string

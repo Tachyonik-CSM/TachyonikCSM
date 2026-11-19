@@ -33,20 +33,24 @@ func NewClient(baseURL, internalServiceKey string) *Client {
 	return &Client{rest: restclient.New(baseURL, internalServiceKey, 10*time.Second)}
 }
 
-// GetSource retrieves a source by ID (ResourceManager sources.get)
-// Returns nil if source not found (404), error for other failures
-func (c *Client) GetSource(id int64) (*Source, error) {
-	var source Source
-	if err := c.rest.JSON("GET", fmt.Sprintf("/api/sources/%d", id), nil, &source, http.StatusOK); err != nil {
-		if isNotFound(err) {
-			return nil, nil // Source doesn't exist
-		}
-		return nil, err
-	}
-	return &source, nil
-}
+// sourceNotFound is ResourceManager's own answer for a source it does not
+// have (sources.get, 404 {"error": "Source not found"}).
+const sourceNotFound = "Source not found"
 
-func isNotFound(err error) bool {
+// SourceExists reports whether ResourceManager has the source. It answers
+// false only on ResourceManager's own "Source not found": a 404 from anything
+// else — a wrong path, a proxy in between — is an error, not a deletion. The
+// sources' sweep removes the records of a source on false (AM-DATA-46), so a
+// misrouted request must never read as "every source is gone".
+func (c *Client) SourceExists(id int64) (bool, error) {
+	var source Source
+	err := c.rest.JSON("GET", fmt.Sprintf("/api/sources/%d", id), nil, &source, http.StatusOK)
+	if err == nil {
+		return true, nil
+	}
 	var se *restclient.StatusError
-	return errors.As(err, &se) && se.StatusCode == http.StatusNotFound
+	if errors.As(err, &se) && se.StatusCode == http.StatusNotFound && se.Message == sourceNotFound {
+		return false, nil
+	}
+	return false, err
 }

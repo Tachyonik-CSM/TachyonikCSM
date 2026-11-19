@@ -102,12 +102,6 @@ func (db *DB) CreateDetection(name, host, port string, sourceID int64, sourceLab
 	}, nil
 }
 
-// DeleteDetectionsByIDs deletes those of the user's detections among ids that
-// no source owns; see deleteFindingsByIDs.
-func (db *DB) DeleteDetectionsByIDs(ids []int64, userID int64) (deleted []int64, skipped []int64, err error) {
-	return db.deleteFindingsByIDs(detectionKind, ids, userID)
-}
-
 // DeleteDetectionsBySource deletes a source's detections — the user's, or
 // everyone's for userID 0 (an internal service request) — and returns their
 // IDs.
@@ -122,10 +116,4 @@ func (db *DB) DeleteDetectionsBySource(sourceID int64, userID int64) ([]Owned, e
 func (db *DB) DeleteStaleDetectionsBySource(sourceID int64, userID int64, modifiedBefore time.Time) ([]Owned, error) {
 	where, args := sourceScope(sourceID, userID, &modifiedBefore)
 	return db.deleteFindingsWhere(detectionKind, where, args)
-}
-
-// ClearDetectionSourceBySource unlinks a source's detections from it, keeping
-// them, and returns their IDs.
-func (db *DB) ClearDetectionSourceBySource(sourceID int64, userID int64) ([]Owned, error) {
-	return db.clearFindingSource(detectionKind, sourceID, userID)
 }

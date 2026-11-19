@@ -131,6 +131,10 @@ func main() {
 	handler := handlers.NewHandler(db, hub, cfg, rscManagerClient, systemManagerClient)
 	router := handler.SetupRoutes()
 
+	// The sources rule the records (AM-PUR-20): remove those of sources
+	// deleted while AssetManager did not answer, and those that name none.
+	handler.StartSourceSweep(context.Background())
+
 	// Recompute every asset from its evidence (severity, score, last seen,
 	// last scanned — see database/asset_refresh.go), then the organisation
 	// scores. Puts right whatever an older version left behind.

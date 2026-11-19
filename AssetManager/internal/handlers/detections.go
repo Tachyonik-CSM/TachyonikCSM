@@ -132,6 +132,10 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sourceID, sourceLabel := findingSource("detection", req.SourceID, req.SourceLabel, req.Source)
+	if sourceID == 0 {
+		respondError(w, http.StatusBadRequest, sourceRequired)
+		return
+	}
 
 	// Enforce detection limit
 	if h.systemManagerClient != nil {
@@ -217,97 +221,6 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, detection)
 }
 
-// DeleteDetectionsBySource deletes all detections associated with a source
-func (h *Handler) DeleteDetectionsBySource(w http.ResponseWriter, r *http.Request) {
-	source, sourceID, refOK := sourceIDParam(w, r)
-	if !refOK {
-		return
-	}
-
-	// Determine user ID based on request type
-	var userID int64
-	if IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Internal service request - delete for all users (userID=0)
-		userID = 0
-	} else {
-		// Regular user request - get user ID from JWT context
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
-	}
-
-	// The hosts concerned, with their owners: on the internal path userID is
-	// 0, and refreshing "for user 0" would match no asset.
-	affectedHosts, _ := h.db.DetectionHostRefsBySource(sourceID, userID)
-
-	// Delete detections
-	deletedIDs, err := h.db.DeleteDetectionsBySource(sourceID, userID)
-	if err != nil {
-		logger.Errorf("Failed to delete detections: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to delete detections")
-		return
-	}
-
-	h.refreshHosts(affectedHosts)
-
-	// Announce each deletion to the owner's workspace and the services
-	h.announce(ws.TypeDetectionDeleted, deletedIDs)
-
-	logger.Infof("Deleted %d detections for source: %s", len(deletedIDs), source)
-
-	// A host left without findings becomes unmanaged, which moves the
-	// organisation score; and each owner's count changed.
-	if len(deletedIDs) > 0 {
-		for _, uid := range usersOf(affectedHosts) {
-			go h.recalculateOrganisationScore(uid)
-			h.emitTotalDetections(uid)
-		}
-	}
-
-	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).withLegacyIDs(database.IDs(deletedIDs)))
-}
-
-// ClearDetectionSourcesBySource clears the source field for all detections associated with a source
-func (h *Handler) ClearDetectionSourcesBySource(w http.ResponseWriter, r *http.Request) {
-	source, sourceID, refOK := sourceIDParam(w, r)
-	if !refOK {
-		return
-	}
-
-	// Determine user ID based on request type
-	var userID int64
-	if IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Internal service request - clear for all users (userID=0)
-		userID = 0
-	} else {
-		// Regular user request - get user ID from JWT context
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
-	}
-
-	// Clear detection sources
-	updatedIDs, err := h.db.ClearDetectionSourceBySource(sourceID, userID)
-	if err != nil {
-		logger.Errorf("Failed to clear detection sources: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to clear detection sources")
-		return
-	}
-
-	// Announce each change to the owner's workspace and the services
-	h.announce(ws.TypeDetectionUpdated, updatedIDs)
-
-	logger.Infof("Cleared source for %d detections for source: %s", len(updatedIDs), source)
-
-	respondJSON(w, http.StatusOK, changeResult(nil, database.IDs(updatedIDs), nil).withLegacyIDs(database.IDs(updatedIDs)))
-}
-
 // DeleteStaleDetectionsBySource deletes detections associated with a source that were modified before a given timestamp
 // This is used during re-import to clean up records that were not updated
 func (h *Handler) DeleteStaleDetectionsBySource(w http.ResponseWriter, r *http.Request) {
@@ -361,59 +274,4 @@ func (h *Handler) DeleteStaleDetectionsBySource(w http.ResponseWriter, r *http.R
 
 	respondJSON(w, http.StatusOK, changeResult(database.IDs(deletedIDs), nil, nil).
 		withMessage(fmt.Sprintf("Deleted %d stale detection(s)", len(deletedIDs))))
-}
-
-// DeleteDetectionsByIDsRequest represents the request to delete detections by IDs
-type DeleteDetectionsByIDsRequest struct {
-	IDs []int64 `json:"ids"`
-}
-
-// DeleteDetectionsByIDs deletes detections by their IDs (only if source is NULL or empty)
-func (h *Handler) DeleteDetectionsByIDs(w http.ResponseWriter, r *http.Request) {
-	userID, ok := GetUserID(r)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "User ID not found in context")
-		return
-	}
-
-	var req DeleteDetectionsByIDsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
-
-	if len(req.IDs) == 0 {
-		respondError(w, http.StatusBadRequest, "No IDs provided")
-		return
-	}
-
-	// Get affected hosts before deletion
-	affectedHosts, _ := h.db.GetDetectionHostsByIDs(req.IDs, userID)
-
-	// Delete detections (only those with empty source)
-	deleted, skipped, err := h.db.DeleteDetectionsByIDs(req.IDs, userID)
-	if err != nil {
-		logger.Errorf("Failed to delete detections: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to delete detections")
-		return
-	}
-
-	h.refreshHosts(database.HostRefsOf(affectedHosts, userID))
-
-	// Broadcast deletion to WebSocket clients
-	for _, id := range deleted {
-		// Scoped to the deleting user's tenant so other tenants don't
-		// receive its delete events. (SECURITY: CRIT-3)
-		msg, _ := ws.NewMessage(ws.TypeDetectionDeleted, map[string]int64{"id": id})
-		h.hub.BroadcastScoped(msg, []int64{userID})
-	}
-
-	logger.Infof("Deleted %d detections, skipped %d (source not empty)", len(deleted), len(skipped))
-
-	if len(deleted) > 0 {
-		h.emitAudit(userID, "Info", fmt.Sprintf("User removed %d detection(s)", len(deleted)))
-		h.emitTotalDetections(userID)
-	}
-
-	respondJSON(w, http.StatusOK, changeResult(deleted, nil, skipped))
 }

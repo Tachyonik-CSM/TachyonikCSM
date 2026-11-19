@@ -109,11 +109,17 @@ func TestTheOwnerMayBeNamedInTheBodyOrTheHeader(t *testing.T) {
 	}
 }
 
-func TestAUserCreatesForThemselves(t *testing.T) {
+// AM-PUR-20, AM-SEC-12: only a service importing a source creates records.
+func TestAUserCreatesNothing(t *testing.T) {
 	h := ownerHandler(t)
-	w := httptest.NewRecorder()
-	h.CreateAsset(w, callAs("POST", "/api/assets", `{"name":"10.0.0.10","type":"Host","sourceId":3,"sourceLabel":"scan.xml"}`, 7, false))
-	if w.Code != http.StatusCreated {
-		t.Errorf("user 7's own asset: %d %s", w.Code, w.Body)
+	for _, c := range createCases(h) {
+		w := httptest.NewRecorder()
+		c.handler(w, callAs("POST", c.path, fmt.Sprintf(c.body, ``), 7, false))
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), importOnly) {
+			t.Errorf("%s as user 7: %d %s, want 403 %q", c.what, w.Code, w.Body, importOnly)
+		}
+	}
+	if assets, _ := h.db.ListAssets([]int64{7}, nil, listquery.Query{}); len(assets) != 1 {
+		t.Errorf("user 7 has %d assets, want only the original one", len(assets))
 	}
 }

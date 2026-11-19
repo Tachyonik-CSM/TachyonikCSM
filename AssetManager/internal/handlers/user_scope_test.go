@@ -105,53 +105,21 @@ func TestAUsersOwnListIsUnchanged(t *testing.T) {
 	}
 }
 
-// A user sending the service-key header — unchecked when no key is configured
-// — still creates the asset for themselves, not for the body's userId.
-func TestAUserCannotChooseAnAssetsOwner(t *testing.T) {
-	h := scopedHandler(t)
-	r := callAs("POST", "/api/assets", `{"name":"printer-9","type":"Host","userId":7,"sourceId":1,"sourceLabel":"scan.xml"}`, 52, false)
-	r.Header.Set("X-Internal-Service-Key", "anything")
-	w := httptest.NewRecorder()
-	h.CreateAsset(w, r)
-	if mine, _ := h.db.GetAssetsByUsersWithFilter([]int64{52}, nil); len(mine) != 1 {
-		t.Errorf("status %d: user 52 has %d asset(s), want the new one (%s)", w.Code, len(mine), w.Body.String())
-	}
-	if theirs, _ := h.db.GetAssetsByUsersWithFilter([]int64{7}, nil); len(theirs) != 1 {
-		t.Errorf("user 7 has %d asset(s), want only their original one", len(theirs))
-	}
-}
-
-// A user sending the service-key header — unchecked when no key is configured
-// — used to make this act for ALL users. It now clears only their own.
-func TestAUserCannotClearAnotherUsersAssetSources(t *testing.T) {
-	h := scopedHandler(t)
-	if _, err := h.db.CreateAsset("printer-7", "Host", 7, 1, "scan.xml", nil); err != nil {
-		t.Fatalf("CreateAsset: %v", err)
-	}
-	r := callAs("PATCH", "/api/assets/by-source?source="+url.QueryEscape("scan.xml (ID: 1)"), "", 52, false)
-	r.Header.Set("X-Internal-Service-Key", "anything")
-	w := httptest.NewRecorder()
-	h.ClearAssetSourcesBySource(w, r)
-
-	theirs, _ := h.db.GetAssetsByUsersWithFilter([]int64{7}, nil)
-	for _, a := range theirs {
-		if a.Name == "printer-7" && len(a.Sources) == 0 {
-			t.Errorf("status %d: user 52 cleared user 7's asset source", w.Code)
-		}
-	}
-}
-
-// The re-import cleanups delete for every user, so only a service may call
-// them. A key header the middleware did not accept — an instance with no key
+// The re-import cleanups and the by-source deletions delete for every user,
+// and records go only with their source (AM-PUR-20), so only a service may
+// call them (AM-SEC-15). A key header the middleware did not accept — an instance with no key
 // configured passes it through to the JWT path — must not count as one.
-func TestOnlyAServiceDeletesStaleRecords(t *testing.T) {
+func TestOnlyAServiceDeletesBySourceOrStale(t *testing.T) {
 	h := scopedHandler(t)
 	for name, handler := range map[string]http.HandlerFunc{
-		"assets":          h.DeleteStaleAssetsBySource,
-		"vulnerabilities": h.DeleteStaleVulnerabilitiesBySource,
-		"detections":      h.DeleteStaleDetectionsBySource,
+		"assets/stale":              h.DeleteStaleAssetsBySource,
+		"vulnerabilities/stale":     h.DeleteStaleVulnerabilitiesBySource,
+		"detections/stale":          h.DeleteStaleDetectionsBySource,
+		"assets/by-source":          h.DeleteAssetsBySource,
+		"vulnerabilities/by-source": h.DeleteVulnerabilitiesBySource,
+		"detections/by-source":      h.DeleteDetectionsBySource,
 	} {
-		target := "/api/" + name + "/stale?source=" + url.QueryEscape("scan.xml (ID: 1)") + "&modifiedBefore=2026-01-01T00:00:00Z"
+		target := "/api/" + name + "?source=" + url.QueryEscape("scan.xml (ID: 1)") + "&modifiedBefore=2026-01-01T00:00:00Z"
 		r := callAs("DELETE", target, "", 52, false)
 		r.Header.Set("X-Internal-Service-Key", "anything")
 		w := httptest.NewRecorder()
@@ -192,8 +160,8 @@ func TestListFilterParameter(t *testing.T) {
 	}
 }
 
-// An asset is linked to the source it came from, given as sourceId and
-// sourceLabel. The "filename (ID: N)" string once accepted as source is no
+// An asset is linked to the source it came from, named by sourceId
+// (AM-DATA-07). The "filename (ID: N)" string once accepted as source is no
 // longer read: a create carrying only that is refused like one without any.
 func TestCreateAssetNeedsASource(t *testing.T) {
 	h := scopedHandler(t)
@@ -201,13 +169,14 @@ func TestCreateAssetNeedsASource(t *testing.T) {
 		body string
 		want int
 	}{
-		"no source":           {`{"name":"10.0.0.9","type":"Host"}`, http.StatusBadRequest},
-		"only the old string": {`{"name":"10.0.0.9","type":"Host","source":"scan.xml (ID: 1)"}`, http.StatusBadRequest},
-		"source id and label": {`{"name":"10.0.0.9","type":"Host","sourceId":1,"sourceLabel":"scan.xml"}`, http.StatusCreated},
-		"an unknown type":     {`{"name":"www.example.com","type":"Domain","sourceId":1,"sourceLabel":"scan.xml"}`, http.StatusBadRequest},
+		"no source":           {`{"name":"10.0.0.9","type":"Host","userId":7}`, http.StatusBadRequest},
+		"only the old string": {`{"name":"10.0.0.9","type":"Host","userId":7,"source":"scan.xml (ID: 1)"}`, http.StatusBadRequest},
+		"only a label":        {`{"name":"10.0.0.9","type":"Host","userId":7,"sourceLabel":"scan.xml"}`, http.StatusBadRequest},
+		"source id and label": {`{"name":"10.0.0.9","type":"Host","userId":7,"sourceId":1,"sourceLabel":"scan.xml"}`, http.StatusCreated},
+		"an unknown type":     {`{"name":"www.example.com","type":"Domain","userId":7,"sourceId":1,"sourceLabel":"scan.xml"}`, http.StatusBadRequest},
 	} {
 		w := httptest.NewRecorder()
-		h.CreateAsset(w, callAs("POST", "/api/assets", c.body, 7, false))
+		h.CreateAsset(w, callAs("POST", "/api/assets", c.body, 0, true))
 		if w.Code != c.want {
 			t.Errorf("%s: %d, want %d (%s)", name, w.Code, c.want, w.Body.String())
 		}
@@ -216,7 +185,7 @@ func TestCreateAssetNeedsASource(t *testing.T) {
 
 // A finding names its source by sourceId and sourceLabel. For one release the
 // older "filename (ID: N)" string is still read when both are missing; a
-// finding without either has no source.
+// finding without a source id is refused (AM-DATA-11).
 func TestFindingSourceOnCreate(t *testing.T) {
 	h := scopedHandler(t)
 	for name, c := range map[string]struct {
@@ -227,15 +196,14 @@ func TestFindingSourceOnCreate(t *testing.T) {
 		"source id and label": {`"sourceId":5,"sourceLabel":"scan.xml"`, 5, "scan.xml"},
 		"the older string":    {`"source":"old.xml (ID: 6)"`, 6, "old.xml"},
 		"both: the new wins":  {`"sourceId":7,"sourceLabel":"new.xml","source":"old.xml (ID: 6)"`, 7, "new.xml"},
-		"entered by hand":     {``, 0, ""},
 	} {
-		body := `{"name":"CVE-1","host":"10.0.0.7","port":"443","severity":50`
+		body := `{"name":"CVE-1","host":"10.0.0.7","port":"443","severity":50,"userId":7`
 		if c.body != "" {
 			body += "," + c.body
 		}
 		body += "}"
 		w := httptest.NewRecorder()
-		h.CreateVulnerability(w, callAs("POST", "/api/vulnerabilities", body, 7, false))
+		h.CreateVulnerability(w, callAs("POST", "/api/vulnerabilities", body, 0, true))
 		var v database.Vulnerability
 		json.Unmarshal(w.Body.Bytes(), &v)
 		var id int64
@@ -244,6 +212,16 @@ func TestFindingSourceOnCreate(t *testing.T) {
 		}
 		if w.Code != http.StatusCreated || id != c.id || v.SourceLabel != c.label {
 			t.Errorf("%s: %d, source %d %q; want 201, %d %q (%s)", name, w.Code, id, v.SourceLabel, c.id, c.label, w.Body.String())
+		}
+	}
+	for name, body := range map[string]string{
+		"entered by hand": `{"name":"CVE-1","host":"10.0.0.7","port":"443","severity":50,"userId":7}`,
+		"only a label":    `{"name":"CVE-1","host":"10.0.0.7","port":"443","severity":50,"userId":7,"sourceLabel":"scan.xml"}`,
+	} {
+		w := httptest.NewRecorder()
+		h.CreateVulnerability(w, callAs("POST", "/api/vulnerabilities", body, 0, true))
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), sourceRequired) {
+			t.Errorf("%s: %d %s, want 400 %q", name, w.Code, w.Body, sourceRequired)
 		}
 	}
 }
@@ -256,12 +234,12 @@ func TestFindingsBySourceGoByTheID(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	h.DeleteDetectionsBySource(w, callAs("DELETE", "/api/detections/by-source?source="+url.QueryEscape("new-name.xml (ID: 3)"), "", 7, false))
+	h.DeleteDetectionsBySource(w, callAs("DELETE", "/api/detections/by-source?source="+url.QueryEscape("new-name.xml (ID: 3)"), "", 0, true))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"deleted":1`) {
 		t.Errorf("by the id under a new name: %d %s, want the detection deleted", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	h.DeleteDetectionsBySource(w, callAs("DELETE", "/api/detections/by-source?source=new-name.xml", "", 7, false))
+	h.DeleteDetectionsBySource(w, callAs("DELETE", "/api/detections/by-source?source=new-name.xml", "", 0, true))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("without an id: %d, want 400", w.Code)
 	}

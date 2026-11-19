@@ -5,9 +5,8 @@
 // Pins that vulnerabilities and detections — the two kinds of finding, kept in
 // tables of the same shape — behave alike in everything they share: listing
 // and counting with and without a filter, the hosts of a set of IDs, deleting
-// by source (one user's or everyone's), deleting what a re-import left stale,
-// deleting by ID (only records no source owns, only the caller's), and
-// clearing a source while keeping the records.
+// by source (one user's or everyone's), and deleting what a re-import left
+// stale. Nothing deletes them by hand (AM-PUR-20).
 
 package database
 
@@ -19,15 +18,13 @@ import (
 
 // findingOps is one kind of finding seen through the public API.
 type findingOps struct {
-	name        string
-	create      func(db *DB, name, host string, sourceID int64, label string, userID int64) int64
-	list        func(db *DB, userIDs []int64, f *Filter) (names []string, err error)
-	count       func(db *DB, userID int64, f *Filter) (int, error)
-	hosts       func(db *DB, ids []int64, userID int64) ([]string, error)
-	bySource    func(db *DB, sourceID int64, userID int64) ([]Owned, error)
-	stale       func(db *DB, sourceID int64, userID int64, before time.Time) ([]Owned, error)
-	byIDs       func(db *DB, ids []int64, userID int64) ([]int64, []int64, error)
-	clearSource func(db *DB, sourceID int64, userID int64) ([]Owned, error)
+	name     string
+	create   func(db *DB, name, host string, sourceID int64, label string, userID int64) int64
+	list     func(db *DB, userIDs []int64, f *Filter) (names []string, err error)
+	count    func(db *DB, userID int64, f *Filter) (int, error)
+	hosts    func(db *DB, ids []int64, userID int64) ([]string, error)
+	bySource func(db *DB, sourceID int64, userID int64) ([]Owned, error)
+	stale    func(db *DB, sourceID int64, userID int64, before time.Time) ([]Owned, error)
 }
 
 var findingKinds = []findingOps{
@@ -48,12 +45,10 @@ var findingKinds = []findingOps{
 			}
 			return names, err
 		},
-		count:       (*DB).CountVulnerabilitiesByUserWithFilter,
-		hosts:       (*DB).GetVulnerabilityHostsByIDs,
-		bySource:    (*DB).DeleteVulnerabilitiesBySource,
-		stale:       (*DB).DeleteStaleVulnerabilitiesBySource,
-		byIDs:       (*DB).DeleteVulnerabilitiesByIDs,
-		clearSource: (*DB).ClearVulnerabilitySourceBySource,
+		count:    (*DB).CountVulnerabilitiesByUserWithFilter,
+		hosts:    (*DB).GetVulnerabilityHostsByIDs,
+		bySource: (*DB).DeleteVulnerabilitiesBySource,
+		stale:    (*DB).DeleteStaleVulnerabilitiesBySource,
 	},
 	{
 		name: "detections",
@@ -72,12 +67,10 @@ var findingKinds = []findingOps{
 			}
 			return names, err
 		},
-		count:       (*DB).CountDetectionsByUserWithFilter,
-		hosts:       (*DB).GetDetectionHostsByIDs,
-		bySource:    (*DB).DeleteDetectionsBySource,
-		stale:       (*DB).DeleteStaleDetectionsBySource,
-		byIDs:       (*DB).DeleteDetectionsByIDs,
-		clearSource: (*DB).ClearDetectionSourceBySource,
+		count:    (*DB).CountDetectionsByUserWithFilter,
+		hosts:    (*DB).GetDetectionHostsByIDs,
+		bySource: (*DB).DeleteDetectionsBySource,
+		stale:    (*DB).DeleteStaleDetectionsBySource,
 	},
 }
 
@@ -198,49 +191,6 @@ func TestFindingsBehaveAlike(t *testing.T) {
 				sameIDs(t, "everyone", IDs(ids), []int64{oldOther})
 				if got := remaining(t, db, k); len(got) != 1 || got[0] != "new" {
 					t.Errorf("left: %v", got)
-				}
-			})
-
-			t.Run("delete by IDs", func(t *testing.T) {
-				db := newTestDB(t)
-				manual := k.create(db, "manual", "h1", 0, "", 7)
-				blank := k.create(db, "blank", "h1", 0, "  ", 7)
-				sourced := k.create(db, "sourced", "h1", 1, "s1.xml", 7)
-				foreign := k.create(db, "foreign", "h1", 0, "", 9)
-				// A source known only by its name still owns the record.
-				labelOnly := k.create(db, "labelonly", "h1", 0, "s9.xml", 7)
-				deleted, skipped, err := k.byIDs(db, []int64{manual, blank, sourced, foreign, labelOnly, 999}, 7)
-				if err != nil {
-					t.Fatal(err)
-				}
-				sameIDs(t, "deleted", deleted, []int64{manual, blank})
-				sameIDs(t, "skipped", skipped, []int64{sourced, foreign, labelOnly, 999})
-				if got := remaining(t, db, k); len(got) != 3 || got[0] != "foreign" || got[1] != "labelonly" || got[2] != "sourced" {
-					t.Errorf("left: %v", got)
-				}
-			})
-
-			t.Run("clear source", func(t *testing.T) {
-				db := newTestDB(t)
-				a := k.create(db, "a", "h1", 1, "s1.xml", 7)
-				b := k.create(db, "b", "h1", 1, "s1.xml", 9)
-				k.create(db, "c", "h1", 2, "s2.xml", 7)
-				ids, err := k.clearSource(db, 1, 7)
-				if err != nil {
-					t.Fatal(err)
-				}
-				sameIDs(t, "user 7", IDs(ids), []int64{a})
-				ids, err = k.clearSource(db, 1, 0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				sameIDs(t, "everyone", IDs(ids), []int64{b})
-				var cleared int
-				if err := db.Get(&cleared, `SELECT COUNT(*) FROM `+k.name+` WHERE source_id IS NULL AND source_label = ''`); err != nil || cleared != 2 {
-					t.Errorf("records without a source: %d %v", cleared, err)
-				}
-				if got := remaining(t, db, k); len(got) != 3 {
-					t.Errorf("clearing deleted records: %v", got)
 				}
 			})
 		})

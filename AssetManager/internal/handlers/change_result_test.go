@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Tests the one answer of deletions and unlinkings (AM-API-13): every one of
-// the twelve endpoints answers with deleted, updated and skipped and their
-// ids, and the ids say what really happened — an asset a source still reports
-// is skipped, not deleted, and one another source still reports is updated.
+// Tests the one answer of deletions (AM-API-13): every one of the six
+// endpoints — by source and stale, for each kind of record — answers with
+// deleted, updated and skipped and their ids, and the ids say what really
+// happened: an asset another source still reports is updated, not deleted.
 
 package handlers
 
@@ -61,17 +61,11 @@ func TestEveryDeletionAnswersAlike(t *testing.T) {
 		body    string
 		service bool
 	}{
-		{"assets by id", h.DeleteAssetsByIDs, "DELETE", "/api/assets", `{"ids":[999]}`, false},
 		{"assets by source", h.DeleteAssetsBySource, "DELETE", "/api/assets/by-source" + source, "", true},
-		{"asset sources unlinked", h.ClearAssetSourcesBySource, "PATCH", "/api/assets/by-source" + source, "", true},
 		{"stale assets", h.DeleteStaleAssetsBySource, "DELETE", "/api/assets/stale" + stale, "", true},
-		{"vulnerabilities by id", h.DeleteVulnerabilitiesByIDs, "DELETE", "/api/vulnerabilities", `{"ids":[999]}`, false},
 		{"vulnerabilities by source", h.DeleteVulnerabilitiesBySource, "DELETE", "/api/vulnerabilities/by-source" + source, "", true},
-		{"vulnerability sources unlinked", h.ClearVulnerabilitySourcesBySource, "PATCH", "/api/vulnerabilities/by-source" + source, "", true},
 		{"stale vulnerabilities", h.DeleteStaleVulnerabilitiesBySource, "DELETE", "/api/vulnerabilities/stale" + stale, "", true},
-		{"detections by id", h.DeleteDetectionsByIDs, "DELETE", "/api/detections", `{"ids":[999]}`, false},
 		{"detections by source", h.DeleteDetectionsBySource, "DELETE", "/api/detections/by-source" + source, "", true},
-		{"detection sources unlinked", h.ClearDetectionSourcesBySource, "PATCH", "/api/detections/by-source" + source, "", true},
 		{"stale detections", h.DeleteStaleDetectionsBySource, "DELETE", "/api/detections/stale" + stale, "", true},
 	} {
 		w := httptest.NewRecorder()
@@ -81,30 +75,6 @@ func TestEveryDeletionAnswersAlike(t *testing.T) {
 		}
 		c.handler(w, callAs(c.method, c.path, c.body, user, c.service))
 		answerOf(t, c.what, w)
-	}
-}
-
-// The WebUI removes deletedIds from its list. An asset a source still
-// reports must not be among them.
-func TestDeletingAssetsByIDNamesOnlyWhatWasDeleted(t *testing.T) {
-	h := scopedHandler(t) // user 7's 10.0.0.7, without a source
-	var free int64
-	if err := h.db.Get(&free, "SELECT id FROM assets WHERE name = '10.0.0.7'"); err != nil {
-		t.Fatal(err)
-	}
-	linked, err := h.db.CreateAsset("10.0.0.8", "Host", 7, 1, "scan.xml", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := json.Marshal(map[string][]int64{"ids": {free, linked.Asset.ID}})
-	w := httptest.NewRecorder()
-	h.DeleteAssetsByIDs(w, callAs("DELETE", "/api/assets", string(body), 7, false))
-	a := answerOf(t, "by id", w)
-	if len(a.DeletedIDs) != 1 || a.DeletedIDs[0] != free {
-		t.Errorf("deletedIds %v, want only %d", a.DeletedIDs, free)
-	}
-	if len(a.SkippedIDs) != 1 || a.SkippedIDs[0] != linked.Asset.ID {
-		t.Errorf("skippedIds %v, want %d, which a source still reports", a.SkippedIDs, linked.Asset.ID)
 	}
 }
 

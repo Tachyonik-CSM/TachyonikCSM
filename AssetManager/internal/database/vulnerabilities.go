@@ -125,15 +125,3 @@ func (db *DB) DeleteStaleVulnerabilitiesBySource(sourceID int64, userID int64, m
 	where, args := sourceScope(sourceID, userID, &modifiedBefore)
 	return db.deleteFindingsWhere(vulnerabilityKind, where, args)
 }
-
-// DeleteVulnerabilitiesByIDs deletes those of the user's vulnerabilities
-// among ids that no source owns; see deleteFindingsByIDs.
-func (db *DB) DeleteVulnerabilitiesByIDs(ids []int64, userID int64) (deleted []int64, skipped []int64, err error) {
-	return db.deleteFindingsByIDs(vulnerabilityKind, ids, userID)
-}
-
-// ClearVulnerabilitySourceBySource unlinks a source's vulnerabilities from it,
-// keeping them, and returns their IDs.
-func (db *DB) ClearVulnerabilitySourceBySource(sourceID int64, userID int64) ([]Owned, error) {
-	return db.clearFindingSource(vulnerabilityKind, sourceID, userID)
-}

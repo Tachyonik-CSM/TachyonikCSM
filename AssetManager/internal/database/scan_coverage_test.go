@@ -129,11 +129,4 @@ func TestScanCoverage(t *testing.T) {
 		}
 	}
 
-	// The last source goes with its asset's coverage: cleared, not kept.
-	if _, err := db.ClearAssetSourceBySource(2, 7); err != nil {
-		t.Fatal(err)
-	}
-	if v, i := coverage(t, db, "10.0.0.1"); v != nil || i != nil {
-		t.Fatalf("after all sources cleared: %v / %v, want NULL / NULL", v, i)
-	}
 }
