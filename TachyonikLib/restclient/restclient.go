@@ -24,7 +24,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
 	"tachyonik/lib/internal/safehttp"
 	"tachyonik/lib/logger"
@@ -34,14 +36,65 @@ import (
 // a typed error so a caller can react to one specific code — the AI lookups
 // turn 404 into their own "not found" wording — without matching on message
 // text.
+//
+// Message is the reason the upstream gave, when it gave one: the "error" of
+// the {"error": "…"} body every manager refuses with, or else the first line
+// of a plain-text body. Without it a refusal reads "unexpected status code:
+// 403" in a log or an audit entry, and nobody can tell a reached limit from a
+// missing permission.
 type StatusError struct {
 	Method     string
 	URL        string
 	StatusCode int
+	Message    string
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("unexpected status code: %d", e.StatusCode)
+	if e.Message == "" {
+		return fmt.Sprintf("unexpected status code: %d", e.StatusCode)
+	}
+	return fmt.Sprintf("unexpected status code: %d: %s", e.StatusCode, e.Message)
+}
+
+// maxReasonBytes bounds how much of a refusal's body is read for its reason,
+// and maxReasonRunes how much of the reason is kept: enough for any manager's
+// message, not enough for a misbehaving upstream to flood a log line.
+const (
+	maxReasonBytes = 4 << 10
+	maxReasonRunes = 300
+)
+
+// reasonOf reads the reason from a refusal's body: the "error" field of a JSON
+// body, else the first line of the text; "" when there is none. Control
+// characters are dropped, so the reason cannot break a log line apart.
+func reasonOf(body io.Reader) string {
+	raw, err := io.ReadAll(io.LimitReader(body, maxReasonBytes))
+	if err != nil && len(raw) == 0 {
+		return ""
+	}
+	var reply struct {
+		Error string `json:"error"`
+	}
+	text := string(raw)
+	if json.Unmarshal(raw, &reply) == nil {
+		text = reply.Error
+	} else if strings.HasPrefix(strings.TrimSpace(text), "<") {
+		return "" // an HTML error page from a proxy in between says nothing useful
+	}
+	if i := strings.IndexAny(text, "\r\n"); i >= 0 {
+		text = text[:i]
+	}
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, text)
+	text = strings.TrimSpace(strings.ToValidUTF8(text, ""))
+	if r := []rune(text); len(r) > maxReasonRunes {
+		text = string(r[:maxReasonRunes]) + "…"
+	}
+	return text
 }
 
 // MaxResponseBytes bounds a decoded JSON response. Rule lists and routine
@@ -87,8 +140,9 @@ func New(baseURL, serviceKey string, timeout time.Duration) *Client {
 // Request issues method against path (joined onto the base URL) and returns the
 // raw response, for callers that need the body or headers themselves — those
 // callers own resp.Body. body, when non-nil, is sent JSON-encoded. A status
-// other than wantStatus closes the body and returns a *StatusError, so a
-// failed call never leaks a connection back to the caller.
+// other than wantStatus closes the body and returns a *StatusError, with the
+// reason the upstream gave, so a failed call never leaks a connection back to
+// the caller.
 //
 // alsoOK names further statuses that count as success, for an endpoint whose
 // success has more than one shape — AssetManager answers a create with 201 for
@@ -121,8 +175,9 @@ func (c *Client) Request(method, path string, body any, wantStatus int, alsoOK .
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	if !statusOK(resp.StatusCode, wantStatus, alsoOK) {
+		reason := reasonOf(resp.Body)
 		resp.Body.Close()
-		return nil, &StatusError{Method: method, URL: url, StatusCode: resp.StatusCode}
+		return nil, &StatusError{Method: method, URL: url, StatusCode: resp.StatusCode, Message: reason}
 	}
 	return resp, nil
 }

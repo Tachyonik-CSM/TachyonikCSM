@@ -4,7 +4,8 @@
 
 // Tests for the shared request path: path joining, the internal-service-key
 // header, JSON encode/decode of request and response bodies, and the typed
-// status error that lets a caller single out a 404. Also the two precautions
+// status error that lets a caller single out a 404 and carries the reason the
+// upstream gave. Also the two precautions
 // the path exists to apply uniformly — that a cross-host redirect is refused
 // rather than followed with the service key attached, and that an oversized
 // response is rejected instead of buffered without limit.
@@ -292,5 +293,60 @@ func TestJSON_AlsoOKStatusesAreAccepted(t *testing.T) {
 	var se *StatusError
 	if !errors.As(err, &se) || se.StatusCode != http.StatusAccepted {
 		t.Errorf("status 202 not refused as a StatusError: %v", err)
+	}
+}
+
+// A refusal carries the reason the upstream gave, so a log or an audit entry
+// says "Host asset limit reached (25/25)" rather than only "403".
+func TestStatusErrorCarriesTheUpstreamsReason(t *testing.T) {
+	for _, c := range []struct {
+		name, contentType, body, want string
+	}{
+		{"the managers' JSON", "application/json", `{"error":"Host asset limit reached (25/25)"}` + "\n",
+			"unexpected status code: 403: Host asset limit reached (25/25)"},
+		{"plain text", "text/plain", "Forbidden\nsecond line", "unexpected status code: 403: Forbidden"},
+		{"no body", "", "", "unexpected status code: 403"},
+		{"JSON without an error", "application/json", `{"detail":"x"}`, "unexpected status code: 403"},
+		{"a proxy's HTML page", "text/html", "<html><body>403 Forbidden</body></html>", "unexpected status code: 403"},
+		{"control characters", "application/json", `{"error":"limit\u001b[31m reached"}`, "unexpected status code: 403: limit[31m reached"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if c.contentType != "" {
+					w.Header().Set("Content-Type", c.contentType)
+				}
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, c.body)
+			}))
+			defer srv.Close()
+
+			err := New(srv.URL, "k", time.Second).JSON("POST", "/api/assets", payload{Name: "a"}, nil, http.StatusCreated)
+			if err == nil || err.Error() != c.want {
+				t.Fatalf("error %q, want %q", err, c.want)
+			}
+			var se *StatusError
+			if !errors.As(err, &se) || se.StatusCode != http.StatusForbidden {
+				t.Errorf("not a *StatusError with 403: %v", err)
+			}
+		})
+	}
+}
+
+// A long reason is cut, so a misbehaving upstream cannot flood a log line.
+func TestALongReasonIsCut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"`+strings.Repeat("x", 10000)+`"}`)
+	}))
+	defer srv.Close()
+	_, err := New(srv.URL, "", time.Second).Request("GET", "/", nil, http.StatusOK)
+	var se *StatusError
+	if !errors.As(err, &se) {
+		t.Fatalf("not a *StatusError: %v", err)
+	}
+	// The JSON is cut off at the read limit, so it is read as text: still a
+	// bounded reason.
+	if n := len([]rune(se.Message)); n == 0 || n > maxReasonRunes+1 {
+		t.Errorf("reason of %d runes", n)
 	}
 }
