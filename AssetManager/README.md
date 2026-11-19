@@ -260,7 +260,7 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 |--------|----------|-------------|
 | `GET` | `/api/assets` | List all assets for the authenticated user. Each carries `lastSeen`, `lastScanned` (null when never scanned), `lastScanCoverageVerification` and `scanCoverageIntervalDays` (null until an import reports them). Optional `?filter=<json>` with columns `name`, `type`, `severity`, `score`, `lastSeenDays`, `lastScannedDays`, `coverageVerifiedDays` (days ago; never counts as very long ago), `scanCoverageIntervalDays` (an asset without one counts as a very long interval) and `detections` (how many detections name the asset's host, among the listed users': with `severity = 0`, `> 0` is the statistics' *No Threat* and `= 0` their *Unmanaged*). `lastScannedDays`, `coverageVerifiedDays` and `scanCoverageIntervalDays` also take the operators `is set` and `is not set`, without a value: `is not set` selects the never scanned, never verified and unmonitored assets (a date that cannot be read counts as not set), the same ones the older `> 99999` still finds |
 | `POST` | `/api/assets` | Create a new asset |
-| `DELETE` | `/api/assets` | Bulk delete assets by ID list (only sourceless assets) |
+| `DELETE` | `/api/assets` | Bulk delete assets by ID list (only sourceless assets without vulnerabilities or detections on their host; the others are skipped) |
 | `DELETE` | `/api/assets/by-source` | Delete all assets associated with a source reference |
 | `PATCH` | `/api/assets/by-source` | Clear the source field on assets matching a source reference |
 | `DELETE` | `/api/assets/stale` | After a re-import: remove the source's asset links that no import has touched since the given timestamp (`asset_source.modified_at`), and the assets left without a source (internal only) |
@@ -269,13 +269,13 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 | `GET` | `/api/assets/{id}` | One asset, if it is the caller's (or their group's); `404` otherwise |
 | `PATCH` | `/api/assets/{id}` | Change one asset's **type** (`{"type": "Host"}`; "host" in any casing is stored as "Host"). Severity and score are computed from the asset's findings and the name links them, so a body with any other field is refused with `400`. Same scoping as GET |
 | `GET` | `/api/vulnerabilities` | List all vulnerabilities for the authenticated user |
-| `POST` | `/api/vulnerabilities` | Create a new vulnerability (see [Findings and their source](#findings-and-their-source)) |
+| `POST` | `/api/vulnerabilities` | Create a new vulnerability, and report its host asset (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
 | `DELETE` | `/api/vulnerabilities` | Bulk delete vulnerabilities by ID list (only sourceless) |
 | `DELETE` | `/api/vulnerabilities/by-source` | Delete all vulnerabilities associated with a source reference |
 | `PATCH` | `/api/vulnerabilities/by-source` | Clear the source field on vulnerabilities matching a source |
 | `DELETE` | `/api/vulnerabilities/stale` | Delete vulnerabilities not modified since a given timestamp (internal only) |
 | `GET` | `/api/detections` | List all detections for the authenticated user |
-| `POST` | `/api/detections` | Create a new detection (see [Findings and their source](#findings-and-their-source)) |
+| `POST` | `/api/detections` | Create a new detection, and report its host asset (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
 | `DELETE` | `/api/detections` | Bulk delete detections by ID list (only sourceless) |
 | `DELETE` | `/api/detections/by-source` | Delete all detections associated with a source reference |
 | `PATCH` | `/api/detections/by-source` | Clear the source field on detections matching a source |
@@ -597,9 +597,32 @@ curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
 
 ---
 
+#### Findings and their host asset
+
+A finding — a vulnerability or a detection — is evidence of its host, so
+every finding has the host asset of its owner (AM-DATA-13). Creating a
+finding reports that asset as `POST /api/assets` would: a Host asset named by
+the finding's `host` is created when missing, and linked to the finding's
+source (or touched, when the link exists). So:
+
+- a routine may return findings without listing their hosts;
+- deleting a source, or a re-import, removes an asset only together with the
+  last finding on it, as it removes an asset only with its last link;
+- an asset with findings on its host is skipped by `DELETE /api/assets`;
+  delete the findings first;
+- a finding on a new host is held to the host asset limit: at the limit it is
+  refused with `403` (`Host asset limit reached`), while SystemManager cannot
+  be asked with `503`. Findings on hosts that have their asset are not
+  affected.
+
+A finding entered by hand has no source; its asset then has no link.
+Migration v7 created the host assets that findings stored before this rule
+were missing, linked to their sources and without applying the limits.
+
 #### Create Vulnerability
 
-Creates a new vulnerability for the authenticated user.
+Creates a new vulnerability for the authenticated user, and reports its host
+asset (see [Findings and their host asset](#findings-and-their-host-asset)).
 
 **Request:**
 ```
@@ -917,6 +940,8 @@ The AssetManager uses SQLite with the following schema:
 Which sources saw an asset, and when, is kept per source in the `asset_source` table, together with the scan coverage each source reported (`scan_coverage_verified_at`, `scan_coverage_interval_days`). `counts_as_seen` (migration v4, default 1) is 0 for a link made only to record scan coverage: a schedule saying a host would be scanned is not a sighting of it, so such a link does not count toward the asset's `last_seen`. Its `last_seen` is the time the table was applied.
 
 Vulnerabilities and detections hold their source as `source_id` and `source_label` (migration v6, filled from the `"filename (ID: N)"` string the older `source` column held). The `source` column is no longer read or written and is dropped in a later release.
+
+Every vulnerability and detection has the host asset of its owner (AM-DATA-13): migration v7 created the ones findings stored before were missing, linked to each of their sources and dated by the newest finding of that source, without applying the limits. See [Findings and their host asset](#findings-and-their-host-asset).
 
 Every link also has `modified_at` (migration v5): when an import last touched it, set on every import of the asset whether or not its `last_seen` moved. A re-import drops the links it did not touch by this, not by `last_seen` — that is the date the file says the host was seen, which re-importing the same file leaves where it was. (Judged by `last_seen`, every link of a re-imported file looked stale, and all its assets were deleted while their findings stayed.) When a source lists a host whose link from that source was coverage only, the link becomes a sighting dated by the listing.
 

@@ -163,6 +163,13 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The host asset of the finding: a new one is held to the host asset
+	// limit like any other (AM-DATA-13, AM-DATA-33).
+	if status, msg := h.findingHostLimit("CreateVulnerability", userID, req.Host, sourceLabel, sourceID); status != 0 {
+		respondError(w, status, msg)
+		return
+	}
+
 	// Parse lastSeen if provided
 	var lastSeen *time.Time
 	if req.LastSeen != nil && *req.LastSeen != "" {
@@ -187,6 +194,13 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create vulnerability
+	// Its host asset first, so the finding never exists without it.
+	if err := h.reportFindingHost(userID, req.Host, sourceID, sourceLabel, lastSeen); err != nil {
+		logger.Errorf("Failed to report the host asset of a vulnerability: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to create the host asset of the vulnerability")
+		return
+	}
+
 	vulnerability, err := h.db.CreateVulnerability(req.Name, req.Host, req.Port, req.Severity, sourceID, sourceLabel, userID, lastSeen)
 	if err != nil {
 		logger.Errorf("Failed to create vulnerability: %v", err)

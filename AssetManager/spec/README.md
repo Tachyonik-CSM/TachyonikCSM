@@ -11,7 +11,7 @@ authoritative.
 
 | # | Specification | Answers | Status |
 |---|---|---|---|
-| 1 | [Purpose and scope](01-purpose-and-scope.md) | What is AssetManager for, and what is it not for? | Draft |
+| 1 | [Purpose and scope](01-purpose-and-scope.md) | What is AssetManager for, and what is it not for? | Accepted |
 | 2 | [Data model and behaviour](02-data-model-and-behaviour.md) | What must always be true of the data? | Draft |
 | 3 | [API](03-api.md) ([`openapi.yaml`](openapi.yaml), WebSocket messages) | How do others talk to it? | Accepted |
 | 4 | [Security and tenancy](04-security-and-tenancy.md) | Who may do what? | Draft |

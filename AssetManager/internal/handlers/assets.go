@@ -546,7 +546,7 @@ func (h *Handler) DeleteAssetsByIDs(w http.ResponseWriter, r *http.Request) {
 		go h.recalculateOrganisationScore(userID)
 	}
 
-	logger.Infof("Deleted %d assets, skipped %d (source not empty)", len(deleted), len(skipped))
+	logger.Infof("Deleted %d assets, skipped %d (still linked to a source, or with findings)", len(deleted), len(skipped))
 
 	if len(deleted) > 0 {
 		h.emitAudit(userID, "Info", fmt.Sprintf("User removed %d asset(s)", len(deleted)))
@@ -554,7 +554,7 @@ func (h *Handler) DeleteAssetsByIDs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, changeResult(deleted, nil, skipped).
-		withMessage(fmt.Sprintf("Deleted %d asset(s), skipped %d (source not empty)", len(deleted), len(skipped))))
+		withMessage(fmt.Sprintf("Deleted %d asset(s), skipped %d (still linked to a source, or with findings)", len(deleted), len(skipped))))
 }
 
 // respondJSON writes a JSON response

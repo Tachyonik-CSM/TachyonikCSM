@@ -35,7 +35,7 @@ type Migration struct {
 // past a destructive migration boundary, which the additive-only
 // release discipline says we should never reach without first restoring
 // a pre-deploy snapshot.
-const MaxSupportedSchemaVersion = 6
+const MaxSupportedSchemaVersion = 7
 
 func ensureSchemaMigrationsTable(db *DB) error {
 	_, err := db.Exec(`
@@ -135,6 +135,11 @@ func allMigrations() []Migration {
 			Version:     6,
 			Description: "vulnerabilities and detections: source_id and source_label, filled from the source string",
 			Apply:       func(db *DB) error { return migrateAddFindingSourceColumns(db) },
+		},
+		{
+			Version:     7,
+			Description: "a host asset for every finding that had none (AM-DATA-13)",
+			Apply:       func(db *DB) error { return migrateFindingHostAssets(db) },
 		},
 	}
 }

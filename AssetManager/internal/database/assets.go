@@ -277,9 +277,11 @@ func (db *DB) CountHostAssetsAllUsers() (int, error) {
 }
 
 // DeleteAssetsByIDs deletes assets by their IDs, but only if they have no
-// asset_source rows (i.e. no longer linked to any source). Returns the list
-// of deleted IDs and the list of skipped IDs (still linked to a source, or
-// not owned by this user).
+// asset_source rows (i.e. no longer linked to any source) and no findings of
+// their owner on their host (AM-DATA-27): a finding must keep its host asset
+// (AM-DATA-13). Returns the list of deleted IDs and the list of skipped IDs
+// (still linked to a source, still with findings, or not owned by this
+// user).
 func (db *DB) DeleteAssetsByIDs(ids []int64, userID int64) (deleted []int64, skipped []int64, err error) {
 	if len(ids) == 0 {
 		return []int64{}, []int64{}, nil
@@ -287,8 +289,11 @@ func (db *DB) DeleteAssetsByIDs(ids []int64, userID int64) (deleted []int64, ski
 
 	for _, id := range ids {
 		// Confirm ownership.
-		var owner int64
-		err := db.Get(&owner, "SELECT user_id FROM assets WHERE id = ? AND user_id = ?", id, userID)
+		var owned struct {
+			UserID int64  `db:"user_id"`
+			Name   string `db:"name"`
+		}
+		err := db.Get(&owned, "SELECT user_id, name FROM assets WHERE id = ? AND user_id = ?", id, userID)
 		if err != nil {
 			skipped = append(skipped, id)
 			continue
@@ -301,6 +306,18 @@ func (db *DB) DeleteAssetsByIDs(ids []int64, userID int64) (deleted []int64, ski
 			continue
 		}
 		if hasSource {
+			skipped = append(skipped, id)
+			continue
+		}
+
+		// Skip while findings of the owner are on its host.
+		var hasFindings bool
+		if err := db.Get(&hasFindings, `SELECT EXISTS(SELECT 1 FROM vulnerabilities WHERE user_id = ? AND host = ?)
+			OR EXISTS(SELECT 1 FROM detections WHERE user_id = ? AND host = ?)`, owned.UserID, owned.Name, owned.UserID, owned.Name); err != nil {
+			skipped = append(skipped, id)
+			continue
+		}
+		if hasFindings {
 			skipped = append(skipped, id)
 			continue
 		}

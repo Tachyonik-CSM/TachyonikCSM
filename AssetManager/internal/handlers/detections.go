@@ -158,6 +158,13 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The host asset of the finding: a new one is held to the host asset
+	// limit like any other (AM-DATA-13, AM-DATA-33).
+	if status, msg := h.findingHostLimit("CreateDetection", userID, req.Host, sourceLabel, sourceID); status != 0 {
+		respondError(w, status, msg)
+		return
+	}
+
 	// Parse lastSeen if provided
 	var lastSeen *time.Time
 	if req.LastSeen != nil && *req.LastSeen != "" {
@@ -182,6 +189,13 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create detection
+	// Its host asset first, so the finding never exists without it.
+	if err := h.reportFindingHost(userID, req.Host, sourceID, sourceLabel, lastSeen); err != nil {
+		logger.Errorf("Failed to report the host asset of a detection: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to create the host asset of the detection")
+		return
+	}
+
 	detection, err := h.db.CreateDetection(req.Name, req.Host, req.Port, sourceID, sourceLabel, userID, lastSeen)
 	if err != nil {
 		logger.Errorf("Failed to create detection: %v", err)

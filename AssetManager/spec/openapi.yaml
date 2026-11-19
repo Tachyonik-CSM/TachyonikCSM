@@ -142,7 +142,7 @@ paths:
       x-bridge: write
       tags: [Assets]
       summary: Delete the caller's own assets by id
-      description: Only assets without a link are deleted; the others are skipped (AM-DATA-27, AM-SEC-10).
+      description: Only assets without a link and without findings on their host are deleted; the others are skipped (AM-DATA-27, AM-SEC-10).
       requestBody: { $ref: "#/components/requestBodies/Ids" }
       parameters:
         - $ref: "#/components/parameters/actingRole"
@@ -386,6 +386,7 @@ paths:
       operationId: vulnerabilities.create
       tags: [Vulnerabilities]
       summary: Create a vulnerability
+      description: Also reports its host asset (AM-DATA-13); see `host`.
       requestBody:
         required: true
         content:
@@ -505,6 +506,7 @@ paths:
       operationId: detections.create
       tags: [Detections]
       summary: Create a detection
+      description: Also reports its host asset (AM-DATA-13); see `host`.
       requestBody:
         required: true
         content:
@@ -1457,7 +1459,7 @@ components:
       required: [name, host, port]
       properties:
         name: { type: string, description: "What was found, e.g. the scanner's name of the test or finding." }
-        host: { type: string, description: "The name of the asset it refers to, exactly as that asset is named — for a host, its address (AM-DATA-13)." }
+        host: { type: string, description: "The host asset it is on, exactly as that asset is named — for a host, its address (AM-DATA-05). Creating the finding reports that host asset of the owner: created when missing, linked to the finding's source (AM-DATA-13). A new host asset beyond the host asset limit refuses the finding with 403 (AM-DATA-33), and with 503 while SystemManager cannot be asked (AM-DATA-44)." }
         port: { type: string, examples: ["80/tcp"], description: 'Where on the host: "port/protocol" ("443/tcp", "53/udp"), or "-" when the finding concerns no port or the port is unknown. Must not be empty.' }
         sourceId: { type: integer }
         sourceLabel: { type: string }
