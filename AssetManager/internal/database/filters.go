@@ -201,9 +201,10 @@ func CheckDetectionFilter(filter *DetectionFilter) error {
 func buildAssetRuleSQL(rule AssetFilterRule, userIDs []int64) (string, []interface{}, string) {
 	switch rule.Column {
 	case "detections":
-		// How many detections name the asset's host, among the listed users'
-		// — the correlation the statistics use to tell No Threat (severity 0,
-		// detections) from Unmanaged (severity 0, none): "> 0" and "= 0".
+		// How many detections name the asset's host, among the listed users'.
+		// Not what tells No Threat from Unmanaged: that is the asset's score
+		// (AM-DATA-19), since a host may have only vulnerabilities of
+		// severity 0.
 		clause, args := buildUserIDsClause(userIDs)
 		clause = strings.Replace(clause, "user_id", "d.user_id", 1)
 		cond, vargs, problem := numericRuleSQL(rule,

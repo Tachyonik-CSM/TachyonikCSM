@@ -20,8 +20,8 @@ type AssetStats struct {
 	High      int `json:"high"`      // assets with severity 70-89
 	Medium    int `json:"medium"`    // assets with severity 40-69
 	Low       int `json:"low"`       // assets with severity 1-39
-	NoThreat  int `json:"noThreat"`  // assets with no vulnerabilities but has detections
-	Unmanaged int `json:"unmanaged"` // assets with no vulnerabilities and no detections
+	NoThreat  int `json:"noThreat"`  // severity 0, with findings (score 100)
+	Unmanaged int `json:"unmanaged"` // no findings at all (AM-DATA-19)
 	Total     int `json:"total"`
 
 	// Host assets by how long ago they were last seen, for the dashboard's
@@ -142,26 +142,16 @@ func (db *DB) GetAssetStatsByUser(userID int64) (*AssetStats, error) {
 		return nil, fmt.Errorf("failed to count low assets: %w", err)
 	}
 
-	// Assets with severity 0 need to be checked for detections
-	// noThreat = has detections but no vulnerabilities (severity = 0 but has related detections)
-	// unmanaged = no vulnerabilities and no detections (severity = 0 and no related detections)
-
-	// Get count of assets with severity 0 that have related detections
-	err = db.Get(&stats.NoThreat, `
-		SELECT COUNT(DISTINCT a.id) FROM assets a
-		INNER JOIN detections d ON d.host = a.name AND d.user_id = a.user_id
-		WHERE a.user_id = ? AND a.severity = 0
-	`, userID)
+	// Severity 0: no threat with findings, unmanaged without (AM-DATA-19),
+	// told apart by the asset's own score, which is 100 with findings of
+	// severity 0 and 0 with none (AM-DATA-18) — one fact counted one way.
+	// The detections alone used to decide, so a host with only severity-0
+	// vulnerabilities counted as unmanaged (formerly deviation D1).
+	err = db.Get(&stats.NoThreat, "SELECT COUNT(*) FROM assets WHERE user_id = ? AND "+noThreatAsset, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count noThreat assets: %w", err)
 	}
-
-	// Get count of assets with severity 0 that have no related detections
-	err = db.Get(&stats.Unmanaged, `
-		SELECT COUNT(*) FROM assets a
-		WHERE a.user_id = ? AND a.severity = 0
-		AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.host = a.name AND d.user_id = a.user_id)
-	`, userID)
+	err = db.Get(&stats.Unmanaged, "SELECT COUNT(*) FROM assets WHERE user_id = ? AND "+unmanagedAsset, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count unmanaged assets: %w", err)
 	}
@@ -175,9 +165,8 @@ func (db *DB) GetAssetStatsByUser(userID int64) (*AssetStats, error) {
 
 // GetAssetStatsByUsers returns the same severity-band stats across a SET of
 // users. In Appliance mode the visible set is every instance user, so the
-// dashboard totals match the (already set-scoped) asset list. The detection
-// correlation is widened to the same set so noThreat/unmanaged are computed
-// across the shared workspace, not per-owner.
+// dashboard totals match the (already set-scoped) asset list. No threat and
+// unmanaged follow each asset's own score (AM-DATA-19), as for one user.
 func (db *DB) GetAssetStatsByUsers(userIDs []int64) (*AssetStats, error) {
 	stats := &AssetStats{}
 	if len(userIDs) == 0 {
@@ -191,8 +180,6 @@ func (db *DB) GetAssetStatsByUsers(userIDs []int64) (*AssetStats, error) {
 	}
 	inList := strings.Join(ph, ",")
 	uid := "user_id IN (" + inList + ")"
-	// args2 is the arg list repeated once (for queries with two IN clauses).
-	args2 := append(append([]interface{}{}, args...), args...)
 
 	counts := []struct {
 		dest *int
@@ -210,14 +197,11 @@ func (db *DB) GetAssetStatsByUsers(userIDs []int64) (*AssetStats, error) {
 		}
 	}
 
-	if err := db.Get(&stats.NoThreat,
-		"SELECT COUNT(DISTINCT a.id) FROM assets a INNER JOIN detections d ON d.host = a.name AND d.user_id IN ("+inList+") WHERE a.user_id IN ("+inList+") AND a.severity = 0",
-		args2...); err != nil {
+	// As in GetAssetStatsByUser: by the asset's own score (AM-DATA-19).
+	if err := db.Get(&stats.NoThreat, "SELECT COUNT(*) FROM assets WHERE "+uid+" AND "+noThreatAsset, args...); err != nil {
 		return nil, fmt.Errorf("failed to count noThreat assets: %w", err)
 	}
-	if err := db.Get(&stats.Unmanaged,
-		"SELECT COUNT(*) FROM assets a WHERE a.user_id IN ("+inList+") AND a.severity = 0 AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.host = a.name AND d.user_id IN ("+inList+"))",
-		args2...); err != nil {
+	if err := db.Get(&stats.Unmanaged, "SELECT COUNT(*) FROM assets WHERE "+uid+" AND "+unmanagedAsset, args...); err != nil {
 		return nil, fmt.Errorf("failed to count unmanaged assets: %w", err)
 	}
 	if err := db.hostAgeBuckets(stats, uid, args); err != nil {
@@ -225,6 +209,13 @@ func (db *DB) GetAssetStatsByUsers(userIDs []int64) (*AssetStats, error) {
 	}
 	return stats, nil
 }
+
+// noThreatAsset and unmanagedAsset tell the severity-0 assets apart by their
+// score (AM-DATA-18, -19): 100 with findings, 0 without.
+const (
+	noThreatAsset  = "severity = 0 AND score = 100"
+	unmanagedAsset = "severity = 0 AND score = 0"
+)
 
 // AssetScoreAggregates holds the count and sum of scores for a user's assets
 type AssetScoreAggregates struct {
