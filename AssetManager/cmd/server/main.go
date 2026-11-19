@@ -135,6 +135,10 @@ func main() {
 	// deleted while AssetManager did not answer, and those that name none.
 	handler.StartSourceSweep(context.Background())
 
+	// Open WebSocket connections: closed with their token or a deactivated
+	// account, and rescoped when the workspace changes (AM-SEC-24).
+	handler.StartConnectionChecks(context.Background())
+
 	// Recompute every asset from its evidence (severity, score, last seen,
 	// last scanned — see database/asset_refresh.go), then the organisation
 	// scores. Puts right whatever an older version left behind.

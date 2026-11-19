@@ -768,6 +768,12 @@ The `/ws` endpoint requires authentication, checked as for the API (see [Authent
 - **Browser clients** authenticate by passing the user's JWT as the WebSocket subprotocol. Browsers cannot set the `Authorization` header on a WebSocket, and the subprotocol keeps the token out of the URL and logs.
 - **Internal service-to-service clients** (Go daemons) authenticate by sending the shared internal-service key as the `X-Internal-Service-Key` request header.
 
+A browser connection is checked again while it is open (AM-SEC-24):
+
+- it is closed when its token expires;
+- every minute, each connected user's account is checked as for a request. A deactivated or deleted account has its connections closed with close code `1008`; otherwise the user's workspace members are looked up again, so a user who left a workspace stops receiving its messages and one who joined starts, without reconnecting;
+- when SystemManager cannot be asked, the connection stays open but receives only the user's own records until the next check.
+
 ### Connection
 
 ```javascript
@@ -812,7 +818,7 @@ Every change to a record is announced. A created record is sent whole; a change 
 
 #### Who receives which message
 
-Each message about a record goes to the connections of the users entitled to it — the record's owner and the members of the owner's shared workspace who are connected (on an appliance, every user) — and to every service connection, and to no other user's connection. This holds for id-only messages as well, and whether a user or a service made the change, e.g. when a source's records are deleted for all their owners. The workspace a connection sees is the one at connection time. See AM-SEC-19 in [spec/04-security-and-tenancy.md](spec/04-security-and-tenancy.md#5-the-websocket).
+Each message about a record goes to the connections of the users entitled to it — the record's owner and the members of the owner's shared workspace who are connected (on an appliance, every user) — and to every service connection, and to no other user's connection. This holds for id-only messages as well, and whether a user or a service made the change, e.g. when a source's records are deleted for all their owners. The workspace a connection sees is looked up again every minute (see [Authentication](#authentication)). See AM-SEC-19 in [spec/04-security-and-tenancy.md](spec/04-security-and-tenancy.md#5-the-websocket).
 
 #### From Client to Server
 

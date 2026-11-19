@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -313,7 +314,11 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := ws.NewClient(h.hub, conn, claims.UserID, visible)
+	var expiresAt time.Time
+	if claims.ExpiresAt != nil {
+		expiresAt = claims.ExpiresAt.Time
+	}
+	client := ws.NewClient(h.hub, conn, claims.UserID, visible, expiresAt)
 	h.hub.Register(client)
 
 	// Start client's read and write pumps

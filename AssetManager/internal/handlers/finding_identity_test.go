@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"tachyonik/assetmanager/internal/systemmanager"
@@ -52,11 +53,11 @@ func TestTheSameFindingTwiceIsOneRecord(t *testing.T) {
 
 // limitOneHandler is scopedHandler with a SystemManager that allows user 7
 // one vulnerability, or answers nothing when down.
-func limitOneHandler(t *testing.T, down *bool) *Handler {
+func limitOneHandler(t *testing.T, down *atomic.Bool) *Handler {
 	t.Helper()
 	h := scopedHandler(t)
 	sm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if *down {
+		if down.Load() {
 			http.Error(w, "down", http.StatusInternalServerError)
 			return
 		}
@@ -69,7 +70,7 @@ func limitOneHandler(t *testing.T, down *bool) *Handler {
 }
 
 func TestAKnownFindingIsNeverRefusedForALimit(t *testing.T) {
-	down := false
+	var down atomic.Bool
 	h := limitOneHandler(t, &down)
 	if code, body := call(t, h.CreateVulnerability, "POST", "/api/vulnerabilities", fritz); code != http.StatusCreated {
 		t.Fatalf("first: %d %s", code, body)
@@ -82,7 +83,7 @@ func TestAKnownFindingIsNeverRefusedForALimit(t *testing.T) {
 		t.Errorf("a new one at the limit: %d %s, want 403", code, body)
 	}
 
-	down = true
+	down.Store(true)
 	if code, body := call(t, h.CreateVulnerability, "POST", "/api/vulnerabilities", fritz); code != http.StatusOK {
 		t.Errorf("the known one while SystemManager is down: %d %s, want 200", code, body)
 	}

@@ -90,6 +90,20 @@ func (h *Hub) Register(client *Client) {
 	h.register <- client
 }
 
+// UserClients returns the connected user clients, not the services', for the
+// re-check (AM-SEC-24).
+func (h *Hub) UserClients() []*Client {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	var out []*Client
+	for c := range h.clients {
+		if !c.all {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Unregister unregisters a client
 func (h *Hub) Unregister(client *Client) {
 	h.unregister <- client

@@ -45,7 +45,7 @@ func listen(t *testing.T, h *Handler, userID int64, visible []int64) *listener {
 		}
 		c := ws.NewInternalClient(h.hub, conn)
 		if visible != nil {
-			c = ws.NewClient(h.hub, conn, userID, visible)
+			c = ws.NewClient(h.hub, conn, userID, visible, time.Time{})
 		}
 		h.hub.Register(c)
 		go c.WritePump()

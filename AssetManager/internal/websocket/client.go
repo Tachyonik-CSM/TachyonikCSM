@@ -7,11 +7,16 @@
 // A browser client is scoped to the users it may see, so a broadcast reaches
 // only the connections entitled to it. An internal-service client connects
 // unscoped, since the daemons react to changes across all users.
+//
+// A browser client is closed when its token expires, and its visible set can
+// be replaced while it is connected: the handlers re-check every user
+// connection (AM-SEC-24).
 
 package websocket
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -32,6 +37,13 @@ const (
 	maxMessageSize = 512
 )
 
+// Why a user's connection is closed (AM-SEC-24). Both go with close code 1008
+// (policy violation).
+const (
+	ReasonTokenExpired       = "token expired"
+	ReasonAccountDeactivated = "account deactivated or deleted"
+)
+
 // Client represents a WebSocket client connection
 type Client struct {
 	hub  *Hub
@@ -40,10 +52,15 @@ type Client struct {
 
 	// userID is the authenticated owner of this connection; visible is the
 	// set of user IDs whose data this client may receive (self + group
-	// members), resolved at connect time. The hub uses visible to filter
-	// owner-scoped messages so a client only sees its own tenant's data.
+	// members), resolved at connect time and replaced by each re-check
+	// (AM-SEC-24). The hub uses visible to filter owner-scoped messages so a
+	// client only sees its own tenant's data. mu guards visible.
 	userID  int64
+	mu      sync.RWMutex
 	visible map[int64]bool
+	// expiresAt is when the connection's token expires, and the connection
+	// with it; zero for none.
+	expiresAt time.Time
 	// all marks a trusted service-to-service consumer that receives every
 	// event regardless of tenant scoping (authenticated via the
 	// internal-service key, not a user JWT). (SECURITY: CRIT-3)
@@ -51,19 +68,46 @@ type Client struct {
 }
 
 // NewClient creates a new authenticated WebSocket client. visibleUserIDs is
-// the set of user IDs whose events this client is allowed to receive.
-func NewClient(hub *Hub, conn *websocket.Conn, userID int64, visibleUserIDs []int64) *Client {
-	visible := make(map[int64]bool, len(visibleUserIDs))
-	for _, id := range visibleUserIDs {
+// the set of user IDs whose events this client is allowed to receive, and
+// expiresAt the expiry of its token (zero for none).
+func NewClient(hub *Hub, conn *websocket.Conn, userID int64, visibleUserIDs []int64, expiresAt time.Time) *Client {
+	return &Client{
+		hub:       hub,
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		userID:    userID,
+		visible:   visibleSet(visibleUserIDs),
+		expiresAt: expiresAt,
+	}
+}
+
+func visibleSet(ids []int64) map[int64]bool {
+	visible := make(map[int64]bool, len(ids))
+	for _, id := range ids {
 		visible[id] = true
 	}
-	return &Client{
-		hub:     hub,
-		conn:    conn,
-		send:    make(chan []byte, 256),
-		userID:  userID,
-		visible: visible,
-	}
+	return visible
+}
+
+// UserID is the user the connection belongs to.
+func (c *Client) UserID() int64 { return c.userID }
+
+// SetVisible replaces the set of users whose records the connection receives
+// (AM-SEC-24).
+func (c *Client) SetVisible(ids []int64) {
+	v := visibleSet(ids)
+	c.mu.Lock()
+	c.visible = v
+	c.mu.Unlock()
+}
+
+// CloseFor closes the connection with close code 1008 and the given reason.
+// The read pump then ends and unregisters the client. Safe to call from any
+// goroutine, and more than once.
+func (c *Client) CloseFor(reason string) {
+	msg := websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason)
+	_ = c.conn.WriteControl(websocket.CloseMessage, msg, time.Now().Add(writeWait))
+	_ = c.conn.Close()
 }
 
 // NewInternalClient creates a WebSocket client for a trusted service-to-service
@@ -86,6 +130,8 @@ func (c *Client) canSee(ownerUserIDs []int64) bool {
 	if c.all {
 		return true
 	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	for _, id := range ownerUserIDs {
 		if c.visible[id] {
 			return true
@@ -100,6 +146,12 @@ func (c *Client) ReadPump() {
 		c.hub.Unregister(c)
 		c.conn.Close()
 	}()
+
+	// The connection ends with its token (AM-SEC-24).
+	if !c.all && !c.expiresAt.IsZero() {
+		expiry := time.AfterFunc(time.Until(c.expiresAt), func() { c.CloseFor(ReasonTokenExpired) })
+		defer expiry.Stop()
+	}
 
 	// Clients only ever send PING and PONG; a larger message ends the
 	// connection rather than being read in full.
