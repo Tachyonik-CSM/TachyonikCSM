@@ -265,7 +265,6 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 | `POST` | `/api/assets/scan-coverage` | Apply a scan coverage table from one source: `{"userId", "sourceId", "sourceLabel", "entries": [{"target", "scanCoverageIntervalDays", "scanCoverageVerifiedAt"}]}` (internal only; the service names the user and the source id, as for creating an asset). See [Scan coverage tables](#scan-coverage-tables). Answers with `covered` and `created` asset IDs and the counts of `hostnames`, `unmatched`, `invalid` and `refused` entries |
 | `GET` | `/api/assets/stats` | Get aggregated asset statistics for the current user: counts by severity band, plus host assets by last seen (`hostsSeen30d` ≤ 30 days, `hostsSeen180d` 31–180 days, `hostsSeenOlder` > 180 days or unreadable) and by last scanned (`hostsScanned2d` ≤ 2 days, `hostsScanned10d` > 2 to 10 days, `hostsScannedOlder` > 10 days, `hostsNeverScanned` none or unreadable) and by scan coverage interval (`hostsMonitored2d` every 1–2 days, `hostsMonitored10d` every 3–10 days, `hostsMonitoredOlder` less often, `hostsUnmonitored` no interval) |
 | `GET` | `/api/assets/{id}` | One asset, if it is the caller's (or their group's); `404` otherwise |
-| `PATCH` | `/api/assets/{id}` | Change one asset's **type** (`{"type": "Host"}`; "host" in any casing is stored as "Host"). Severity and score are computed from the asset's findings and the name links them, so a body with any other field is refused with `400`. Same scoping as GET |
 | `GET` | `/api/vulnerabilities` | List all vulnerabilities for the authenticated user |
 | `POST` | `/api/vulnerabilities` | Create a vulnerability for an import, and report its host asset (internal only) (see [One record per finding](#one-record-per-finding), [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
 | `DELETE` | `/api/vulnerabilities/by-source` | When ResourceManager deletes a source: delete its vulnerabilities (internal only) |
@@ -451,7 +450,7 @@ Content-Type: application/json
 
 **Request Fields:**
 - `name`: Asset name/identifier (required, string)
-- `type`: Asset type (required, string). The types are a fixed set, for now only `Host`; a case variant such as `host` is stored as `Host`, any other type is refused with `400`. Assets of another type stored before the set was fixed are kept, reported in a startup warning, and can be retyped with `PATCH /api/assets/{id}`
+- `type`: Asset type (required, string). The types are a fixed set, for now only `Host`; a case variant such as `host` is stored as `Host`, any other type is refused with `400`. Assets of another type stored before the set was fixed are kept as they are and reported in a startup warning; they go with their source. An asset's type is set when it is created and never changes: there is no way to change an asset (AM-DATA-06)
 - `sourceId`: ResourceManager id of the source the asset came from (required, integer ≥ 1; without it the request is refused with `400`)
 - `sourceLabel`: The source's filename (string). (The `"filename (ID: N)"` string once accepted as `source` is no longer read.)
 - `userId`: The owner, required unless the `X-User-ID` header names it: naming no owner, or `0`, is refused with `400` (`userId is required: a service must name the owner`), and so is an owner SystemManager does not know (`userId names no user`) — such records would be seen by no one and held to no limit (AM-SEC-13)
@@ -797,7 +796,7 @@ Every change to a record is announced. A created record is sent whole; a change 
 | Type | Payload | Sent when |
 |---|---|---|
 | `ASSET_CREATED` | the asset, as `GET /api/assets/{id}` returns it | an asset is created, by a request or a coverage table |
-| `ASSET_UPDATED` | `{"id"}` | an asset is reported again, its type changes, its derived values or coverage change, or it loses a source |
+| `ASSET_UPDATED` | `{"id"}` | an asset is reported again, its derived values or coverage change, or it loses a source |
 | `ASSET_DELETED` | `{"id"}` | an asset is deleted |
 | `VULNERABILITY_CREATED` | the vulnerability, as listed | a vulnerability is created |
 | `VULNERABILITY_UPDATED` | `{"id"}` | a vulnerability loses its source |

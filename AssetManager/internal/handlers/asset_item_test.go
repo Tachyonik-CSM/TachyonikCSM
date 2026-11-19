@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Tests GET and PATCH /api/assets/{id}: a user reads and retypes their own
-// asset (an unknown type refused), another user's id is "not found", and fields that are computed or
-// that link the asset's findings cannot be set.
+// Tests GET /api/assets/{id}: a user reads their own asset and another user's
+// id is "not found"; and nothing of an asset can be changed — there is no
+// PATCH (AM-DATA-06): its name and type are set when an import creates it.
 
 package handlers
 
@@ -35,7 +35,7 @@ func assetFixture(t *testing.T) (http.Handler, int64) {
 		t.Fatalf("migrate: %v", err)
 	}
 	// Stored directly, as an asset of a type from before the types were a
-	// fixed set: retyping it to Host is how such a row is put right.
+	// fixed set: it keeps it (AM-DATA-04).
 	res, err := db.Exec(`INSERT INTO assets (user_id, name, type) VALUES (52, '192.168.178.10', 'Device')`)
 	if err != nil {
 		t.Fatalf("insert asset: %v", err)
@@ -46,7 +46,6 @@ func assetFixture(t *testing.T) (http.Handler, int64) {
 	h := &Handler{db: db, hub: hub, config: &config.Config{}}
 	r := mux.NewRouter()
 	r.HandleFunc("/api/assets/{id:[0-9]+}", h.GetAsset).Methods("GET")
-	r.HandleFunc("/api/assets/{id:[0-9]+}", h.UpdateAsset).Methods("PATCH")
 	return r, assetID
 }
 
@@ -61,42 +60,39 @@ func asUser(t *testing.T, r http.Handler, method, path string, userID int64, bod
 	return w.Code, a, w.Body.String()
 }
 
-func TestAUserReadsAndRetypesTheirAsset(t *testing.T) {
-	r, id := assetFixture(t)
-	path := "/api/assets/" + strconv.FormatInt(id, 10)
-
-	if code, a, _ := asUser(t, r, "GET", path, 52, ""); code != http.StatusOK || a.Name != "192.168.178.10" {
-		t.Fatalf("GET: %d %+v", code, a)
-	}
-	if code, _, msg := asUser(t, r, "PATCH", path, 52, `{"type":"Domain"}`); code != http.StatusBadRequest {
-		t.Errorf("PATCH to an unknown type: %d %s, want 400", code, msg)
-	}
-	code, a, _ := asUser(t, r, "PATCH", path, 52, `{"type":"host"}`)
-	if code != http.StatusOK || a.Type != "Host" {
-		t.Errorf("PATCH: %d %+v, want the type stored as \"Host\"", code, a)
-	}
-}
-
 func TestAnotherUsersAssetIsNotFound(t *testing.T) {
 	r, id := assetFixture(t)
 	path := "/api/assets/" + strconv.FormatInt(id, 10)
 	if code, _, _ := asUser(t, r, "GET", path, 7, ""); code != http.StatusNotFound {
 		t.Errorf("GET by another user: %d, want 404", code)
 	}
-	if code, _, _ := asUser(t, r, "PATCH", path, 7, `{"type":"Host"}`); code != http.StatusNotFound {
-		t.Errorf("PATCH by another user: %d, want 404", code)
-	}
 	if code, a, _ := asUser(t, r, "GET", path, 52, ""); code != http.StatusOK || a.Type != "Device" {
 		t.Errorf("the asset changed: %+v", a)
 	}
 }
 
-func TestComputedAndLinkingFieldsCannotBeSet(t *testing.T) {
+func TestAUserReadsTheirAsset(t *testing.T) {
 	r, id := assetFixture(t)
 	path := "/api/assets/" + strconv.FormatInt(id, 10)
-	for _, body := range []string{`{"severity":90}`, `{"score":10}`, `{"name":"other"}`, `{"type":"Host","severity":90}`, `{}`} {
-		if code, _, msg := asUser(t, r, "PATCH", path, 52, body); code != http.StatusBadRequest {
-			t.Errorf("%s: %d %s, want 400", body, code, msg)
+	if code, a, _ := asUser(t, r, "GET", path, 52, ""); code != http.StatusOK || a.Name != "192.168.178.10" || a.Type != "Device" {
+		t.Fatalf("GET: %d %+v", code, a)
+	}
+}
+
+// AM-DATA-06: the served routes have no way to change an asset.
+func TestAnAssetCannotBeChanged(t *testing.T) {
+	h := scopedHandler(t)
+	srv := httptest.NewServer(h.SetupRoutes())
+	t.Cleanup(srv.Close)
+	for _, method := range []string{"PATCH", "PUT"} {
+		req, _ := http.NewRequest(method, srv.URL+"/api/assets/1", strings.NewReader(`{"type":"Host"}`))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s /api/assets/1: %d, want it not served (404 or 405)", method, resp.StatusCode)
 		}
 	}
 }

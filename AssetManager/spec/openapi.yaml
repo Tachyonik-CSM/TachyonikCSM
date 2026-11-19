@@ -164,30 +164,6 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
-    patch:
-      operationId: assets.update
-      x-bridge: write
-      tags: [Assets]
-      summary: Change an asset's type
-      description: Only `type` may be sent; any other field is refused with 400 (AM-DATA-06).
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [type]
-              properties:
-                type: { type: string, enum: [Host] }
-      parameters:
-        - $ref: "#/components/parameters/actingRole"
-        - $ref: "#/components/parameters/actingUser"
-      responses:
-        "200": { description: "The asset as it now is.", content: { application/json: { schema: { $ref: "#/components/schemas/Asset" } } } }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "404": { $ref: "#/components/responses/NotFound" }
-        "500": { $ref: "#/components/responses/ServerError" }
 
   /api/assets/by-source:
     parameters:

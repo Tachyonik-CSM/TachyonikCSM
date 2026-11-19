@@ -228,9 +228,8 @@ func (h *Handler) SetupRoutes() http.Handler {
 	api.HandleFunc("/assets/by-source", h.DeleteAssetsBySource).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/assets/stale", h.DeleteStaleAssetsBySource).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/assets/scan-coverage", h.ApplyScanCoverage).Methods("POST", "OPTIONS")
-	// One asset by id, owner-scoped; a PATCH may change the type only.
+	// One asset by id, owner-scoped; nothing of it can be changed (AM-DATA-06).
 	api.HandleFunc("/assets/{id:[0-9]+}", h.GetAsset).Methods("GET", "OPTIONS")
-	api.HandleFunc("/assets/{id:[0-9]+}", h.UpdateAsset).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/vulnerabilities", h.ListVulnerabilities).Methods("GET", "OPTIONS")
 	api.HandleFunc("/vulnerabilities", h.CreateVulnerability).Methods("POST", "OPTIONS")
 	api.HandleFunc("/vulnerabilities/by-source", h.DeleteVulnerabilitiesBySource).Methods("DELETE", "OPTIONS")

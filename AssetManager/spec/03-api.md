@@ -15,7 +15,7 @@ them is in [4. Security and tenancy](04-security-and-tenancy.md).
 | Path | GET | POST | PATCH | DELETE |
 |---|---|---|---|---|
 | `/api/assets` | list | create, or report again (service) | | |
-| `/api/assets/{id}` | one | | type | |
+| `/api/assets/{id}` | one | | | |
 | `/api/assets/by-source` | | | | when the source is deleted (service) |
 | `/api/assets/stale` | | | | after a re-import (service) |
 | `/api/assets/scan-coverage` | | apply a table (service) | | |
@@ -154,7 +154,7 @@ sent for one release (AM-API-08) and are removed in the next.
 | Type | Payload | Sent when |
 |---|---|---|
 | `ASSET_CREATED` | the asset | an asset is created, by a request or a coverage table |
-| `ASSET_UPDATED` | `{"id"}` | an asset is reported again, its type changes, its derived values or coverage change, or it loses a source |
+| `ASSET_UPDATED` | `{"id"}` | an asset is reported again, its derived values or coverage change, or it loses a source |
 | `ASSET_DELETED` | `{"id"}` | an asset is deleted |
 | `VULNERABILITY_CREATED` | the vulnerability | a vulnerability is created |
 | `VULNERABILITY_UPDATED` | the vulnerability | a vulnerability is reported again with a changed severity, label or last seen (AM-DATA-47) |
@@ -196,9 +196,9 @@ catalogue, and MUST follow the catalogue's rules
   `assets`, `vulnerabilities`, `detections` and, for the service's own
   operation, `assetManager` (PA-CAT-03);
 - the operations routines may use are marked `x-bridge: read` — `assets.list`,
-  `assets.get`, `assets.stats`, `vulnerabilities.list`, `detections.list` —
-  or `x-bridge: write` — `assets.update` only: a routine creates and removes
-  no record, it creates a source instead (AM-PUR-20, PA-CAT-04);
+  `assets.get`, `assets.stats`, `vulnerabilities.list`, `detections.list`.
+  None is `x-bridge: write`: a routine creates, changes and removes no record;
+  it creates a source instead (AM-PUR-20, AM-DATA-06, PA-CAT-04);
 - the bridge names the user by `X-User-ID`, which answers with the user's
   visible set (AM-PUR-10), and never by the query `userId`, which narrows it
   to that one user (`x-bridge-bound`, PA-CAT-05, PA-BR-07);

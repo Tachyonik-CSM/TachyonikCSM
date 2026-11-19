@@ -155,11 +155,11 @@ routines.*
 
 | Caller | For |
 |---|---|
-| **WebUI** | Lists and filters a user's assets, vulnerabilities and detections, and changes an asset's type; follows changes over the WebSocket |
+| **WebUI** | Lists and filters a user's assets, vulnerabilities and detections; follows changes over the WebSocket |
 | **SourceImporter** | Creates the assets, vulnerabilities and detections an import extracts; applies scan coverage tables; deletes what a re-import left stale |
 | **ResourceManager** | Deletes a source's records when the source is deleted |
 | **ActionGenerator** | Reads assets and their statistics as the context rules are evaluated against; follows changes over the WebSocket to re-evaluate |
-| **ActionExecutor** | Lets execution routines read assets and findings and change an asset's type; a routine that adds hosts creates a source in ResourceManager |
+| **ActionExecutor** | Lets execution routines read assets and findings; a routine that adds hosts creates a source in ResourceManager |
 | **SystemManager** | Asks for a score recalculation, deletes or transfers a user's records, and asks which users AssetManager holds records for |
 
 ### Whom AssetManager calls

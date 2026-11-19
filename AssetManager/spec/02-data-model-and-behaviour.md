@@ -29,7 +29,7 @@ MUST update that asset and its link, not create a second one.
 counted three times against the limits and the scores.*
 
 **AM-DATA-02** The asset types MUST be a fixed set, for now `Host` only. An
-asset of any other type MUST be refused, both on create and on a type change.
+asset of any other type MUST be refused on create.
 A case variant (`host`) MUST be accepted and stored as the canonical spelling.
 *Reason: last scanned, the host-asset limit, scan coverage and the dashboard
 counts are defined for hosts only. A type nobody defined them for would be
@@ -45,18 +45,22 @@ lands, not where it is decided.*
 set was fixed) MUST be left unchanged and reported at startup, with their
 count per type.
 *Reason: nothing should rewrite or delete records on its own. The operator
-needs to know they exist.*
+needs to know they exist; one who wants them gone deletes their source
+(AM-PUR-20).*
 
 **AM-DATA-05** A host asset SHOULD be named by its address.
 *Reason: scan coverage tables match hosts by address (AM-DATA-31). A host
 named by its hostname is never covered by a network or range. Nothing
 enforces this, because imports name hosts as their sources do.*
 
-**AM-DATA-06** Of an asset, a client MUST be able to change the type only. The
-name and the derived values MUST NOT be writable.
+**AM-DATA-06** No field of an asset MUST be writable. Its name and type are set
+when an import creates it and stay with it; its derived values are computed.
 *Reason: the derived values are recomputed from the evidence and would be
 overwritten. The name is what findings are joined on (AM-DATA-13), so changing
-it would silently detach them.*
+it would silently detach them. The type is what the source said the record
+is, and the sources rule the records (AM-PUR-20); with one type there is also
+nothing to change it to (decided 2026-11-19: the type change, offered until
+then, was removed).*
 
 **AM-DATA-07** Creating an asset MUST name its source by its id; a create
 without one MUST be refused with 400.

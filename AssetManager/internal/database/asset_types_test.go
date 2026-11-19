@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Pins the fixed set of asset types: a case variant is stored in canonical
-// spelling, any other type is refused on create and on retype, and assets of
+// spelling, any other type is refused on create, and assets of
 // another type stored before the set was fixed are kept and counted for the
 // startup report.
 
@@ -38,9 +38,6 @@ func TestAssetTypesAreAFixedSet(t *testing.T) {
 	}
 	if _, err := db.CreateAsset("www.example.com", "Domain", 7, 0, "", nil); !errors.Is(err, ErrUnknownAssetType) {
 		t.Errorf("CreateAsset with Domain: %v, want ErrUnknownAssetType", err)
-	}
-	if _, err := db.UpdateAssetTypeForUsers(res.Asset.ID, []int64{7}, "Domain"); !errors.Is(err, ErrUnknownAssetType) {
-		t.Errorf("retype to Domain: %v, want ErrUnknownAssetType", err)
 	}
 
 	if _, err := insertLegacyAsset(db, "www.example.com", "Domain", 7, nil); err != nil {
