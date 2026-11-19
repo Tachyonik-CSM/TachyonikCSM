@@ -194,7 +194,9 @@ func (c *Client) CreateVulnerability(name, host, port string, severity int, sour
 		LastSeen:    lastSeen,
 	}
 	var vulnerability Vulnerability
-	if err := c.rc.JSON("POST", "/api/vulnerabilities", payload, &vulnerability, http.StatusCreated); err != nil {
+	// 201 is a new finding, 200 one of the same owner, source, host, port and
+	// name reported again (AssetManager AM-DATA-47): both are on record.
+	if err := c.rc.JSON("POST", "/api/vulnerabilities", payload, &vulnerability, http.StatusCreated, http.StatusOK); err != nil {
 		return nil, err
 	}
 	return &vulnerability, nil
@@ -212,7 +214,9 @@ func (c *Client) CreateDetection(name, host, port string, sourceID int64, source
 		LastSeen:    lastSeen,
 	}
 	var detection Detection
-	if err := c.rc.JSON("POST", "/api/detections", payload, &detection, http.StatusCreated); err != nil {
+	// 201 is a new finding, 200 one of the same owner, source, host, port and
+	// name reported again (AssetManager AM-DATA-47): both are on record.
+	if err := c.rc.JSON("POST", "/api/detections", payload, &detection, http.StatusCreated, http.StatusOK); err != nil {
 		return nil, err
 	}
 	return &detection, nil
