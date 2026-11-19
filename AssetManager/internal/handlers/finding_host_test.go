@@ -136,7 +136,8 @@ func TestAReimportWithoutTheHostButWithItsFindingKeepsTheAsset(t *testing.T) {
 	// The re-import: the new file reports the vulnerability, not the host.
 	started := time.Now()
 	time.Sleep(1100 * time.Millisecond) // modified_at is stored to the second
-	if code, body := call(t, h.CreateVulnerability, "POST", "/api/vulnerabilities", vuln); code != http.StatusCreated {
+	// The same finding again: reported again, not created (AM-DATA-47).
+	if code, body := call(t, h.CreateVulnerability, "POST", "/api/vulnerabilities", vuln); code != http.StatusOK {
 		t.Fatalf("%d %s", code, body)
 	}
 	stale := bySource("scan.xml", 3) + "&modifiedBefore=" + url.QueryEscape(started.Add(500*time.Millisecond).Format(time.RFC3339Nano))

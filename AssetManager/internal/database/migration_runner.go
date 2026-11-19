@@ -35,7 +35,7 @@ type Migration struct {
 // past a destructive migration boundary, which the additive-only
 // release discipline says we should never reach without first restoring
 // a pre-deploy snapshot.
-const MaxSupportedSchemaVersion = 7
+const MaxSupportedSchemaVersion = 8
 
 func ensureSchemaMigrationsTable(db *DB) error {
 	_, err := db.Exec(`
@@ -140,6 +140,11 @@ func allMigrations() []Migration {
 			Version:     7,
 			Description: "a host asset for every finding that had none (AM-DATA-13)",
 			Apply:       func(db *DB) error { return migrateFindingHostAssets(db) },
+		},
+		{
+			Version:     8,
+			Description: "a finding's identity: merge the repeats, and a unique index (AM-DATA-47)",
+			Apply:       func(db *DB) error { return migrateFindingIdentity(db) },
 		},
 	}
 }

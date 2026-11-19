@@ -9,7 +9,6 @@
 package database
 
 import (
-	"fmt"
 	"time"
 
 	"tachyonik/lib/listquery"
@@ -66,40 +65,15 @@ func (db *DB) CountDetectionsByUserWithFilter(userID int64, filter *DetectionFil
 	return db.countFindings(detectionKind, []int64{userID}, filter)
 }
 
-// CreateDetection creates a new detection and returns it
-// If lastSeen is nil, uses current time
+// CreateDetection reports a detection (AM-DATA-47): it creates it, or reports the
+// known one of the same owner, source, host, port and name again, and returns
+// the record. If lastSeen is nil, the current time is used.
 func (db *DB) CreateDetection(name, host, port string, sourceID int64, sourceLabel string, userID int64, lastSeen *time.Time) (*Detection, error) {
-	now := time.Now()
-	lastSeenTime := now
-	if lastSeen != nil {
-		lastSeenTime = *lastSeen
-	}
-
-	result, err := db.Exec(
-		"INSERT INTO detections (name, host, port, source_id, source_label, user_id, created_at, modified_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		name, host, port, sourceIDArg(sourceID), sourceLabel, userID, now, now, lastSeenTime,
-	)
+	out, err := db.ReportFinding(DetectionTable, FindingReport{Name: name, Host: host, Port: port, SourceID: sourceID, SourceLabel: sourceLabel, UserID: userID, LastSeen: lastSeen})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create detection: %w", err)
+		return nil, err
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get detection ID: %w", err)
-	}
-
-	return &Detection{
-		ID:          id,
-		Name:        name,
-		Host:        host,
-		Port:        port,
-		SourceID:    sourceIDPtr(sourceID),
-		SourceLabel: sourceLabel,
-		UserID:      userID,
-		CreatedAt:   now,
-		ModifiedAt:  now,
-		LastSeen:    lastSeenTime,
-	}, nil
+	return db.GetDetectionByID(out.ID)
 }
 
 // DeleteDetectionsBySource deletes a source's detections — the user's, or

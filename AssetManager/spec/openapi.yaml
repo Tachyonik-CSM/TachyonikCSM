@@ -359,7 +359,7 @@ paths:
       operationId: vulnerabilities.create
       tags: [Vulnerabilities]
       summary: Create a vulnerability
-      description: Service only (AM-PUR-20, AM-SEC-12). Also reports its host asset (AM-DATA-13); see `host`.
+      description: Service only (AM-PUR-20, AM-SEC-12). A vulnerability of a known owner, source, host, port and name is reported again — the same record, the new severity and label, last seen only forward — and answered with 200; only a new one is held to the limit (AM-DATA-47, -35). Also reports its host asset (AM-DATA-13); see `host`.
       requestBody:
         required: true
         content:
@@ -372,7 +372,8 @@ paths:
                   properties:
                     severity: { type: integer, minimum: 0, maximum: 100, description: "An integer from 0 to 100 (AM-DATA-14); outside it the vulnerability is refused with 400. A scanner's scale is mapped onto it proportionally — CVSS 0.0–10.0 times 10, rounded (7.5 is 75). The bands: 90–100 critical, 70–89 high, 40–69 medium, 1–39 low (AM-DATA-40)." }
       responses:
-        "201": { description: "The vulnerability as stored.", content: { application/json: { schema: { $ref: "#/components/schemas/Vulnerability" } } } }
+        "200": { description: "A known vulnerability, reported again (AM-DATA-47).", content: { application/json: { schema: { $ref: "#/components/schemas/Vulnerability" } } } }
+        "201": { description: "A new vulnerability, as stored.", content: { application/json: { schema: { $ref: "#/components/schemas/Vulnerability" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/LimitReached" }
@@ -459,14 +460,15 @@ paths:
       operationId: detections.create
       tags: [Detections]
       summary: Create a detection
-      description: Service only (AM-PUR-20, AM-SEC-12). Also reports its host asset (AM-DATA-13); see `host`.
+      description: Service only (AM-PUR-20, AM-SEC-12). A detection of a known owner, source, host, port and name is reported again — the same record, the new label, last seen only forward — and answered with 200; only a new one is held to the limit (AM-DATA-47, -35). Also reports its host asset (AM-DATA-13); see `host`.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/FindingInput" }
       responses:
-        "201": { description: "The detection as stored.", content: { application/json: { schema: { $ref: "#/components/schemas/Detection" } } } }
+        "200": { description: "A known detection, reported again (AM-DATA-47).", content: { application/json: { schema: { $ref: "#/components/schemas/Detection" } } } }
+        "201": { description: "A new detection, as stored.", content: { application/json: { schema: { $ref: "#/components/schemas/Detection" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/LimitReached" }

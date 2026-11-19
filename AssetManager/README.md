@@ -267,11 +267,11 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 | `GET` | `/api/assets/{id}` | One asset, if it is the caller's (or their group's); `404` otherwise |
 | `PATCH` | `/api/assets/{id}` | Change one asset's **type** (`{"type": "Host"}`; "host" in any casing is stored as "Host"). Severity and score are computed from the asset's findings and the name links them, so a body with any other field is refused with `400`. Same scoping as GET |
 | `GET` | `/api/vulnerabilities` | List all vulnerabilities for the authenticated user |
-| `POST` | `/api/vulnerabilities` | Create a vulnerability for an import, and report its host asset (internal only) (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
+| `POST` | `/api/vulnerabilities` | Create a vulnerability for an import, and report its host asset (internal only) (see [One record per finding](#one-record-per-finding), [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
 | `DELETE` | `/api/vulnerabilities/by-source` | When ResourceManager deletes a source: delete its vulnerabilities (internal only) |
 | `DELETE` | `/api/vulnerabilities/stale` | Delete vulnerabilities not modified since a given timestamp (internal only) |
 | `GET` | `/api/detections` | List all detections for the authenticated user |
-| `POST` | `/api/detections` | Create a detection for an import, and report its host asset (internal only) (see [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
+| `POST` | `/api/detections` | Create a detection for an import, and report its host asset (internal only) (see [One record per finding](#one-record-per-finding), [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
 | `DELETE` | `/api/detections/by-source` | When ResourceManager deletes a source: delete its detections (internal only) |
 | `DELETE` | `/api/detections/stale` | Delete detections not modified since a given timestamp (internal only) |
 | `POST` | `/api/internal/organisation/recalculate-score` | Recalculate the organisation score for a user (internal only) |
@@ -302,6 +302,29 @@ AssetManager holds what the sources report, and nothing else (AM-PUR-20):
   a link) are removed by the sweep too. Each round logs what it removed.
 - **Deleting an account** still removes all its records (SystemManager's internal
   endpoints).
+
+#### One record per finding
+
+A finding is identified by its owner, its source, its host, its port and its
+name (AM-DATA-47). Sending one whose identity is on record **reports it
+again** instead of storing a copy, the way an asset is reported again:
+
+- the answer is `200` with the same record (`201` only for a new finding);
+- the record takes the new `sourceLabel` and, for a vulnerability, the new
+  `severity`; its `lastSeen` only moves forward;
+- it is marked as touched by this import, so the stale sweep after a re-import
+  keeps it, and its id stays the same across re-imports;
+- only a new finding is held to the vulnerability or detection limit;
+  reporting a known one again is never refused for a limit, nor while
+  SystemManager cannot be asked;
+- it is announced as `VULNERABILITY_UPDATED` / `DETECTION_UPDATED`, with the
+  whole record, when its severity, label or last seen changed.
+
+So a scanner that reports a check once per virtual hostname of a host
+(OpenVAS does) gives one vulnerability per host and port. Findings from
+different sources stay separate records. Migration v8 merged the copies
+stored before into their oldest record (the highest severity, the newest last
+seen) and added a unique index on the identity.
 
 #### Findings and their source
 
@@ -664,7 +687,8 @@ Content-Type: application/json
 ```
 
 **Status Codes:**
-- `201 Created`: Vulnerability successfully created
+- `201 Created`: A new vulnerability
+- `200 OK`: A vulnerability of the same owner, source, host, port and name, reported again (see [One record per finding](#one-record-per-finding))
 - `400 Bad Request`: Invalid request body, missing required fields (`sourceId` among them), severity out of range, or no owner named
 - `401 Unauthorized`: Missing or invalid internal service key
 - `403 Forbidden`: A user's request (records are created only by importing a source), or a limit is reached
@@ -933,6 +957,8 @@ Which sources saw an asset, and when, is kept per source in the `asset_source` t
 Vulnerabilities and detections hold their source as `source_id` and `source_label` (migration v6, filled from the `"filename (ID: N)"` string the older `source` column held). The `source` column is no longer read or written and is dropped in a later release.
 
 Every vulnerability and detection has the host asset of its owner (AM-DATA-13): migration v7 created the ones findings stored before were missing, linked to each of their sources and dated by the newest finding of that source, without applying the limits. See [Findings and their host asset](#findings-and-their-host-asset).
+
+A vulnerability or detection is unique per owner, source, host, port and name (AM-DATA-47): migration v8 merged the copies stored before into their oldest record and added the unique indexes `idx_vulnerabilities_identity` and `idx_detections_identity`. See [One record per finding](#one-record-per-finding).
 
 Every link also has `modified_at` (migration v5): when an import last touched it, set on every import of the asset whether or not its `last_seen` moved. A re-import drops the links it did not touch by this, not by `last_seen` — that is the date the file says the host was seen, which re-importing the same file leaves where it was. (Judged by `last_seen`, every link of a re-imported file looked stale, and all its assets were deleted while their findings stayed.) When a source lists a host whose link from that source was coverage only, the link becomes a sighting dated by the listing.
 

@@ -157,15 +157,17 @@ sent for one release (AM-API-08) and are removed in the next.
 | `ASSET_UPDATED` | `{"id"}` | an asset is reported again, its type changes, its derived values or coverage change, or it loses a source |
 | `ASSET_DELETED` | `{"id"}` | an asset is deleted |
 | `VULNERABILITY_CREATED` | the vulnerability | a vulnerability is created |
-| `VULNERABILITY_UPDATED` | `{"id"}` | a vulnerability loses its source |
+| `VULNERABILITY_UPDATED` | the vulnerability | a vulnerability is reported again with a changed severity, label or last seen (AM-DATA-47) |
 | `VULNERABILITY_DELETED` | `{"id"}` | a vulnerability is deleted |
 | `DETECTION_CREATED` | the detection | a detection is created |
-| `DETECTION_UPDATED` | `{"id"}` | a detection loses its source |
+| `DETECTION_UPDATED` | the detection | a detection is reported again with a changed label or last seen (AM-DATA-47) |
 | `DETECTION_DELETED` | `{"id"}` | a detection is deleted |
 
 *Reason: AM-PUR-09. A created record is sent whole, because a list can insert
 it as it is. A change sends only the id, and the client reads the record
-again, so it never shows a half-updated one.* Who receives which message is
+again, so it never shows a half-updated one. A finding reported again is the
+exception: it is sent whole, as it now is, since the change is the record's
+newest state (AM-DATA-47).* Who receives which message is
 in AM-SEC-18 and AM-SEC-19.
 
 **AM-API-10** A client MAY send `{"type": "PING"}`, which MUST be answered

@@ -9,7 +9,6 @@
 package database
 
 import (
-	"fmt"
 	"time"
 
 	"tachyonik/lib/listquery"
@@ -67,47 +66,15 @@ func (db *DB) CountVulnerabilitiesByUserWithFilter(userID int64, filter *Vulnera
 	return db.countFindings(vulnerabilityKind, []int64{userID}, filter)
 }
 
-// CreateVulnerability creates a new vulnerability and returns it
-// If lastSeen is nil, uses current time
+// CreateVulnerability reports a vulnerability (AM-DATA-47): it creates it, or reports the
+// known one of the same owner, source, host, port and name again, and returns
+// the record. If lastSeen is nil, the current time is used.
 func (db *DB) CreateVulnerability(name, host, port string, severity int, sourceID int64, sourceLabel string, userID int64, lastSeen *time.Time) (*Vulnerability, error) {
-	// Validate severity range
-	if severity < 0 || severity > 100 {
-		return nil, fmt.Errorf("severity must be between 0 and 100")
-	}
-
-	// Create new vulnerability
-	now := time.Now()
-	lastSeenTime := now
-	if lastSeen != nil {
-		lastSeenTime = *lastSeen
-	}
-
-	result, err := db.Exec(
-		"INSERT INTO vulnerabilities (name, host, port, severity, source_id, source_label, user_id, created_at, modified_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		name, host, port, severity, sourceIDArg(sourceID), sourceLabel, userID, now, now, lastSeenTime,
-	)
+	out, err := db.ReportFinding(VulnerabilityTable, FindingReport{Name: name, Host: host, Port: port, Severity: &severity, SourceID: sourceID, SourceLabel: sourceLabel, UserID: userID, LastSeen: lastSeen})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create vulnerability: %w", err)
+		return nil, err
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get vulnerability ID: %w", err)
-	}
-
-	return &Vulnerability{
-		ID:          id,
-		Name:        name,
-		Host:        host,
-		Port:        port,
-		Severity:    severity,
-		SourceID:    sourceIDPtr(sourceID),
-		SourceLabel: sourceLabel,
-		UserID:      userID,
-		CreatedAt:   now,
-		ModifiedAt:  now,
-		LastSeen:    lastSeenTime,
-	}, nil
+	return db.GetVulnerabilityByID(out.ID)
 }
 
 // DeleteVulnerabilitiesBySource deletes a source's vulnerabilities — the

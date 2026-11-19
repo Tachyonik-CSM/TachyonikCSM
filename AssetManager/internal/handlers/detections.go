@@ -137,8 +137,19 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A finding of a known identity is reported again, not created
+	// (AM-DATA-47): it creates nothing, so no limit applies to it and its host
+	// asset exists (AM-DATA-13, -35).
+	report := database.FindingReport{Name: req.Name, Host: req.Host, Port: req.Port, SourceID: sourceID, SourceLabel: sourceLabel, UserID: userID}
+	known, err := h.db.FindingExists(database.DetectionTable, report)
+	if err != nil {
+		logger.Errorf("Failed to look up the detection: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to look up the detection")
+		return
+	}
+
 	// Enforce detection limit
-	if h.systemManagerClient != nil {
+	if !known && h.systemManagerClient != nil {
 		smUser, smErr := h.systemManagerClient.GetUser(userID)
 		if smErr != nil {
 			// A limit that cannot be read cannot be kept (AM-DATA-44).
@@ -164,9 +175,11 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 
 	// The host asset of the finding: a new one is held to the host asset
 	// limit like any other (AM-DATA-13, AM-DATA-33).
-	if status, msg := h.findingHostLimit("CreateDetection", userID, req.Host, sourceLabel, sourceID); status != 0 {
-		respondError(w, status, msg)
-		return
+	if !known {
+		if status, msg := h.findingHostLimit("CreateDetection", userID, req.Host, sourceLabel, sourceID); status != 0 {
+			respondError(w, status, msg)
+			return
+		}
 	}
 
 	// Parse lastSeen if provided
@@ -200,9 +213,16 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detection, err := h.db.CreateDetection(req.Name, req.Host, req.Port, sourceID, sourceLabel, userID, lastSeen)
+	report.LastSeen = lastSeen
+	outcome, err := h.db.ReportFinding(database.DetectionTable, report)
 	if err != nil {
 		logger.Errorf("Failed to create detection: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to create detection")
+		return
+	}
+	detection, err := h.db.GetDetectionByID(outcome.ID)
+	if err != nil {
+		logger.Errorf("Failed to read the detection: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to create detection")
 		return
 	}
@@ -213,12 +233,22 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 	// Broadcast to WebSocket clients. Scoped: this payload carries full
 	// detection details, so deliver only to clients who may see this owner's
 	// data (tenant isolation).
-	msg, _ := ws.NewMessage(ws.TypeDetectionCreated, detection)
-	h.hub.BroadcastScoped(msg, []int64{userID})
-
-	h.emitTotalDetections(userID)
-
-	respondJSON(w, http.StatusCreated, detection)
+	// A finding reported again is announced only when something shown changed
+	// (AM-DATA-47), whole, as a created one is.
+	if outcome.New || outcome.Changed {
+		kind := ws.TypeDetectionCreated
+		if !outcome.New {
+			kind = ws.TypeDetectionUpdated
+		}
+		msg, _ := ws.NewMessage(kind, detection)
+		h.hub.BroadcastScoped(msg, []int64{userID})
+	}
+	if outcome.New {
+		h.emitTotalDetections(userID)
+		respondJSON(w, http.StatusCreated, detection)
+		return
+	}
+	respondJSON(w, http.StatusOK, detection)
 }
 
 // DeleteStaleDetectionsBySource deletes detections associated with a source that were modified before a given timestamp

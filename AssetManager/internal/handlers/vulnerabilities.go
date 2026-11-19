@@ -142,8 +142,19 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A finding of a known identity is reported again, not created
+	// (AM-DATA-47): it creates nothing, so no limit applies to it and its host
+	// asset exists (AM-DATA-13, -35).
+	report := database.FindingReport{Name: req.Name, Host: req.Host, Port: req.Port, Severity: &req.Severity, SourceID: sourceID, SourceLabel: sourceLabel, UserID: userID}
+	known, err := h.db.FindingExists(database.VulnerabilityTable, report)
+	if err != nil {
+		logger.Errorf("Failed to look up the vulnerability: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to look up the vulnerability")
+		return
+	}
+
 	// Enforce vulnerability limit
-	if h.systemManagerClient != nil {
+	if !known && h.systemManagerClient != nil {
 		smUser, smErr := h.systemManagerClient.GetUser(userID)
 		if smErr != nil {
 			// A limit that cannot be read cannot be kept (AM-DATA-44).
@@ -169,9 +180,11 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 
 	// The host asset of the finding: a new one is held to the host asset
 	// limit like any other (AM-DATA-13, AM-DATA-33).
-	if status, msg := h.findingHostLimit("CreateVulnerability", userID, req.Host, sourceLabel, sourceID); status != 0 {
-		respondError(w, status, msg)
-		return
+	if !known {
+		if status, msg := h.findingHostLimit("CreateVulnerability", userID, req.Host, sourceLabel, sourceID); status != 0 {
+			respondError(w, status, msg)
+			return
+		}
 	}
 
 	// Parse lastSeen if provided
@@ -205,9 +218,16 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vulnerability, err := h.db.CreateVulnerability(req.Name, req.Host, req.Port, req.Severity, sourceID, sourceLabel, userID, lastSeen)
+	report.LastSeen = lastSeen
+	outcome, err := h.db.ReportFinding(database.VulnerabilityTable, report)
 	if err != nil {
 		logger.Errorf("Failed to create vulnerability: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to create vulnerability")
+		return
+	}
+	vulnerability, err := h.db.GetVulnerabilityByID(outcome.ID)
+	if err != nil {
+		logger.Errorf("Failed to read the vulnerability: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to create vulnerability")
 		return
 	}
@@ -218,14 +238,25 @@ func (h *Handler) CreateVulnerability(w http.ResponseWriter, r *http.Request) {
 	// Broadcast to WebSocket clients. Scoped: this payload carries full
 	// vulnerability details, so deliver only to clients who may see this
 	// owner's data (tenant isolation).
-	msg, _ := ws.NewMessage(ws.TypeVulnerabilityCreated, vulnerability)
-	h.hub.BroadcastScoped(msg, []int64{userID})
+	// A finding reported again is announced only when something shown changed
+	// (AM-DATA-47), whole, as a created one is.
+	if outcome.New || outcome.Changed {
+		kind := ws.TypeVulnerabilityCreated
+		if !outcome.New {
+			kind = ws.TypeVulnerabilityUpdated
+		}
+		msg, _ := ws.NewMessage(kind, vulnerability)
+		h.hub.BroadcastScoped(msg, []int64{userID})
 
-	// Trigger organisation score recalculation
-	go h.recalculateOrganisationScore(userID)
-	h.emitTotalVulnerabilities(userID)
-
-	respondJSON(w, http.StatusCreated, vulnerability)
+		// The severity may have moved the organisation score.
+		go h.recalculateOrganisationScore(userID)
+	}
+	if outcome.New {
+		h.emitTotalVulnerabilities(userID)
+		respondJSON(w, http.StatusCreated, vulnerability)
+		return
+	}
+	respondJSON(w, http.StatusOK, vulnerability)
 }
 
 // DeleteStaleVulnerabilitiesBySource deletes vulnerabilities associated with a source that were modified before a given timestamp
