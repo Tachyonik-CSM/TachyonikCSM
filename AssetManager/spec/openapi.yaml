@@ -628,6 +628,60 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /api/internal/users/usage:
+    get:
+      operationId: assetManager.userUsage
+      tags: [Internal]
+      summary: What each user holds against their limits
+      description: |
+        AM-DATA-45. Each user's host assets, vulnerabilities and detections,
+        and the instance's, counted as the limits count them. A user who
+        holds none is not listed. `sharedWorkspace` is true on an appliance,
+        where all users' host assets count against each user's host asset
+        limit; `licence` is present while the appliance's active licence caps
+        the host assets of all users together. SystemManager shows the
+        counts in Admin → Users.
+      security: [ { service: [] } ]
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [users, instance, sharedWorkspace]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [userId, hostAssets, vulnerabilities, detections]
+                      properties:
+                        userId: { type: integer }
+                        hostAssets: { type: integer }
+                        vulnerabilities: { type: integer }
+                        detections: { type: integer }
+                  instance:
+                    type: object
+                    additionalProperties: false
+                    required: [hostAssets, vulnerabilities, detections]
+                    properties:
+                      hostAssets: { type: integer }
+                      vulnerabilities: { type: integer }
+                      detections: { type: integer }
+                  sharedWorkspace: { type: boolean }
+                  licence:
+                    type: object
+                    additionalProperties: false
+                    required: [numAssets]
+                    properties:
+                      numAssets: { type: integer, description: "The licensed number of host assets." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /api/mcp:
     post:
       operationId: assetManager.mcp

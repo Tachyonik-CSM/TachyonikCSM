@@ -282,6 +282,7 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 | `DELETE` | `/api/detections/stale` | Delete detections not modified since a given timestamp (internal only) |
 | `POST` | `/api/internal/organisation/recalculate-score` | Recalculate the organisation score for a user (internal only) |
 | `GET` | `/api/internal/users/ids` | Distinct user ids this service holds data for. SystemManager's orphan sweep diffs it against the live users and purges the strays (internal only) |
+| `GET` | `/api/internal/users/usage` | How many host assets, vulnerabilities and detections each user holds and the instance in all, counted as the limits count them, whether all users' host assets count against each limit (appliance), and the licensed number while a licence caps them (AM-DATA-45). SystemManager shows them in Admin → Users (internal only) |
 | `POST` | `/api/mcp` | The MCP server, for a signed-in user's session only (see *MCP server*) |
 
 #### Findings and their source

@@ -5,8 +5,9 @@
 // The internal-service endpoints, called by other services rather than by a
 // browser: deleting every asset, vulnerability and detection an account owns,
 // transferring them from an anonymous session to the registered account it
-// became, and reporting which users this service still holds data for — the
-// sweep SystemManager's purge relies on.
+// became, reporting which users this service still holds data for — the
+// sweep SystemManager's purge relies on — and what each holds against their
+// limits, for Admin → Users (AM-DATA-45).
 
 package handlers
 
@@ -15,6 +16,7 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
+	"tachyonik/assetmanager/internal/database"
 	"tachyonik/lib/logger"
 )
 
@@ -104,4 +106,59 @@ func (h *Handler) ListUserIDs(w http.ResponseWriter, r *http.Request) {
 		ids = []int64{} // the document's array, not null, when no one has records
 	}
 	respondJSON(w, http.StatusOK, map[string][]int64{"userIds": ids})
+}
+
+// UsageCounts are the instance's counts in a UsageResponse.
+type UsageCounts struct {
+	HostAssets      int `json:"hostAssets"`
+	Vulnerabilities int `json:"vulnerabilities"`
+	Detections      int `json:"detections"`
+}
+
+// UsageLicence is the appliance licence the host assets are also checked
+// against (AM-DATA-34).
+type UsageLicence struct {
+	NumAssets int `json:"numAssets"`
+}
+
+// UsageResponse is the answer of GET /api/internal/users/usage.
+type UsageResponse struct {
+	Users    []database.Usage `json:"users"`
+	Instance UsageCounts      `json:"instance"`
+	// SharedWorkspace is true on an appliance, where the host assets of all
+	// users count against each user's host asset limit (AM-DATA-33).
+	SharedWorkspace bool `json:"sharedWorkspace"`
+	// Licence is present while the appliance holds an active licence with a
+	// number of assets.
+	Licence *UsageLicence `json:"licence,omitempty"`
+}
+
+// UserUsage returns what each user and the instance hold, counted as the
+// limits count it (AM-DATA-45; internal service endpoint). SystemManager puts
+// it next to the users' limits in Admin → Users.
+func (h *Handler) UserUsage(w http.ResponseWriter, r *http.Request) {
+	if !IsInternalService(r) {
+		respondError(w, http.StatusForbidden, "Internal service access required")
+		return
+	}
+	users, total, err := h.db.UsageByUser()
+	if err != nil {
+		logger.Errorf("Failed to count the usage per user: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to count the usage")
+		return
+	}
+	resp := UsageResponse{
+		Users:           users,
+		Instance:        UsageCounts{HostAssets: total.HostAssets, Vulnerabilities: total.Vulnerabilities, Detections: total.Detections},
+		SharedWorkspace: h.sharedWorkspace(),
+	}
+	if h.aiManagerClient != nil {
+		// As the limit check does: a licence that cannot be read is no cap.
+		if lic, lerr := h.aiManagerClient.InstanceLicense(); lerr != nil {
+			logger.Warnf("Usage: could not read the appliance licence: %v", lerr)
+		} else if lic.Active && lic.NumAssets > 0 {
+			resp.Licence = &UsageLicence{NumAssets: lic.NumAssets}
+		}
+	}
+	respondJSON(w, http.StatusOK, resp)
 }

@@ -92,6 +92,7 @@ func TestServiceAnswersAreDocumented(t *testing.T) {
 	// What SystemManager calls.
 	call("POST", "/api/internal/organisation/recalculate-score", `{"userId":1}`, http.StatusOK)
 	call("GET", "/api/internal/users/ids", "", http.StatusOK)
+	call("GET", "/api/internal/users/usage", "", http.StatusOK)
 	call("PATCH", "/api/internal/users/1/data/transfer?newOwner=3", "", http.StatusOK)
 	call("DELETE", "/api/internal/users/3/data", "", http.StatusOK)
 	call("DELETE", "/api/internal/users/7/data", "", http.StatusOK)

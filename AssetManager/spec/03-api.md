@@ -23,7 +23,7 @@ them is in [4. Security and tenancy](04-security-and-tenancy.md).
 | `/api/vulnerabilities`, `/api/detections` | list | create | | by id |
 | `…/by-source` | | | keep without the source | delete |
 | `…/stale` | | | | after a re-import (service) |
-| `/api/internal/…` | user ids | score recalculation | move a user's records | delete a user's records |
+| `/api/internal/…` | user ids, usage (AM-DATA-45) | score recalculation | move a user's records | delete a user's records |
 | `/api/mcp` | | the MCP server (AM-API-15) | | |
 | `/health`, `/ready`, `/metrics` | see [5. Operation](05-operation.md) | | | |
 

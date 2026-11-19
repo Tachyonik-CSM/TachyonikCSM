@@ -255,6 +255,7 @@ func (h *Handler) SetupRoutes() http.Handler {
 	internalRoutes.HandleFunc("/organisation/recalculate-score", h.RecalculateOrganisationScore).Methods("POST", "OPTIONS")
 	internalRoutes.HandleFunc("/users/{id:[0-9]+}/data", h.DeleteUserData).Methods("DELETE", "OPTIONS")
 	internalRoutes.HandleFunc("/users/ids", h.ListUserIDs).Methods("GET", "OPTIONS")
+	internalRoutes.HandleFunc("/users/usage", h.UserUsage).Methods("GET", "OPTIONS")
 	internalRoutes.HandleFunc("/users/{id:[0-9]+}/data/transfer", h.TransferUserData).Methods("PATCH", "OPTIONS")
 
 	// WebSocket route
