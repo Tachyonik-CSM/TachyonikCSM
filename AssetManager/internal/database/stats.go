@@ -234,9 +234,20 @@ type AssetScoreAggregates struct {
 
 // GetAssetScoreAggregatesByUser returns the count and sum of per-asset scores.
 // Each asset's score is 0 (unmanaged) or 100-severity (managed), stored in the score column.
-func (db *DB) GetAssetScoreAggregatesByUser(userID int64) (*AssetScoreAggregates, error) {
+// GetAssetScoreAggregatesByUsers is GetAssetScoreAggregatesByUser over the
+// assets of several users: an appliance's workspace (AM-DATA-41).
+func (db *DB) GetAssetScoreAggregatesByUsers(userIDs []int64) (*AssetScoreAggregates, error) {
 	agg := &AssetScoreAggregates{}
-	err := db.Get(agg, "SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score_sum FROM assets WHERE user_id = ?", userID)
+	if len(userIDs) == 0 {
+		return agg, nil
+	}
+	ph := make([]string, len(userIDs))
+	args := make([]interface{}, len(userIDs))
+	for i, id := range userIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+	err := db.Get(agg, "SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score_sum FROM assets WHERE user_id IN ("+strings.Join(ph, ",")+")", args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get asset score aggregates: %w", err)
 	}

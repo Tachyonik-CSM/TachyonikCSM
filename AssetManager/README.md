@@ -274,7 +274,7 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 | `POST` | `/api/detections` | Create a detection for an import, and report its host asset (internal only) (see [One record per finding](#one-record-per-finding), [Findings and their host asset](#findings-and-their-host-asset), [Findings and their source](#findings-and-their-source)) |
 | `DELETE` | `/api/detections/by-source` | When ResourceManager deletes a source: delete its detections (internal only) |
 | `DELETE` | `/api/detections/stale` | Delete detections not modified since a given timestamp (internal only) |
-| `POST` | `/api/internal/organisation/recalculate-score` | Recalculate the organisation score for a user (internal only) |
+| `POST` | `/api/internal/organisation/recalculate-score` | Recalculate the Exposure and Coverage sub-scores for a user (internal only). In SaaS they are the owner's; on an appliance they are the shared workspace's, computed over all its users' assets and sent to each user's organisation, as the statistics already count the whole workspace (AM-DATA-41, -42) |
 | `GET` | `/api/internal/users/ids` | Distinct user ids this service holds data for. SystemManager's orphan sweep diffs it against the live users and purges the strays (internal only) |
 | `GET` | `/api/internal/users/usage` | How many host assets, vulnerabilities and detections each user holds and the instance in all, counted as the limits count them, whether all users' host assets count against each limit (appliance), and the licensed number while a licence caps them (AM-DATA-45). SystemManager shows them in Admin → Users (internal only) |
 | `POST` | `/api/mcp` | The MCP server, for a signed-in user's session only (see *MCP server*) |

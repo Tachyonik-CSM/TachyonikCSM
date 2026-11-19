@@ -70,57 +70,84 @@ func clampScore(v float64) float64 {
 }
 
 // recalculateOrganisationScore recomputes AssetManager's two sub-scores
-// (exposure + coverage) for a user and pushes each to SystemManager. The
-// overall Tachyonik Score is recomputed server-side when each sub-score lands.
+// (exposure + coverage) after a change to userID's records and pushes each to
+// SystemManager. The overall Tachyonik Score is recomputed server-side when
+// each sub-score lands.
+//
+// In SaaS they are the owner's (AM-DATA-41, -42). On an appliance, one shared
+// workspace, they are the workspace's, as its statistics are: computed over
+// the records of all its users and pushed to the organisation of each of
+// them, since a change by one moves the score all of them see.
 func (h *Handler) recalculateOrganisationScore(userID int64) {
 	// Nothing to push to without SystemManager, as the other SystemManager
 	// calls here already assume; this one ran in a goroutine and crashed.
 	if userID == 0 || h.systemManagerClient == nil {
 		return
 	}
+	h.recalculateScoresFor(userID)
+}
 
-	// Get organisation from SystemManager (for assets_hosts).
-	org, err := h.systemManagerClient.GetOrganisationByUserID(userID)
-	if err != nil {
-		logger.Errorf("recalculateScore: failed to get organisation for user %d: %v", userID, err)
-		return
-	}
-	if org == nil {
-		logger.Warnf("recalculateScore: no organisation found for user %d, skipping", userID)
-		return
+// recalculateScoresFor computes the sub-scores of userID's records — on an
+// appliance the workspace's — pushes them to every organisation concerned,
+// and returns the users it covered.
+func (h *Handler) recalculateScoresFor(userID int64) []int64 {
+	members := []int64{userID}
+	if h.sharedWorkspace() {
+		members = h.VisibleUserIDsForUser(userID)
 	}
 
-	// Asset aggregates (count + SUM(score)) and unmanaged count.
-	agg, err := h.db.GetAssetScoreAggregatesByUser(userID)
+	// Asset aggregates (count + SUM(score)) and unmanaged count, over the
+	// records the score is about.
+	agg, err := h.db.GetAssetScoreAggregatesByUsers(members)
 	if err != nil {
-		logger.Errorf("recalculateScore: failed to get asset aggregates for user %d: %v", userID, err)
-		return
+		logger.Errorf("recalculateScore: failed to get asset aggregates for users %v: %v", members, err)
+		return members
 	}
 	var unmanagedCount int
-	if assetStats, statsErr := h.db.GetAssetStatsByUser(userID); statsErr == nil {
+	if assetStats, statsErr := h.db.GetAssetStatsByUsers(members); statsErr == nil {
 		unmanagedCount = assetStats.Unmanaged
 	} else {
-		logger.Warnf("recalculateScore: failed to get asset stats for user %d: %v", userID, statsErr)
+		logger.Warnf("recalculateScore: failed to get asset stats for users %v: %v", members, statsErr)
 	}
-
 	exposure := calculateExposureScore(agg.Count, agg.ScoreSum)
-	coverage := calculateCoverageScore(org.AssetsHosts, agg.Count, unmanagedCount)
 
-	logger.Debugf("recalculateScore: user %d exposure=%.2f coverage=%.2f (assetsHosts=%d assetCount=%d scoreSum=%d unmanaged=%d)",
-		userID, exposure, coverage, org.AssetsHosts, agg.Count, agg.ScoreSum, unmanagedCount)
-
-	if err := h.systemManagerClient.UpdateOrganisationSubScore(userID, "exposure", exposure); err != nil {
-		logger.Errorf("recalculateScore: failed to push exposure sub-score for user %d: %v", userID, err)
+	// Each organisation once: on an appliance the members may share one.
+	// Coverage is measured against that organisation's declared estate.
+	pushed := map[int64]bool{}
+	for _, uid := range members {
+		org, err := h.systemManagerClient.GetOrganisationByUserID(uid)
+		if err != nil {
+			logger.Errorf("recalculateScore: failed to get organisation for user %d: %v", uid, err)
+			continue
+		}
+		if org == nil {
+			if uid == userID {
+				logger.Warnf("recalculateScore: no organisation found for user %d, skipping", uid)
+			}
+			continue
+		}
+		if pushed[org.ID] {
+			continue
+		}
+		pushed[org.ID] = true
+		coverage := calculateCoverageScore(org.AssetsHosts, agg.Count, unmanagedCount)
+		logger.Debugf("recalculateScore: user %d (organisation %d) exposure=%.2f coverage=%.2f (assetsHosts=%d assetCount=%d scoreSum=%d unmanaged=%d, over %d user(s))",
+			uid, org.ID, exposure, coverage, org.AssetsHosts, agg.Count, agg.ScoreSum, unmanagedCount, len(members))
+		if err := h.systemManagerClient.UpdateOrganisationSubScore(uid, "exposure", exposure); err != nil {
+			logger.Errorf("recalculateScore: failed to push exposure sub-score for user %d: %v", uid, err)
+		}
+		if err := h.systemManagerClient.UpdateOrganisationSubScore(uid, "coverage", coverage); err != nil {
+			logger.Errorf("recalculateScore: failed to push coverage sub-score for user %d: %v", uid, err)
+		}
 	}
-	if err := h.systemManagerClient.UpdateOrganisationSubScore(userID, "coverage", coverage); err != nil {
-		logger.Errorf("recalculateScore: failed to push coverage sub-score for user %d: %v", userID, err)
-	}
+	return members
 }
 
 // RecalculateAllOrganisationScores recomputes exposure + coverage for every
 // known user, not just users with assets — users without assets legitimately
 // score 0/0 on both, which still contributes to the overall score via the
-// weighted sum and keeps the dashboard consistent.
+// weighted sum and keeps the dashboard consistent. On an appliance one round
+// covers the whole workspace, so its users are not computed again.
 func (h *Handler) RecalculateAllOrganisationScores() {
 	userIDs, err := h.systemManagerClient.ListAllUserIDs()
 	if err != nil {
@@ -134,8 +161,14 @@ func (h *Handler) RecalculateAllOrganisationScores() {
 	}
 
 	logger.Infof("RecalculateAllOrganisationScores: recalculating exposure+coverage for %d user(s)", len(userIDs))
+	covered := map[int64]bool{}
 	for _, uid := range userIDs {
-		h.recalculateOrganisationScore(uid)
+		if uid == 0 || covered[uid] {
+			continue
+		}
+		for _, m := range h.recalculateScoresFor(uid) {
+			covered[m] = true
+		}
 	}
 	logger.Infof("RecalculateAllOrganisationScores: done")
 }
