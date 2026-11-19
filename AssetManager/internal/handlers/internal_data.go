@@ -74,16 +74,29 @@ func (h *Handler) TransferUserData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.db.TransferAllUserData(fromUserID, toUserID)
+	// All or nothing, a record the receiver has already merged into theirs
+	// (AM-DATA-38). A failure leaves every record with its owner.
+	result, err := h.db.TransferAllUserData(fromUserID, toUserID)
 	if err != nil {
 		logger.Errorf("Failed to transfer data from user %d to %d: %v", fromUserID, toUserID, err)
 		respondError(w, http.StatusInternalServerError, "Failed to transfer user data")
 		return
 	}
+	if err := h.db.RecomputeAfterTransfer(result); err != nil {
+		logger.Errorf("Failed to recompute the merged assets of user %d: %v", toUserID, err)
+	}
 
-	logger.Infof("Transferred %d records from user %d to user %d", count, fromUserID, toUserID)
+	// Both owners' counts and scores changed.
+	for _, uid := range []int64{fromUserID, toUserID} {
+		go h.recalculateOrganisationScore(uid)
+		h.emitTotalAssets(uid)
+		h.emitTotalVulnerabilities(uid)
+		h.emitTotalDetections(uid)
+	}
 
-	respondJSON(w, http.StatusOK, map[string]int64{"transferred": count})
+	logger.Infof("Transferred %d records from user %d to user %d, %d merged into records user %d already had", result.Moved, fromUserID, toUserID, result.Merged, toUserID)
+
+	respondJSON(w, http.StatusOK, map[string]int64{"transferred": result.Moved + result.Merged})
 }
 
 // ListUserIDs returns every distinct user id this service still holds data

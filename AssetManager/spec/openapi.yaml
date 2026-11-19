@@ -530,7 +530,7 @@ paths:
       operationId: assetManager.deleteUserData
       tags: [Internal]
       summary: Delete all records of a user
-      description: AM-DATA-37.
+      description: AM-DATA-37. All or nothing; a failure deletes nothing and is answered with 500, so SystemManager can ask again.
       security: [ { service: [] } ]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer } }
@@ -544,13 +544,13 @@ paths:
       operationId: assetManager.transferUserData
       tags: [Internal]
       summary: Move all records of a user to another
-      description: AM-DATA-38.
+      description: AM-DATA-38. All or nothing; a record the receiver already has (an asset of the same name and type, a finding of the same identity) is merged into the receiver's. A failure moves nothing and is answered with 500.
       security: [ { service: [] } ]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer } }
         - { name: newOwner, in: query, required: true, schema: { type: integer } }
       responses:
-        "200": { description: "How many records were moved.", content: { application/json: { schema: { type: object, properties: { transferred: { type: integer } } } } } }
+        "200": { description: "How many records were moved, merged ones included.", content: { application/json: { schema: { type: object, properties: { transferred: { type: integer } } } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/ServerError" }
