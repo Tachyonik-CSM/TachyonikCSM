@@ -46,17 +46,11 @@ func (h *Handler) ApplyScanCoverage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID int64
-	if IsInternalService(r) {
-		if req.UserID != nil {
-			userID = *req.UserID
-		}
-	} else {
-		var ok bool
-		if userID, ok = GetUserID(r); !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
+	// The owner: the user of the token, or the one a service names
+	// (AM-SEC-13).
+	userID, ok := creatorOf(w, r, req.UserID)
+	if !ok {
+		return
 	}
 	var sourceID int64
 	if req.SourceID != nil {
@@ -85,12 +79,15 @@ func (h *Handler) ApplyScanCoverage(w http.ResponseWriter, r *http.Request) {
 	// without asking again. Refused because SystemManager could not be asked,
 	// the table is answered with 503 rather than with its outcome, so the
 	// importer tries again (AM-DATA-44).
-	refused, unavailable := false, false
+	// An owner SystemManager does not know is answered with 400 the same
+	// way.
+	refused, unavailable, unknown := false, false, false
 	allow := func() bool {
-		if !refused && userID != 0 {
+		if !refused {
 			status, _ := h.hostAssetLimit("ApplyScanCoverage", userID, "", req.SourceLabel, sourceID)
 			refused = status != 0
 			unavailable = status == http.StatusServiceUnavailable
+			unknown = status == http.StatusBadRequest
 		}
 		return !refused
 	}
@@ -126,6 +123,10 @@ func (h *Handler) ApplyScanCoverage(w http.ResponseWriter, r *http.Request) {
 		// What was applied stays; applying the table again changes nothing
 		// more of it.
 		respondError(w, http.StatusServiceUnavailable, limitsUnavailable)
+		return
+	}
+	if unknown {
+		respondError(w, http.StatusBadRequest, unknownOwner)
 		return
 	}
 	respondJSON(w, http.StatusOK, out)

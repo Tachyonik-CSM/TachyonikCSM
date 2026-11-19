@@ -109,7 +109,7 @@ paths:
         existed. A new host asset beyond the limit is refused with 403
         (AM-DATA-33, -34), and with 503 while SystemManager cannot be asked
         for the limit (AM-DATA-44). Reporting an existing one again is never
-        refused for a limit.
+        refused for a limit. A service must name the owner (AM-SEC-13).
       parameters:
         - $ref: "#/components/parameters/actingRole"
       requestBody:
@@ -124,7 +124,7 @@ paths:
                 type: { type: string, enum: [Host], description: "The asset type; Host is the only one (AM-DATA-02). Matched ignoring case; any other type is refused with 400." }
                 sourceId: { type: integer, description: The ResourceManager source id. }
                 sourceLabel: { type: string, description: The source's filename. }
-                userId: { type: integer, x-bridge-bound: user, description: "The owner; honoured from a service only (AM-SEC-12). The API bridge sets it to the user a routine runs for." }
+                userId: { type: integer, x-bridge-bound: user, description: "The owner; honoured from a service only (AM-SEC-12), and required from one unless X-User-ID names the owner: a service naming no owner, or 0, is refused with 400, as is an owner SystemManager does not know when a new host asset is created (AM-SEC-13, AM-DATA-33). The API bridge sets it to the user a routine runs for." }
                 lastSeen: { type: string, description: "When the source saw the asset. RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. Left out, empty or unreadable: the time of the request (AM-API-07)." }
                 scanCoverageVerifiedAt: { type: string, description: "When the source verified that the asset is in a scheduled vulnerability scan — only as the source states it (AM-DATA-29). RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. An unreadable time is left out with a warning (AM-API-07)." }
                 scanCoverageIntervalDays: { type: integer, minimum: 1, description: "The shortest interval, in whole days, of a scheduled vulnerability scan that includes the asset, as the source states it (a weekly schedule is 7). Below 1 is ignored with a warning (AM-DATA-29)." }
@@ -267,7 +267,7 @@ paths:
               type: object
               required: [entries]
               properties:
-                userId: { type: integer, description: Honoured from a service only. }
+                userId: { type: integer, description: "The owner; honoured from a service only, and required from one unless X-User-ID names the owner: a service naming no owner, or 0, is refused with 400, as is an owner SystemManager does not know when an address would create a host asset (AM-SEC-13)." }
                 sourceId: { type: integer }
                 sourceLabel: { type: string }
                 entries:
@@ -1465,7 +1465,7 @@ components:
           type: string
           deprecated: true
           description: 'The older "filename (ID: N)", read when sourceId and sourceLabel are both missing; until the release after schema version 6 (AM-DATA-16).'
-        userId: { type: integer, description: Honoured from a service only. }
+        userId: { type: integer, description: "The owner; honoured from a service only, and required from one unless X-User-ID names the owner: a service naming no owner, or 0, is refused with 400, as is an owner SystemManager does not know (AM-SEC-13, AM-DATA-35)." }
         lastSeen: { type: string, description: "When the source saw the finding. RFC 3339 with a zone, e.g. \"2025-07-01T00:00:00Z\"; a time without a zone (\"2025-07-01T00:00:00\") is also read. Left out, empty or unreadable: the time of the request (AM-API-07)." }
 
     Vulnerability:

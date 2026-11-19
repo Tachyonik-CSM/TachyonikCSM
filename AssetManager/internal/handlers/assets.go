@@ -169,30 +169,13 @@ func (h *Handler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Infof("CreateAsset: request name=%s type=%s sourceId=%v sourceLabel=%q", req.Name, req.Type, req.SourceID, req.SourceLabel)
 
-	// Determine user ID based on request type
-	var userID int64
-	// The middleware's verdict, not the header's presence: with no key
-	// configured the header is not checked at all, and a user sending one
-	// would otherwise choose the owner.
-	if IsInternalService(r) {
-		// Internal service request - use userId from request body if provided
-		if req.UserID != nil {
-			userID = *req.UserID
-			logger.Infof("CreateAsset: internal request with userID=%d", userID)
-		} else {
-			userID = 0 // Default to system user if not specified
-			logger.Infof("CreateAsset: internal request with default userID=0")
-		}
-	} else {
-		// Regular user request - get user ID from JWT context
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
-		logger.Infof("CreateAsset: JWT request with userID=%d", userID)
+	// The owner: the user of the token, or the one a service names
+	// (AM-SEC-13).
+	userID, ok := creatorOf(w, r, req.UserID)
+	if !ok {
+		return
 	}
+	logger.Infof("CreateAsset: for user %d (service: %v)", userID, IsInternalService(r))
 
 	// Validate request
 	if req.Name == "" {
@@ -669,7 +652,10 @@ func (h *Handler) hostAssetLimit(op string, userID int64, name, sourceLabel stri
 			return http.StatusForbidden, fmt.Sprintf("Host asset limit reached (%d/%d)", currentCount, user.MaxHostAssets)
 		}
 	} else {
-		logger.Infof("%s: user %d not found, skipping limit check", op, userID)
+		// An owner no one knows would get records no one sees, held to no
+		// limit (AM-DATA-33).
+		logger.Warnf("%s: user %d does not exist, rejecting create of %q", op, userID, name)
+		return http.StatusBadRequest, unknownOwner
 	}
 
 	// Per-appliance license: an instance-wide cap across ALL users. When the

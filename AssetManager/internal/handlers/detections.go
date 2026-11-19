@@ -110,23 +110,11 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine user ID based on request type
-	var userID int64
-	if IsInternalService(r) { // the middleware's verdict, not the header's presence
-		// Internal service request - use userId from request body if provided
-		if req.UserID != nil {
-			userID = *req.UserID
-		} else {
-			userID = 0 // Default to system user if not specified
-		}
-	} else {
-		// Regular user request - get user ID from JWT context
-		var ok bool
-		userID, ok = GetUserID(r)
-		if !ok {
-			respondError(w, http.StatusUnauthorized, "User ID not found in context")
-			return
-		}
+	// The owner: the user of the token, or the one a service names
+	// (AM-SEC-13).
+	userID, ok := creatorOf(w, r, req.UserID)
+	if !ok {
+		return
 	}
 
 	// Validate request
@@ -153,7 +141,13 @@ func (h *Handler) CreateDetection(w http.ResponseWriter, r *http.Request) {
 			logger.Errorf("Failed to fetch user %d from SystemManager for the detection limit check: %v", userID, smErr)
 			respondError(w, http.StatusServiceUnavailable, limitsUnavailable)
 			return
-		} else if smUser != nil && smUser.MaxDetections > 0 {
+		} else if smUser == nil {
+			// An owner no one knows would get records no one sees, held to
+			// no limit (AM-DATA-35).
+			logger.Warnf("User %d does not exist, rejecting the create", userID)
+			respondError(w, http.StatusBadRequest, unknownOwner)
+			return
+		} else if smUser.MaxDetections > 0 {
 			currentCount, _ := h.db.CountDetectionsByUserWithFilter(userID, nil)
 			if currentCount >= smUser.MaxDetections {
 				// Coalesced into one summary audit per (user, source) — see limitaudit.go.

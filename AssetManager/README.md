@@ -264,7 +264,7 @@ The operations marked `x-mcp: read` — the chat's tools for AssetManager's data
 | `DELETE` | `/api/assets/by-source` | Delete all assets associated with a source reference |
 | `PATCH` | `/api/assets/by-source` | Clear the source field on assets matching a source reference |
 | `DELETE` | `/api/assets/stale` | After a re-import: remove the source's asset links that no import has touched since the given timestamp (`asset_source.modified_at`), and the assets left without a source (internal only) |
-| `POST` | `/api/assets/scan-coverage` | Apply a scan coverage table from one source: `{"userId", "sourceId", "sourceLabel", "entries": [{"target", "scanCoverageIntervalDays", "scanCoverageVerifiedAt"}]}` (a service names the user; a user is the token's). See [Scan coverage tables](#scan-coverage-tables). Answers with `covered` and `created` asset IDs and the counts of `hostnames`, `unmatched`, `invalid` and `refused` entries |
+| `POST` | `/api/assets/scan-coverage` | Apply a scan coverage table from one source: `{"userId", "sourceId", "sourceLabel", "entries": [{"target", "scanCoverageIntervalDays", "scanCoverageVerifiedAt"}]}` (a service must name the user, as for creating an asset; a user is the token's). See [Scan coverage tables](#scan-coverage-tables). Answers with `covered` and `created` asset IDs and the counts of `hostnames`, `unmatched`, `invalid` and `refused` entries |
 | `GET` | `/api/assets/stats` | Get aggregated asset statistics for the current user: counts by severity band, plus host assets by last seen (`hostsSeen30d` ≤ 30 days, `hostsSeen180d` 31–180 days, `hostsSeenOlder` > 180 days or unreadable) and by last scanned (`hostsScanned2d` ≤ 2 days, `hostsScanned10d` > 2 to 10 days, `hostsScannedOlder` > 10 days, `hostsNeverScanned` none or unreadable) and by scan coverage interval (`hostsMonitored2d` every 1–2 days, `hostsMonitored10d` every 3–10 days, `hostsMonitoredOlder` less often, `hostsUnmonitored` no interval) |
 | `GET` | `/api/assets/{id}` | One asset, if it is the caller's (or their group's); `404` otherwise |
 | `PATCH` | `/api/assets/{id}` | Change one asset's **type** (`{"type": "Host"}`; "host" in any casing is stored as "Host"). Severity and score are computed from the asset's findings and the name links them, so a body with any other field is refused with `400`. Same scoping as GET |
@@ -328,7 +328,9 @@ A `?userId=` query parameter, naming whose assets to list, is accepted **only
 from an internal service** (a valid `X-Internal-Service-Key`); a user who sends
 one gets `403`. The same holds for `GET /api/assets/stats?userId=`. When
 creating an asset, a `userId` in the body is likewise used only for a service's
-request; a user's asset is always their own.
+request; a user's asset is always their own. A service must name the owner,
+in the body or with `X-User-ID`, and the owner must exist; otherwise the
+create is refused with `400` (AM-SEC-13).
 
 **Request:**
 ```
@@ -409,7 +411,7 @@ Content-Type: application/json
 - `type`: Asset type (required, string). The types are a fixed set, for now only `Host`; a case variant such as `host` is stored as `Host`, any other type is refused with `400`. Assets of another type stored before the set was fixed are kept, reported in a startup warning, and can be retyped with `PATCH /api/assets/{id}`
 - `sourceId`: ResourceManager id of the source the asset came from (integer)
 - `sourceLabel`: The source's filename (string). At least one of `sourceId` and `sourceLabel` is required; without either the request is refused with `400`. (The `"filename (ID: N)"` string once accepted as `source` is no longer read.)
-- `userId`: User ID (optional, only for internal service requests)
+- `userId`: The owner. Honoured only from an internal service, and required from one unless the `X-User-ID` header names the owner: a service that names no owner, or `0`, is refused with `400` (`userId is required: a service must name the owner`), and so is an owner SystemManager does not know (`userId names no user`) — such records would be seen by no one and held to no limit (AM-SEC-13). A user's record is always their own
 - `lastSeen`: When the source saw the asset (optional, ISO 8601)
 - `scanCoverageVerifiedAt`: When the source verified that the asset is part of a scheduled vulnerability scan (optional, ISO 8601)
 - `scanCoverageIntervalDays`: Shortest interval, in whole days, of a scheduled vulnerability scan that includes the asset (optional, integer ≥ 1)
@@ -621,7 +623,7 @@ Content-Type: application/json
 - `host`: Host IP address or hostname (required, string)
 - `port`: Port specification like "80/tcp" (required, string)
 - `severity`: Severity score 0-100 (required, integer, CVSS * 100)
-- `userId`: User ID (optional, only for internal service requests)
+- `userId`: The owner. Honoured only from an internal service, and required from one unless the `X-User-ID` header names the owner: a service that names no owner, or `0`, is refused with `400` (`userId is required: a service must name the owner`), and so is an owner SystemManager does not know (`userId names no user`) — such records would be seen by no one and held to no limit (AM-SEC-13). A user's record is always their own
 
 **Response:**
 ```json
