@@ -16,7 +16,7 @@
 # The config file location can be overridden with SOURCEANALYSER_CONFIG
 # (default: ./config.yaml).
 
-# Sources are retrieved from ResourceManager, which is the only purpose. No data is sent.
+# Sources are read from ResourceManager (and announced over its WebSocket), and their type and status written back.
 resourcemanager:
   url: http://localhost:8080  # ResourceManager API URL (default: http://localhost:8080)
                               # Env: RESOURCEMANAGER_URL (legacy: RESOURCEMANAGER_API_BASE_URL)
@@ -40,8 +40,14 @@ ai_manager:
                                                             # Env: AIMANAGER_INTERNAL_SERVICE_KEY
 
 analyzer:
-  poll_interval: 5  # Seconds between polls for new sources to analyze, above 0 (default: 5)
-                    # Env: SOURCEANALYSER_POLL_INTERVAL
+  sweep_interval_seconds: 300  # Seconds between sweeps of the whole source list, above 0
+                               # (default: 300). Sources ResourceManager announces as waiting
+                               # are analysed at once; the sweep is the safety net for a
+                               # message lost while a connection was down, and also runs at
+                               # startup, on reconnects and after rule changes.
+                               # Env: SOURCEANALYSER_SWEEP_INTERVAL_SECONDS
+                               # The former poll_interval / SOURCEANALYSER_POLL_INTERVAL is
+                               # ignored with a warning; remove it (refused next release).
   js_exec_timeout_seconds: 5  # Max seconds a single AI/feed-sourced JS analysis routine
                               # may run (load or analyze) before it is interrupted, guarding
                               # against infinite loops / catastrophic regex. Above 0;

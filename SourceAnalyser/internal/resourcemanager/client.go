@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package resourcemanager is an outbound HTTP client for the ResourceManager
-// REST API. It lists the sources awaiting analysis, downloads their content,
-// and writes the identified type and status back. The request plumbing lives in
+// REST API, and the watcher of its source messages. It lists the sources
+// awaiting analysis, reads one, downloads their content, and writes the
+// identified type and status back. The request plumbing lives in
 // tachyonik/lib/restclient; what remains here is the wire types and one line per
 // endpoint, plus the bounded file download.
 package resourcemanager
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -82,6 +84,23 @@ func (c *Client) ListAllSources() ([]Source, error) {
 	}
 	return listResp.Sources, nil
 }
+
+// GetSource reads one source as ResourceManager holds it now. A source that
+// no longer exists answers ErrNotFound.
+func (c *Client) GetSource(id int64) (*Source, error) {
+	var source Source
+	if err := c.rc.JSON("GET", fmt.Sprintf("/api/sources/%d", id), nil, &source, http.StatusOK); err != nil {
+		var statusErr *restclient.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &source, nil
+}
+
+// ErrNotFound is GetSource's answer for a source that no longer exists.
+var ErrNotFound = errors.New("source not found")
 
 // UpdateSource updates a source via the ResourceManager API
 func (c *Client) UpdateSource(id int64, sourceType, status string, analyserVersion *string) error {

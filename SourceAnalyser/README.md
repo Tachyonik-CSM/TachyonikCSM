@@ -15,6 +15,11 @@ a small JavaScript routine; SourceAnalyser runs those routines against each
 uploaded file. Adding support for a new format means writing a rule, not
 changing this code.
 
+What SourceAnalyser must and must not do is specified in [spec/](spec/README.md),
+including the routine contract and when a source is analysed again. This README
+covers building, configuring and running it; where the two disagree, the
+specification wins.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -34,7 +39,8 @@ changing this code.
 
 ## Overview
 
-SourceAnalyser polls ResourceManager for sources awaiting analysis. For each one it:
+SourceAnalyser analyses a source as soon as ResourceManager announces it as waiting
+(status `Analysing`, over ResourceManager's WebSocket). For each one it:
 
 1. Downloads a bounded window of the file
 2. Converts it to matchable text (PDFs are extracted; text formats pass through)
@@ -43,7 +49,12 @@ SourceAnalyser polls ResourceManager for sources awaiting analysis. For each one
 5. Emits an audit event to SystemManager
 
 A source is picked up when its status is `Analysing`, or when it qualifies for
-re-analysis — see [Re-analysis triggers](#re-analysis-triggers).
+re-analysis — see [Re-analysis triggers](#re-analysis-triggers). As a safety net,
+SourceAnalyser also goes through the whole source list — a **sweep** — at
+startup, on every reconnect to ResourceManager, at once after the analysis rules
+change, and every `sweep_interval_seconds` (5 minutes by default). That catches a
+message lost while a connection was down and every re-analysis no message
+announces. See [Sources reach the analyser](#sources-reach-the-analyser).
 
 ## Building
 
@@ -151,7 +162,7 @@ Default configuration file: `./config.yaml` (override the path with `SOURCEANALY
 See `config.yaml.example` for a fully commented template.
 
 ```yaml
-# Sources are retrieved from ResourceManager. No data is sent.
+# Sources are read from ResourceManager (and announced over its WebSocket), and their type and status written back.
 resourcemanager:
   url: http://localhost:8080
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
@@ -167,7 +178,7 @@ ai_manager:
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
 analyzer:
-  poll_interval: 5  # seconds between polls for new sources
+  sweep_interval_seconds: 300  # seconds between sweeps of the whole source list
   js_exec_timeout_seconds: 5  # max seconds one JS analysis routine may run (above 0)
   max_content_bytes: 65536  # bytes downloaded/matched for a non-PDF source
   max_pdf_bytes: 33554432  # max bytes of a PDF fetched for text extraction (32 MiB)
@@ -199,7 +210,8 @@ Environment variables override configuration file values:
 | `SYSTEMMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for SystemManager (falls back to ResourceManager key) | _(empty)_ |
 | `SOURCEANALYSER_AI_MANAGER_URL` | AIManager API URL | `http://localhost:8085` |
 | `AIMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for AIManager | _(empty)_ |
-| `SOURCEANALYSER_POLL_INTERVAL` | Polling interval, in whole seconds above 0 | `5` |
+| `SOURCEANALYSER_SWEEP_INTERVAL_SECONDS` | Seconds between sweeps of the whole source list, the safety net behind ResourceManager's messages; whole seconds above 0 | `300` |
+| `SOURCEANALYSER_POLL_INTERVAL` | **Ignored** since 2026-11-20, with a warning at startup; remove it | — |
 | `SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS` | Max seconds a single JS analysis routine may run before being interrupted (guards against infinite loops / catastrophic regex in AI/feed-sourced routines), in whole seconds above 0; `0` switches the guard off | `5` |
 | `SOURCEANALYSER_MAX_CONTENT_BYTES` | Bytes downloaded and matched for a non-PDF source (also the type-sniff read), a whole number above 0 | `65536` |
 | `SOURCEANALYSER_MAX_PDF_BYTES` | Max bytes of a PDF fetched for text extraction, a whole number above 0 | `33554432` |
@@ -240,12 +252,14 @@ deployment's variables and file when upgrading.
 On start the daemon loads its configuration, connects to AIManager to fetch this
 module's AI settings and the analysis rules, loads a JavaScript routine for every
 rule that has an active one, opens the AIManager WebSocket for live updates,
-starts the SystemManager heartbeat, and begins polling.
+starts the SystemManager heartbeat, connects to ResourceManager's WebSocket and
+starts the analysis worker with a first sweep.
 
 ### Stopping the Daemon
 
 Send `SIGINT` (Ctrl+C) or `SIGTERM` to shut down gracefully — the source being
-processed completes first.
+analysed completes first; the sources still queued stay `Analysing`, and the
+next start's sweep picks them up.
 
 ### Running as a Background Service
 
@@ -267,24 +281,28 @@ kill $(cat sourceanalyser.pid)
 SOURCEANALYSER_CONFIG=/path/to/custom-config.yaml ./tachyonik-sourceanalyser
 
 # Using environment variables
-SOURCEANALYSER_POLL_INTERVAL=10 ./tachyonik-sourceanalyser
+SOURCEANALYSER_SWEEP_INTERVAL_SECONDS=600 ./tachyonik-sourceanalyser
 ```
 
-### Adjusting Poll Interval
+### Sources reach the analyser
 
-The poll interval determines how often the daemon checks for new entries:
-
-- **Lower values** (e.g., 1-2 seconds): Faster response time, higher CPU usage
-- **Higher values** (e.g., 10-30 seconds): Lower CPU usage, slower response time
-- **Default**: 5 seconds (balanced)
-
-```bash
-# Check every 2 seconds (faster)
-SOURCEANALYSER_POLL_INTERVAL=2 ./tachyonik-sourceanalyser
-
-# Check every 30 seconds (more efficient)
-SOURCEANALYSER_POLL_INTERVAL=30 ./tachyonik-sourceanalyser
-```
+- **Announced sources.** ResourceManager sends `SOURCE_CREATED` and
+  `SOURCE_UPDATED` with the whole source. A source with status `Analysing` — a
+  new upload, URL or tool result, a routine test, a source set back to be
+  analysed — is queued at once. Every other message is ignored, SourceAnalyser's
+  own results included.
+- **The queue.** One worker analyses the queued sources one after the other. Each
+  source is queued once, and read again from ResourceManager before it is
+  analysed: one that was deleted or analysed meanwhile is skipped.
+- **The sweep** goes through the whole list (as the poll did before 2026-11-20)
+  and queues what it finds: at startup, on every reconnect to ResourceManager, at
+  once after a rule change, and every `sweep_interval_seconds`. Lowering the
+  interval only shortens how long a lost message goes unnoticed; new uploads do
+  not wait for it.
+- **The old `poll_interval`.** Every configuration file installed before carries
+  `poll_interval: 5` from the template. It is accepted for one release, ignored,
+  and named in a startup warning; remove it. The release after, it is refused as
+  an unknown key.
 
 ## Analysis rules and AI
 
@@ -496,11 +514,12 @@ The shared logger prefixes each line with a level.
 2026/01/07 10:00:00 [INFO] Module AI settings loaded: AI=local-ollama, SystemPrompt=1832 chars
 2026/01/07 10:00:00 [INFO] Loaded 4 analysis rules (3 with active routines)
 2026/01/07 10:00:00 [INFO] AIManager watcher started
+2026/01/07 10:00:00 [INFO] ResourceManager watcher started
 ```
 
 ### Analysis
 ```
-2026/01/07 10:00:05 [INFO] Processing 1 entries...
+2026/01/07 10:00:05 [INFO] Queueing 1 sources for analysis
 2026/01/07 10:00:05 [INFO] Rule 'OpenVAS XML Report' matched source 15 (openvas-report.xml): type=OpenVAS Report, status=Analysed
 ```
 
@@ -520,8 +539,10 @@ The shared logger prefixes each line with a level.
 ### Daemon not processing sources
 
 1. Check that sources in ResourceManager have status `Analysing`
-2. Check the logs for connection errors to ResourceManager or AIManager
-3. Verify the poll interval is appropriate
+2. Check the logs for connection errors to ResourceManager or AIManager, and for
+   `ResourceManager watcher started`
+3. A source whose status was changed directly in the database is announced by
+   no message; the next sweep (at most `sweep_interval_seconds`) picks it up
 
 ### Everything is marked "Unsupported"
 
@@ -552,12 +573,14 @@ regenerate the routine, or raise the budget if the rule is legitimately heavy.
 
 ### High CPU usage
 
-- Increase the poll interval
+- Increase `sweep_interval_seconds` on an installation with very many sources
 - Look for routines doing expensive matching over the full content window
 
 ## Performance
 
-- **Poll-based** — checks ResourceManager for work every `poll_interval` seconds
+- **Event-driven** — a source announced as waiting is analysed at once; the
+  whole list is listed only by the sweep (every `sweep_interval_seconds`, and on
+  reconnects and rule changes)
 - **Sequential** — processes one source at a time
 - **Bounded I/O** — at most `max_content_bytes` per source (64 KiB by default);
   a PDF that fills that window is re-fetched up to `max_pdf_bytes` (32 MiB)
@@ -569,22 +592,23 @@ rather than assume a fixed footprint.
 
 ### Scaling Considerations
 
-- Adjust the poll interval to the source creation rate
 - Keep the rule set tight: every routine runs against every unmatched source
-- Consider switching to an event-driven approach (like SourceImporter)
+- The sweep's cost grows with the number of sources; its interval can be raised
 
 ## Architecture
 
-- **Polling** — time-based ticker drives the analysis loop
+- **Events and sweeps** — ResourceManager's WebSocket queues waiting sources; a
+  sweep of the whole list is the safety net; one worker analyses the queue
 - **Rule execution** — AI-generated JavaScript in an embedded goja (ES5.1) VM,
   under an execution budget
 - **Rule source** — analysis rules and routines live in AIManager; live changes
-  arrive over one WebSocket connection
+  arrive over its WebSocket connection
 - **Content extraction** — pure-Go PDF text extraction via TachyonikLib
 - **Signal handling** — graceful shutdown on SIGINT/SIGTERM
-- **State** — sources are read fresh each poll; the loaded rules, their compiled
-  routines, and a one-shot "revisit Unsupported" flag are held in memory and
-  rebuilt from AIManager on (re)connect
+- **State** — each source is read fresh before it is analysed; the queue, the
+  loaded rules, their compiled routines, and a one-shot "revisit Unsupported"
+  flag are held in memory. The rules are rebuilt from AIManager on (re)connect;
+  the queue is not kept across a restart
 
 ## Integration
 
@@ -603,7 +627,7 @@ events and the liveness heartbeat.
 ### Workflow
 
 1. **ResourceManager** receives an uploaded file, creates a source with status `Analysing`
-2. **SourceAnalyser** polls, finds the source, downloads and extracts its text
+2. **SourceAnalyser** receives `SOURCE_CREATED`, queues the source, downloads and extracts its text
 3. **SourceAnalyser** runs the loaded routines and writes back the source type and status
 4. **SourceImporter** detects the `Analysed` source and processes it
 5. **SourceImporter** creates assets in AssetManager
@@ -613,7 +637,7 @@ events and the liveness heartbeat.
 ### Analyzing Uploaded Files
 
 1. Upload a file through ResourceManager (status set to "Analysing")
-2. SourceAnalyser automatically processes it within the poll interval
+2. SourceAnalyser processes it as soon as ResourceManager announces it
 3. Check the updated status:
    ```bash
    sqlite3 /home/tachyon/data/ResourceManager.db "SELECT id, filename, source_type, status FROM sources WHERE id=15;"
@@ -627,5 +651,7 @@ To reanalyze a source:
 # Reset status to trigger reanalysis
 sqlite3 /home/tachyon/data/ResourceManager.db "UPDATE sources SET status='Analysing' WHERE id=15;"
 
-# Daemon will process it on next poll
+# A change in the database is announced by no message: the daemon
+# processes it on its next sweep (at most sweep_interval_seconds).
+# Setting the status through ResourceManager's API is picked up at once.
 ```

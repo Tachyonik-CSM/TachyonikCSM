@@ -6,8 +6,9 @@
 // configuration, sets up logging, builds the ResourceManager/AIManager/
 // SystemManager clients, resolves the configured AI chat client, and wires up
 // the AIAnalyser. It then starts the AIManager watcher (live rule and settings
-// changes) and the SystemManager heartbeat, and runs the poll loop that drives
-// analysis until it receives SIGINT/SIGTERM.
+// changes), the ResourceManager watcher (sources announced as waiting) and the
+// SystemManager heartbeat, and runs the analysis worker with its sweeps until
+// it receives SIGINT/SIGTERM.
 package main
 
 import (
@@ -169,11 +170,17 @@ func runDaemon(cfg *config.Config) {
 	logger.Infof("  AIManager URL: %s", cfg.AIManager.URL)
 	logger.Infof("  ResourceManager URL: %s", cfg.ResourceManager.URL)
 	logger.Infof("  SystemManager URL: %s", cfg.SystemManager.URL)
-	logger.Infof("  Poll Interval: %d seconds", cfg.Analyzer.PollInterval)
+	logger.Infof("  Sweep Interval: %d seconds", cfg.Analyzer.SweepIntervalSeconds)
+	logger.Infof("  JS Exec Timeout: %ds", cfg.Analyzer.JSExecTimeoutSeconds)
+	logger.Infof("  Max Content Bytes: %d", cfg.Analyzer.MaxContentBytes)
+	logger.Infof("  Max PDF Bytes: %d", cfg.Analyzer.MaxPDFBytes)
 	logger.Infof("  Log File: %s", cfg.Log.FilePath)
 	logger.Infof("  Log to Console: %v", cfg.Log.ToConsole)
 	logger.Infof("  Log to File: %v", cfg.Log.ToFile)
 	logger.Infof("  Log Level: %s", cfg.Log.Level)
+	for _, w := range cfg.Warnings {
+		logger.Warnf("%s", w)
+	}
 
 	// Validate required config
 	if cfg.ResourceManager.URL == "" {
@@ -354,28 +361,31 @@ func runDaemon(cfg *config.Config) {
 		InternalServiceKey: cfg.SystemManager.InternalServiceKey,
 	}, logger.Errorf)
 
-	// Create ticker for periodic checks
-	ticker := time.NewTicker(time.Duration(cfg.Analyzer.PollInterval) * time.Second)
-	defer ticker.Stop()
+	// Sources announced as waiting go straight to the worker's queue. A
+	// (re)connect goes through the whole list, since messages sent while the
+	// connection was down are lost (SA-ANA-19).
+	rmWatcher := resourcemanager.NewWatcher(cfg.ResourceManager.URL, cfg.ResourceManager.InternalServiceKey, a.Enqueue, a.RequestSweep)
+	rmWatcher.Start()
+	defer rmWatcher.Close()
+	logger.Info("ResourceManager watcher started")
 
 	// Setup signal handling for graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := context.WithCancel(context.Background())
+	worker := make(chan struct{})
+	go func() {
+		defer close(worker)
+		a.Run(ctx, time.Duration(cfg.Analyzer.SweepIntervalSeconds)*time.Second)
+	}()
 
-	logger.Infof("SourceAnalyser daemon is running. Checking every %d seconds...", cfg.Analyzer.PollInterval)
+	logger.Infof("SourceAnalyser daemon is running. Going through every source every %d seconds, and analysing announced ones at once", cfg.Analyzer.SweepIntervalSeconds)
 
-	// Main loop
-	for {
-		select {
-		case <-ticker.C:
-			if err := a.ProcessEntries(); err != nil {
-				logger.Errorf("Error processing entries: %v", err)
-			}
-
-		case sig := <-quit:
-			logger.Infof("Received signal: %v. Shutting down...", sig)
-			logger.Info("Daemon stopped")
-			return
-		}
-	}
+	// A stop lets the worker finish the source it is on (SA-OPS-09); what is
+	// still queued stays "Analysing" and the next start's sweep finds it.
+	sig := <-quit
+	logger.Infof("Received signal: %v. Shutting down after the source being analysed...", sig)
+	stop()
+	<-worker
+	logger.Info("Daemon stopped")
 }

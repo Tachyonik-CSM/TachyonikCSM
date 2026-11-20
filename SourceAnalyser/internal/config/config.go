@@ -15,6 +15,8 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 	"tachyonik/lib/settings"
@@ -28,6 +30,9 @@ type Config struct {
 	Analyzer        AnalyzerConfig
 	Heartbeat       HeartbeatConfig
 	Log             LogConfig
+	// Warnings are settings that are accepted but no longer do anything,
+	// for the startup log.
+	Warnings []string
 }
 
 // HeartbeatConfig controls the liveness signal sent to SystemManager.
@@ -59,7 +64,9 @@ type SystemManagerConfig struct {
 }
 
 type AnalyzerConfig struct {
-	PollInterval int // in seconds
+	// SweepIntervalSeconds is how often the whole source list is gone
+	// through, as the safety net behind ResourceManager's messages (SA-ANA-19).
+	SweepIntervalSeconds int
 	// JSExecTimeoutSeconds bounds how long a single JS routine execution
 	// (load or analyze) may run before it is interrupted. Guards the daemon
 	// against infinite loops / catastrophic regex in AI- or feed-sourced
@@ -95,7 +102,9 @@ type FileConfig struct {
 		InternalServiceKey string `yaml:"internal_service_key"`
 	} `yaml:"ai_manager"`
 	Analyzer struct {
+		// PollInterval is accepted for one release and ignored (SA-OPS-18).
 		PollInterval         int   `yaml:"poll_interval"`
+		SweepIntervalSeconds int   `yaml:"sweep_interval_seconds"`
 		JSExecTimeoutSeconds int   `yaml:"js_exec_timeout_seconds"`
 		MaxContentBytes      int64 `yaml:"max_content_bytes"`
 		MaxPDFBytes          int64 `yaml:"max_pdf_bytes"`
@@ -140,7 +149,7 @@ func Load() (*Config, error) {
 			SystemPrompt: "",
 		},
 		Analyzer: AnalyzerConfig{
-			PollInterval:         5,
+			SweepIntervalSeconds: 300,
 			JSExecTimeoutSeconds: 5,
 			MaxContentBytes:      64 * 1024,
 			MaxPDFBytes:          32 * 1024 * 1024,
@@ -184,6 +193,10 @@ func Load() (*Config, error) {
 	if err := r.Err(); err != nil {
 		return nil, err
 	}
+	// The warnings name the sweep interval in effect, known only now.
+	for i, w := range cfg.Warnings {
+		cfg.Warnings[i] = strings.ReplaceAll(w, sweepPlaceholder, strconv.Itoa(cfg.Analyzer.SweepIntervalSeconds))
+	}
 
 	return cfg, nil
 }
@@ -215,7 +228,10 @@ func applyFileConfig(cfg *Config, fileCfg *FileConfig, r *settings.Reader) {
 	// nothing to analyse, so every number here must be above 0. The JS budget
 	// can be switched off only from the environment (0), as the file cannot
 	// say 0.
-	r.FileInt("analyzer.poll_interval", fileCfg.Analyzer.PollInterval, &cfg.Analyzer.PollInterval, settings.Min(1))
+	r.FileInt("analyzer.sweep_interval_seconds", fileCfg.Analyzer.SweepIntervalSeconds, &cfg.Analyzer.SweepIntervalSeconds, settings.Min(1))
+	if fileCfg.Analyzer.PollInterval != 0 {
+		cfg.Warnings = append(cfg.Warnings, r.File()+": analyzer.poll_interval is ignored: sources are analysed when ResourceManager announces them, and the whole list is gone through every analyzer.sweep_interval_seconds (now "+sweepPlaceholder+" s); remove poll_interval, it will be refused in the next release")
+	}
 	r.FileInt("analyzer.js_exec_timeout_seconds", fileCfg.Analyzer.JSExecTimeoutSeconds, &cfg.Analyzer.JSExecTimeoutSeconds, settings.Min(1))
 	r.FileInt64("analyzer.max_content_bytes", fileCfg.Analyzer.MaxContentBytes, &cfg.Analyzer.MaxContentBytes, settings.Min(1))
 	r.FileInt64("analyzer.max_pdf_bytes", fileCfg.Analyzer.MaxPDFBytes, &cfg.Analyzer.MaxPDFBytes, settings.Min(1))
@@ -253,7 +269,10 @@ func applyEnvOverrides(cfg *Config, r *settings.Reader) {
 	if aiMgrKey := os.Getenv("AIMANAGER_INTERNAL_SERVICE_KEY"); aiMgrKey != "" {
 		cfg.AIManager.InternalServiceKey = aiMgrKey
 	}
-	r.Int("SOURCEANALYSER_POLL_INTERVAL", &cfg.Analyzer.PollInterval, settings.Min(1))
+	r.Int("SOURCEANALYSER_SWEEP_INTERVAL_SECONDS", &cfg.Analyzer.SweepIntervalSeconds, settings.Min(1))
+	if os.Getenv("SOURCEANALYSER_POLL_INTERVAL") != "" {
+		cfg.Warnings = append(cfg.Warnings, "SOURCEANALYSER_POLL_INTERVAL is ignored: sources are analysed when ResourceManager announces them, and the whole list is gone through every SOURCEANALYSER_SWEEP_INTERVAL_SECONDS (now "+sweepPlaceholder+" s); remove the variable")
+	}
 	r.Int("SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS", &cfg.Analyzer.JSExecTimeoutSeconds, settings.Min(1), settings.ZeroMeansOff())
 	r.Int64("SOURCEANALYSER_MAX_CONTENT_BYTES", &cfg.Analyzer.MaxContentBytes, settings.Min(1))
 	r.Int64("SOURCEANALYSER_MAX_PDF_BYTES", &cfg.Analyzer.MaxPDFBytes, settings.Min(1))
@@ -270,6 +289,10 @@ func applyEnvOverrides(cfg *Config, r *settings.Reader) {
 		cfg.SystemManager.InternalServiceKey = cfg.ResourceManager.InternalServiceKey
 	}
 }
+
+// sweepPlaceholder stands for the sweep interval in a warning written before
+// the interval is final.
+const sweepPlaceholder = "{sweep}"
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {

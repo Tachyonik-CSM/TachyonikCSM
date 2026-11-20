@@ -16,6 +16,7 @@ import (
 
 var calls = []apicontract.Call{
 	{Method: "GET", Path: "/api/sources", Answer: ListSourcesResponse{}},
+	{Method: "GET", Path: "/api/sources/{id}", Answer: Source{}},
 	{Method: "PATCH", Path: "/api/sources/{id}", Request: UpdateSourceRequest{}},
 	{Method: "GET", Path: "/api/sources/{id}/file"},
 }

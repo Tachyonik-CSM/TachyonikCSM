@@ -16,8 +16,8 @@ import (
 
 func TestAnUnusableEnvironmentValueStopsTheService(t *testing.T) {
 	for _, c := range []struct{ env, value string }{
-		{"SOURCEANALYSER_POLL_INTERVAL", "abc"},
-		{"SOURCEANALYSER_POLL_INTERVAL", "0"},
+		{"SOURCEANALYSER_SWEEP_INTERVAL_SECONDS", "abc"},
+		{"SOURCEANALYSER_SWEEP_INTERVAL_SECONDS", "0"},
 		{"SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS", "-1"},
 		{"SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS", "5s"},
 		{"SOURCEANALYSER_MAX_CONTENT_BYTES", "64k"},
@@ -40,7 +40,7 @@ func TestAnUnusableEnvironmentValueStopsTheService(t *testing.T) {
 
 func TestTheAcceptedSpellingsLoad(t *testing.T) {
 	withConfig(t, "")
-	t.Setenv("SOURCEANALYSER_POLL_INTERVAL", " 7 ")
+	t.Setenv("SOURCEANALYSER_SWEEP_INTERVAL_SECONDS", " 7 ")
 	t.Setenv("SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS", "0")
 	t.Setenv("SOURCEANALYSER_MAX_PDF_BYTES", "1048576")
 	t.Setenv("SOURCEANALYSER_HEARTBEAT_INTERVAL_SECONDS", "")
@@ -48,7 +48,7 @@ func TestTheAcceptedSpellingsLoad(t *testing.T) {
 	t.Setenv("SOURCEANALYSER_LOG_TO_FILE", "1")
 	t.Setenv("SOURCEANALYSER_LOG_LEVEL", "debug")
 	cfg := mustLoad(t)
-	if cfg.Analyzer.PollInterval != 7 || cfg.Analyzer.JSExecTimeoutSeconds != 0 || cfg.Analyzer.MaxPDFBytes != 1048576 ||
+	if cfg.Analyzer.SweepIntervalSeconds != 7 || cfg.Analyzer.JSExecTimeoutSeconds != 0 || cfg.Analyzer.MaxPDFBytes != 1048576 ||
 		cfg.Heartbeat.IntervalSeconds != 10 || cfg.Log.ToConsole || !cfg.Log.ToFile || cfg.Log.Level != "DEBUG" {
 		t.Errorf("config = %+v %+v %+v", cfg.Analyzer, cfg.Heartbeat, cfg.Log)
 	}
@@ -56,7 +56,7 @@ func TestTheAcceptedSpellingsLoad(t *testing.T) {
 
 func TestAnUnusableFileValueStopsTheService(t *testing.T) {
 	for _, c := range []struct{ content, key string }{
-		{"analyzer:\n  poll_interval: -5\n", "analyzer.poll_interval"},
+		{"analyzer:\n  sweep_interval_seconds: -5\n", "analyzer.sweep_interval_seconds"},
 		{"analyzer:\n  js_exec_timeout_seconds: -1\n", "analyzer.js_exec_timeout_seconds"},
 		{"analyzer:\n  max_content_bytes: -1\n", "analyzer.max_content_bytes"},
 		{"analyzer:\n  max_pdf_bytes: -1\n", "analyzer.max_pdf_bytes"},
@@ -78,14 +78,14 @@ func TestAnUnusableFileValueStopsTheService(t *testing.T) {
 }
 
 func TestEveryFaultIsReportedAtOnce(t *testing.T) {
-	withConfig(t, "analyzer:\n  poll_interval: -5\n")
+	withConfig(t, "analyzer:\n  sweep_interval_seconds: -5\n")
 	t.Setenv("SOURCEANALYSER_LOG_TO_FILE", "yes")
 	t.Setenv("SOURCEANALYSER_MAX_PDF_BYTES", "x")
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	for _, s := range []string{"analyzer.poll_interval", "SOURCEANALYSER_LOG_TO_FILE", "SOURCEANALYSER_MAX_PDF_BYTES"} {
+	for _, s := range []string{"analyzer.sweep_interval_seconds", "SOURCEANALYSER_LOG_TO_FILE", "SOURCEANALYSER_MAX_PDF_BYTES"} {
 		if !strings.Contains(err.Error(), s) {
 			t.Errorf("%s missing from %v", s, err)
 		}
