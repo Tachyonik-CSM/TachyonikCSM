@@ -171,7 +171,7 @@ func (ag *AIActionGenerator) loadActiveRoutine(rule *aimanager.ActionRule) {
 	executor.SetOperations(ops)
 	if ag.catalogue != nil && ag.catalogue.Loaded() {
 		if missing := ag.catalogue.Missing(ops); len(missing) > 0 {
-			logger.Errorf("Holding back routine %d of action rule %d (%s): it calls %s, which the API catalogue no longer has — regenerate the routine",
+			logger.Errorf("Holding back routine %d of action rule %d (%s): it calls %s, which the API catalogue does not offer — it runs again once their module registers its API document with AIManager, or the routine is regenerated",
 				routine.ID, rule.ID, rule.Title, strings.Join(missing, ", "))
 			delete(ag.executors, rule.ID)
 			return
