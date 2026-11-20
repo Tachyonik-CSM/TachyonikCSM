@@ -4,7 +4,8 @@
 
 // Package listquery reads the optional query parameters a manager's list
 // operation offers to order and cut its answer — sort, order and limit — and
-// the maxPoints that thins a time series.
+// the maxPoints that thins a time series. A list that pages also reads offset
+// (ParseOffset), which a list opts into.
 //
 // They exist for callers that cannot sort or cut an answer themselves, above
 // all the chat's AI tools, which are generated one-to-one from the operations:
@@ -56,6 +57,9 @@ type Query struct {
 	Desc bool
 	// Limit is the most rows to answer with; 0 is all of them.
 	Limit int
+	// Offset is how many rows to skip before them, for a list that pages
+	// (ParseOffset); 0 for every other list.
+	Offset int
 
 	column string
 }
@@ -109,6 +113,24 @@ func Parse(q url.Values, fields []Field) (Query, error) {
 	return out, nil
 }
 
+// MaxOffset is the largest offset a list accepts.
+const MaxOffset = 1 << 30
+
+// ParseOffset reads offset from q into lq, for a list that pages. It is
+// refused without a limit: an offset alone would skip rows and then answer
+// all the rest, which is no page.
+func ParseOffset(q url.Values, lq Query) (Query, error) {
+	offset, err := Int(q, "offset", 0, MaxOffset)
+	if err != nil {
+		return Query{}, err
+	}
+	if offset > 0 && lq.Limit == 0 {
+		return Query{}, refuse("offset needs limit, the size of the page")
+	}
+	lq.Offset = offset
+	return lq, nil
+}
+
 // Int reads the whole-number parameter name, which must lie in min..max; 0
 // when it is absent or empty.
 func Int(q url.Values, name string, min, max int) (int, error) {
@@ -143,16 +165,26 @@ func (q Query) OrderBy(defaultOrder, tieBreak string) string {
 	return q.column + dir + ", " + tieBreak
 }
 
-// LimitSQL is " LIMIT n" when the caller asked for a limit, else "".
+// LimitSQL is " LIMIT n" when the caller asked for a limit, else "", with
+// " OFFSET m" for a page past the first.
 func (q Query) LimitSQL() string {
 	if q.Limit <= 0 {
 		return ""
 	}
+	if q.Offset > 0 {
+		return " LIMIT " + strconv.Itoa(q.Limit) + " OFFSET " + strconv.Itoa(q.Offset)
+	}
 	return " LIMIT " + strconv.Itoa(q.Limit)
 }
 
-// Cut is list cut to the limit.
+// Cut is list cut to the page: offset rows skipped, then at most limit.
 func Cut[T any](q Query, list []T) []T {
+	if q.Offset > 0 {
+		if q.Offset >= len(list) {
+			return list[:0]
+		}
+		list = list[q.Offset:]
+	}
 	if q.Limit > 0 && len(list) > q.Limit {
 		return list[:q.Limit]
 	}

@@ -139,3 +139,34 @@ func TestThin(t *testing.T) {
 		t.Errorf("fewer than n: %v", got)
 	}
 }
+
+// A list that pages reads offset, only with a limit; the SQL and Cut skip it.
+func TestParseOffset(t *testing.T) {
+	parse := func(raw string) (Query, error) {
+		v, _ := url.ParseQuery(raw)
+		lq, err := Parse(v, fields)
+		if err != nil {
+			return Query{}, err
+		}
+		return ParseOffset(v, lq)
+	}
+	q, err := parse("limit=50&offset=100")
+	if err != nil || q.Limit != 50 || q.Offset != 100 || q.LimitSQL() != " LIMIT 50 OFFSET 100" {
+		t.Fatalf("limit=50&offset=100: %+v %q %v", q, q.LimitSQL(), err)
+	}
+	if q, err := parse("limit=50&offset=0"); err != nil || q.LimitSQL() != " LIMIT 50" {
+		t.Errorf("offset 0: %q %v", q.LimitSQL(), err)
+	}
+	for _, raw := range []string{"offset=10", "limit=5&offset=-1", "limit=5&offset=x"} {
+		if _, err := parse(raw); err == nil {
+			t.Errorf("%s: accepted", raw)
+		}
+	}
+	list := []int{0, 1, 2, 3, 4, 5, 6}
+	if got := Cut(Query{Limit: 3, Offset: 3}, list); len(got) != 3 || got[0] != 3 {
+		t.Errorf("cut page 2: %v", got)
+	}
+	if got := Cut(Query{Limit: 3, Offset: 9}, list); len(got) != 0 {
+		t.Errorf("cut past the end: %v", got)
+	}
+}
