@@ -60,7 +60,14 @@ func TestExampleListsEveryOption(t *testing.T) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("example is not valid YAML: %v", err)
 	}
-	want := yamlKeys(reflect.TypeOf(FileConfig{}), "")
+	// instance.mode is still read, for one release, only to be warned about
+	// (AM-OPS-03): no longer an option, so not in the example.
+	var want []string
+	for _, k := range yamlKeys(reflect.TypeOf(FileConfig{}), "") {
+		if k != "instance.mode" {
+			want = append(want, k)
+		}
+	}
 	got := mapKeys(doc, "")
 	sort.Strings(want)
 	sort.Strings(got)
@@ -82,7 +89,6 @@ func TestExampleLoads(t *testing.T) {
 	for name, c := range map[string]struct{ got, want interface{} }{
 		"server.port":          {cfg.Server.Port, "8081"},
 		"server.host":          {cfg.Server.Host, "localhost"},
-		"instance.mode":        {cfg.Instance.Mode, ModeAppliance},
 		"database.path":        {cfg.Database.Path, "/home/tachyon/data/AssetManager.db"},
 		"auth.jwt_secret":      {cfg.Auth.JWTSecret, PlaceholderJWTSecret},
 		"auth.internal_key":    {cfg.Auth.InternalServiceKey, key},

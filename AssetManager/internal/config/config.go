@@ -18,7 +18,6 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 	"tachyonik/lib/settings"
@@ -42,15 +41,22 @@ type Config struct {
 }
 
 // Operating mode. Appliance = one shared workspace (all users see/edit one
-// dataset); saas = per-user isolation. Default appliance. Mirrors SystemManager's
-// authoritative instance.mode.
+// dataset); saas = per-user isolation. SystemManager's instance.mode rules
+// the setup: AssetManager asks it at startup and serves nothing until it
+// knows (AM-OPS-03, docs/plans/instance-mode-from-systemmanager.md).
 const (
 	ModeAppliance = "appliance"
 	ModeSaaS      = "saas"
 )
 
 type InstanceConfig struct {
+	// Mode is SystemManager's, set at startup (cmd/server); empty until then.
 	Mode string
+	// Configured is AssetManager's own instance.mode or
+	// ASSETMANAGER_INSTANCE_MODE, from where ConfiguredFrom says. Deprecated:
+	// accepted for one release, not used, and warned about at startup.
+	Configured     string
+	ConfiguredFrom string
 }
 
 type ServerConfig struct {
@@ -133,11 +139,10 @@ type FileConfig struct {
 // Priority: Environment Variables > Config File > Defaults.
 //
 // It refuses a configuration it cannot use (AM-OPS-03, AM-OPS-16): a file
-// that exists but cannot be read or parsed, a key it does not know, or an
-// instance mode other than appliance or saas, or a true/false or log-level
-// value it cannot use, from the file or the environment (AM-OPS-19). Every
-// such value is reported at once. Running on defaults instead —
-// the placeholder token secret, appliance mode, a developer's database path —
+// that exists but cannot be read or parsed, a key it does not know, or a
+// true/false or log-level value it cannot use, from the file or the
+// environment (AM-OPS-19). Every such value is reported at once. Running on
+// defaults instead — the placeholder token secret, a developer's database path —
 // is worse than not starting. A missing file is fine: the defaults and the
 // environment run a local development setup (AM-OPS-01).
 func Load() (*Config, error) {
@@ -171,16 +176,13 @@ func Load() (*Config, error) {
 			ToFile:    true,
 			Level:     "INFO",
 		},
-		Instance: InstanceConfig{
-			Mode: ModeAppliance,
-		},
 	}
 
 	// Try to load from config file
 	configPath := getEnv("ASSETMANAGER_CONFIG", "./config.yaml")
 	// Collects every true/false and log-level value that cannot be used,
-	// from the file and the environment, and the instance mode, and stops
-	// the service with the whole list below (AM-OPS-19).
+	// from the file and the environment, and stops the service with the
+	// whole list below (AM-OPS-19).
 	r := settings.NewReader(configPath)
 	fileData, err := os.ReadFile(configPath)
 	switch {
@@ -235,17 +237,17 @@ func Load() (*Config, error) {
 			cfg.Log.ToConsole = fileCfg.Log.ToConsole
 			cfg.Log.ToFile = fileCfg.Log.ToFile
 			if fileCfg.Instance.Mode != "" {
-				cfg.Instance.Mode = fileCfg.Instance.Mode
+				cfg.Instance.Configured = fileCfg.Instance.Mode
+				cfg.Instance.ConfiguredFrom = "instance.mode in " + configPath
 			}
 			log.Printf("Loaded configuration from: %s", configPath)
 		}
 	}
 
 	// Environment variables override config file and defaults
-	modeFrom := "instance.mode in " + configPath
 	if mode := os.Getenv("ASSETMANAGER_INSTANCE_MODE"); mode != "" {
-		cfg.Instance.Mode = mode
-		modeFrom = "ASSETMANAGER_INSTANCE_MODE"
+		cfg.Instance.Configured = mode
+		cfg.Instance.ConfiguredFrom = "ASSETMANAGER_INSTANCE_MODE"
 	}
 	r.Port("ASSETMANAGER_PORT", &cfg.Server.Port)
 	if host := os.Getenv("ASSETMANAGER_HOST"); host != "" {
@@ -282,14 +284,6 @@ func Load() (*Config, error) {
 			svc.dst.InternalServiceKey = key
 		}
 	}
-
-	// The mode decides tenancy and the limits, so anything but the two values
-	// stops the service; the case does not matter.
-	mode := strings.ToLower(strings.TrimSpace(cfg.Instance.Mode))
-	if mode != ModeAppliance && mode != ModeSaaS {
-		r.Add(fmt.Errorf("%s is %q; it must be %q or %q", modeFrom, cfg.Instance.Mode, ModeAppliance, ModeSaaS))
-	}
-	cfg.Instance.Mode = mode
 
 	if err := r.Err(); err != nil {
 		return nil, err

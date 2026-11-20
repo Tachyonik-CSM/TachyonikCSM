@@ -18,11 +18,11 @@ server:
   port: 8081       # HTTP port (default: 8081) — Env: ASSETMANAGER_PORT
   host: localhost  # Listen address (default: localhost) — Env: ASSETMANAGER_HOST
 
-# Operating mode — must match SystemManager's instance.mode. In appliance mode
-# host-asset quotas are enforced instance-wide (one shared budget across all
-# users); saas keeps per-user enforcement.
-instance:
-  mode: appliance  # appliance or saas, any case (default: appliance); any other value stops AssetManager — Env: ASSETMANAGER_INSTANCE_MODE
+# The instance mode (appliance or saas) is SystemManager's instance.mode, which
+# rules the whole setup: AssetManager asks SystemManager for it at startup and
+# serves nothing until it answers. There is no setting here any more: an
+# instance.mode in this file, or ASSETMANAGER_INSTANCE_MODE, is ignored with a
+# warning, and refused from the next release on.
 
 database:
   path: /home/tachyon/data/AssetManager.db  # SQLite database file (default: /home/tachyon/data/AssetManager.db)

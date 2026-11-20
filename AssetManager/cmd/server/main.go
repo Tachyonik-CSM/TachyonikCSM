@@ -28,6 +28,7 @@ import (
 	"tachyonik/assetmanager/spec"
 	"tachyonik/lib/apiregister"
 	"tachyonik/lib/logger"
+	libsm "tachyonik/lib/systemmanager"
 )
 
 func setupLogging(cfg *config.Config) (*os.File, error) {
@@ -90,6 +91,18 @@ func main() {
 	if problem := cfg.JWTSecretProblem(); problem != "" {
 		logger.Warnf("SECURITY: %s — set a secret of at least %d random characters, the same as SystemManager's", problem, config.MinJWTSecretLength)
 	}
+
+	// The instance mode is SystemManager's (AM-OPS-03,
+	// docs/plans/instance-mode-from-systemmanager.md): wait for it before
+	// anything is served, so no request is answered in another mode than the
+	// rest of the setup.
+	modeCtx, stopWaiting := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	mode, err := libsm.StartupInstanceMode(modeCtx, cfg.SystemManager.URL, cfg.SystemManager.InternalServiceKey, cfg.Instance.Configured, cfg.Instance.ConfiguredFrom)
+	stopWaiting()
+	if err != nil {
+		logger.Fatalf("AssetManager cannot start: %v", err)
+	}
+	cfg.Instance.Mode = mode
 
 	// Initialize database
 	db, err := database.New(cfg.Database.Path)

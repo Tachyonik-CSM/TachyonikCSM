@@ -22,12 +22,19 @@ and what it does.
 *Reason: an operator learns the settings from it. A setting missing there is
 one nobody sets. (Project rule, see CLAUDE.md.)*
 
-**AM-OPS-03** The instance mode MUST be `appliance` (one shared workspace, an
-instance-wide licence) or `saas`, in any case. The default is `appliance`.
-Any other value, from the file or the environment, MUST stop the service at
-startup, naming the value and where it came from.
-*Reason: tenancy (AM-SEC-08) and the limits (AM-DATA-33, -34) depend on it. A
-typo used to be treated as SaaS without a word (decided 2026-11-13).*
+**AM-OPS-03** The instance mode, `appliance` (one shared workspace, an
+instance-wide licence) or `saas`, MUST be SystemManager's: at startup
+AssetManager MUST ask SystemManager (`GET /api/internal/workspace`), and MUST
+serve nothing until it has the answer, asking again every 2 seconds and
+logging every 30 seconds that it waits. An answer naming neither mode, in any
+case, MUST stop the service, naming the value. AssetManager's own
+`instance.mode` and `ASSETMANAGER_INSTANCE_MODE` MUST NOT be used; for one
+release they are still accepted, with a warning that names a disagreement with
+SystemManager, and then removed.
+*Reason: tenancy (AM-SEC-08) and the limits (AM-DATA-33, -34) depend on it,
+and a setup never runs in two modes. Configured in each service, the mode was
+missed in one on the production SaaS, which then ran it as an appliance
+(decided 2026-11-20; the check of the value, decided 2026-11-13, stays).*
 
 **AM-OPS-16** A configuration file that exists MUST be used in full or not at
 all: one that cannot be read, cannot be parsed, or contains a setting
@@ -52,8 +59,7 @@ values are:
   `true`, `false`, `1` or `0`, in any case;
 - the server port (`ASSETMANAGER_PORT`, `server.port`): a whole number from 1
   to 65535;
-- the log level: DEBUG, INFO, WARN or ERROR, in any case;
-- the instance mode: as in AM-OPS-03.
+- the log level: DEBUG, INFO, WARN or ERROR, in any case.
 
 An empty variable counts as not set. In the file a `0` counts as an absent key.
 *Reason: the environment is where a container configures the service

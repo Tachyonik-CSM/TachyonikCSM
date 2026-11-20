@@ -90,7 +90,9 @@ which moves with every migration.
 
 Default configuration file: `./config.yaml` (override with `ASSETMANAGER_CONFIG`). Priority, highest first: environment variables, `config.yaml`, built-in defaults.
 
-**An unusable configuration stops AssetManager at startup** (AM-OPS-03, AM-OPS-16) instead of running it on defaults: a file that exists but cannot be read or parsed, a setting it does not know (a misspelt key, named with its line), or an instance mode other than `appliance` or `saas` (any case), from the file or `ASSETMANAGER_INSTANCE_MODE`. The reason goes to standard error (`journalctl`, `docker logs`) and the exit code is 1. Without a file, the defaults and the environment apply.
+**An unusable configuration stops AssetManager at startup** (AM-OPS-03, AM-OPS-16) instead of running it on defaults: a file that exists but cannot be read or parsed, a setting it does not know (a misspelt key, named with its line). The reason goes to standard error (`journalctl`, `docker logs`) and the exit code is 1. Without a file, the defaults and the environment apply.
+
+**The instance mode is SystemManager's** (AM-OPS-03, plan `docs/plans/instance-mode-from-systemmanager.md`): `appliance` is one shared workspace, `saas` isolates each user, and a setup is always one or the other. At startup AssetManager asks SystemManager (`GET /api/internal/workspace`), every 2 seconds until it answers, and serves nothing until then; the log says `Instance mode: saas (from SystemManager)`. An answer that names neither mode stops it. Its own `instance.mode` and `ASSETMANAGER_INSTANCE_MODE` are no longer used: set, they are ignored with a warning (naming a disagreement with SystemManager), and the next release refuses them.
 
 `config.yaml.example` lists every option with its default and environment variable; copy it to `config.yaml` and adjust. A test keeps it complete (`internal/config/example_test.go`). In outline:
 
@@ -117,7 +119,6 @@ Environment variables override configuration file values:
 | `ASSETMANAGER_CONFIG` | Path to config file | `./config.yaml` |
 | `ASSETMANAGER_PORT` | Server port (1–65535) | `8081` |
 | `ASSETMANAGER_HOST` | Server host | `localhost` |
-| `ASSETMANAGER_INSTANCE_MODE` | Operating mode, `appliance` or `saas`; must match SystemManager's | `appliance` |
 | `ASSETMANAGER_DB_PATH` | SQLite database path | `/home/tachyon/data/AssetManager.db` |
 | `ASSETMANAGER_JWT_SECRET` | Secret the user tokens are checked with; must match SystemManager's. While it is the public placeholder or shorter than 32 characters, a `SECURITY` warning is logged at startup | (placeholder) |
 | `ASSETMANAGER_INTERNAL_SERVICE_KEY` | Key other services present to call this one; empty refuses every internal call | (empty) |
@@ -150,7 +151,7 @@ owns the pairing token and fetches the license from the SaaS) and rejects the
 create with `403` once the instance-wide Host-asset count reaches the cap.
 Existing assets are never removed. Enforcement is best-effort and fails **open**
 (the create is allowed) if the license cannot be read, so a transient AIManager
-outage never blocks asset creation. On the SaaS (`instance mode: saas`)
+outage never blocks asset creation. On the SaaS (SystemManager's `instance.mode: saas`)
 AIManager reports no appliance license, so no cap applies.
 
 ### Platform API catalogue

@@ -64,12 +64,11 @@ func TestAnUnusableFileValueStopsTheService(t *testing.T) {
 func TestEveryFaultIsReportedAtOnce(t *testing.T) {
 	withConfig(t, "log:\n  level: loud\n")
 	t.Setenv("ASSETMANAGER_LOG_TO_FILE", "yes")
-	t.Setenv("ASSETMANAGER_INSTANCE_MODE", "sass")
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	for _, s := range []string{"log.level", "ASSETMANAGER_LOG_TO_FILE", "ASSETMANAGER_INSTANCE_MODE"} {
+	for _, s := range []string{"log.level", "ASSETMANAGER_LOG_TO_FILE"} {
 		if !strings.Contains(err.Error(), s) {
 			t.Errorf("%s missing from %v", s, err)
 		}

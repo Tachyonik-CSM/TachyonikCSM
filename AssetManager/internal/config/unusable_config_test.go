@@ -2,10 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Tests that a configuration AssetManager cannot use stops it (AM-OPS-03,
-// AM-OPS-16) instead of running it on defaults: a file that cannot be read or
-// parsed, a key it does not know, an instance mode other than appliance or
-// saas. A missing file still runs a development setup on the defaults.
+// Tests that a configuration AssetManager cannot use stops it (AM-OPS-16)
+// instead of running it on defaults: a file that cannot be read or parsed, a
+// key it does not know. A missing file still runs a development setup on the
+// defaults. The instance mode is SystemManager's (AM-OPS-03); see
+// instance_test.go for the old setting.
 
 package config
 
@@ -43,8 +44,6 @@ func TestAnUnusableConfigurationStopsTheService(t *testing.T) {
 		{"a file that cannot be parsed", "server:\n  port: [8081\n", "", "cannot be used"},
 		{"an unknown key", "instanse:\n  mode: saas\n", "", "instanse"},
 		{"an unknown nested key", "server:\n  prot: 8081\n", "", "prot"},
-		{"an unknown mode in the file", "instance:\n  mode: sass\n", "", `instance.mode in`},
-		{"an unknown mode in the environment", "instance:\n  mode: saas\n", "applience", "ASSETMANAGER_INSTANCE_MODE"},
 	} {
 		withConfig(t, c.content)
 		t.Setenv("ASSETMANAGER_INSTANCE_MODE", c.env)
@@ -71,18 +70,7 @@ func TestAnUnreadableFileStopsTheService(t *testing.T) {
 func TestWhatStillStarts(t *testing.T) {
 	t.Setenv("ASSETMANAGER_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
 	t.Setenv("ASSETMANAGER_INSTANCE_MODE", "")
-	if cfg := mustLoad(t); cfg.Instance.Mode != ModeAppliance {
-		t.Errorf("no file: mode %q, want the default", cfg.Instance.Mode)
-	}
+	mustLoad(t)
 	withConfig(t, "")
 	mustLoad(t) // an empty file is an empty configuration
-	withConfig(t, "instance:\n  mode: SaaS\n")
-	if cfg := mustLoad(t); cfg.Instance.Mode != ModeSaaS {
-		t.Errorf("mode SaaS read as %q, want %q", cfg.Instance.Mode, ModeSaaS)
-	}
-	withConfig(t, "instance:\n  mode: saas\n")
-	t.Setenv("ASSETMANAGER_INSTANCE_MODE", " Appliance ")
-	if cfg := mustLoad(t); cfg.Instance.Mode != ModeAppliance {
-		t.Errorf("env Appliance read as %q", cfg.Instance.Mode)
-	}
 }
