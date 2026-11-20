@@ -96,8 +96,12 @@ func (h *Handler) ListAssets(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// sort, order and limit (AM-API-16); absent, the list is as it always was.
+	// sort, order, limit and offset (AM-API-16); absent, the list is as it
+	// always was.
 	lq, err := listquery.Parse(r.URL.Query(), database.AssetSortFields)
+	if err == nil {
+		lq, err = listquery.ParseOffset(r.URL.Query(), lq) // paging (AM-API-16)
+	}
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -409,10 +413,17 @@ func filterParam(r *http.Request, check func(*database.Filter) error) (*database
 }
 
 // listTotal is a list's total (AM-API-16): the rows answered, or — when a
-// limit may have cut them — the number of all matching rows, counted again.
+// limit may have cut them, or an offset skipped some — the number of all
+// matching rows, counted again.
 func listTotal(q listquery.Query, rows int, count func() (int, error)) (int, error) {
-	if q.Limit == 0 || rows < q.Limit {
+	switch {
+	case q.Limit == 0:
 		return rows, nil
+	case rows > 0 && rows < q.Limit:
+		// The last page: the rows before it, and these.
+		return q.Offset + rows, nil
+	case rows == 0 && q.Offset == 0:
+		return 0, nil
 	}
 	return count()
 }

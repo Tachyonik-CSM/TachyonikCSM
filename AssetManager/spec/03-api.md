@@ -57,39 +57,50 @@ existing asset again MUST answer 200 with the asset.
 canonical type and the derived values.*
 
 **AM-API-04** A list MUST answer every matching record of the visible set,
-unless the caller asks for fewer with `limit` (AM-API-16), with their number
-and, where a limit exists, the limit in effect (0 meaning none).
-*Reason: the WebUI shows "n of limit" without a second request.* There is no
-paging. At the sizes seen so far (hundreds to a few thousand records per
-user) none is needed. This is to be revisited when a user's lists reach tens
-of thousands.
+unless the caller asks for one page with `limit` and `offset` (AM-API-16),
+with their number and, where a limit exists, the limit in effect (0 meaning
+none).
+*Reason: the WebUI shows "n of limit" without a second request. Production
+lists have grown past what a browser should load and sort at once, so the
+WebUI asks for one page at a time (decided 2026-11-20).*
 
 **AM-API-05** A list MAY be narrowed by `?filter=`, a JSON filter of rules
 joined by AND or OR, on the columns listed in openapi.yaml. A filter with a
 rule that cannot be read — an unknown column, an operator the column does not
 take, or a value it cannot read — MUST be refused with 400, naming the rule
-and why: `Filter rule 2: "severity" needs a number, not "high"`.
+and why: `Filter rule 2: "severity" needs a number, not "high"`. "contains"
+and "does not contain" MUST match the value as written, ignoring the case of
+ASCII letters: `%` and `_` in it are no wildcards.
 *Reason: a rule left out lists more than was asked for, with nothing to say
 so, and is mistaken for the answer. A column does not disappear without a
 release in which both work (AM-API-08), so a saved filter is not broken by
-surprise (decided 2026-11-13).*
+surprise (decided 2026-11-13). The WebUI checks a live record against the same
+rules, which only agree if a value means the same on both sides (decided
+2026-11-20).*
 
 **AM-API-16** The lists of assets, vulnerabilities and detections MAY be
-ordered and cut by three optional query parameters, applied after the filter:
+ordered, cut and paged by four optional query parameters, applied after the
+filter:
 - `sort`, a field of the answer from the list's own set, documented as an enum
   in openapi.yaml — assets: severity, score, name, type, createdAt,
-  modifiedAt, lastSeen, lastScanned; vulnerabilities: severity, name, host,
-  createdAt, modifiedAt, lastSeen; detections: name, host, createdAt,
-  modifiedAt, lastSeen. Times MUST sort as the times they stand for, text
-  ignoring case; records with equal values stay newest first.
+  modifiedAt, lastSeen, lastScanned, lastScanCoverageVerification,
+  scanCoverageIntervalDays; vulnerabilities: severity, name, host, port,
+  sourceLabel, createdAt, modifiedAt, lastSeen; detections: name, host, port,
+  sourceLabel, createdAt, modifiedAt, lastSeen. Times MUST sort as the times
+  they stand for, text ignoring case, a port by its number and then as text;
+  records with equal values stay newest first. Every order, the default ones
+  too, MUST end with the id, so that pages neither overlap nor skip a record.
 - `order`, `asc` or `desc`; without it text fields sort ascending and the
   others descending (highest, newest first).
 - `limit`, a whole number from 1 to 500: at most that many records are
   answered, while `total` MUST still count every matching record.
+- `offset`, a whole number from 0, only with `limit`: that many records are
+  skipped before the ones answered.
 
 Without any of them a list MUST answer exactly as before. An unknown field,
-an order other than `asc` or `desc`, `order` without `sort`, or a limit that
-is not a whole number from 1 to 500 MUST be refused with 400, naming what is
+an order other than `asc` or `desc`, `order` without `sort`, a limit that
+is not a whole number from 1 to 500, or an offset without a limit or not a
+whole number from 0 MUST be refused with 400, naming what is
 allowed (`sort must be one of severity, name, …, not "risk"`). The field's
 SQL comes from the list's own set only; the parameter's value MUST NOT be
 written into a query.
@@ -98,7 +109,10 @@ and can only ask for what an operation offers. "The 25 most severe" must be a
 question the list answers, rather than a few thousand records sent to the AI
 to sort and cut. `total` is how a caller learns that the list was cut. A bad
 value is refused, not ignored, for the reason of AM-API-05: an answer to
-another question is mistaken for the answer (decided 2026-11-17).*
+another question is mistaken for the answer (decided 2026-11-17). `offset`
+lets the WebUI and the AI tools page through a long list; ending every order
+with the id keeps a record from showing on two pages or on none (decided
+2026-11-20).*
 
 **AM-API-06** The by-source and stale endpoints MUST be called with the source
 reference `?source=filename (ID: N)`, and MUST refuse with 400 a reference

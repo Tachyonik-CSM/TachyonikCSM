@@ -34,14 +34,14 @@ var (
 		table:   "vulnerabilities",
 		noun:    "vulnerability",
 		columns: "id, name, host, port, severity, source_id, source_label, user_id, created_at, modified_at, last_seen",
-		order:   "severity DESC, created_at DESC",
+		order:   "severity DESC, created_at DESC, id DESC",
 		ruleSQL: buildVulnerabilityRuleSQL,
 	}
 	detectionKind = findingKind{
 		table:   "detections",
 		noun:    "detection",
 		columns: "id, name, host, port, source_id, source_label, user_id, created_at, modified_at, last_seen",
-		order:   "created_at DESC",
+		order:   "created_at DESC, id DESC",
 		ruleSQL: buildDetectionRuleSQL,
 	}
 )

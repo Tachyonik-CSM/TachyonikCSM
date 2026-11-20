@@ -195,7 +195,9 @@ func (db *DB) GetAssetsByUsersWithFilter(userIDs []int64, filter *AssetFilter) (
 func (db *DB) ListAssets(userIDs []int64, filter *AssetFilter, q listquery.Query) ([]Asset, error) {
 	clause, args := buildUserIDsClause(userIDs)
 	query := "SELECT " + assetColumns + " FROM assets WHERE " + clause
-	order := "created_at DESC"
+	// id ends every order, so that pages neither split nor repeat records
+	// created at the same moment.
+	order := "created_at DESC, id DESC"
 
 	if filter != nil && len(filter.Rules) > 0 {
 		filterSQL, filterArgs, ferr := buildAssetFilterSQL(filter, userIDs)
@@ -206,7 +208,7 @@ func (db *DB) ListAssets(userIDs []int64, filter *AssetFilter, q listquery.Query
 			query += " AND (" + filterSQL + ")"
 			args = append(args, filterArgs...)
 		}
-		order = "severity DESC, created_at DESC"
+		order = "severity DESC, created_at DESC, id DESC"
 	}
 
 	query += " ORDER BY " + q.OrderBy(order, listTieBreak) + q.LimitSQL()

@@ -55,8 +55,8 @@ paths:
         severity, highest first), or by `sort` and `order`. An asset's
         `severity` is 0–100, the highest of its vulnerabilities (critical
         90–100, high 70–89, medium 40–69, low 1–39, 0 none); in a filter rule
-        it is written 0.0–10.0. No paging: `limit` answers only the first so
-        many, and `total` still counts all that match (AM-API-16). For counts
+        it is written 0.0–10.0. Paged by `limit` and `offset`; `total` still
+        counts all that match (AM-API-16). For counts
         by severity band or age, assets.stats answers without listing. A
         service names the user with `userId`; a user who sends it gets 403
         (AM-SEC-12).
@@ -66,10 +66,11 @@ paths:
         - $ref: "#/components/parameters/userIdForService"
         - name: sort
           in: query
-          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names and types ignoring case; an asset never scanned (lastScanned null) sorts as the oldest. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
-          schema: { type: string, enum: [severity, score, name, type, createdAt, modifiedAt, lastSeen, lastScanned] }
+          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names and types ignoring case; an asset never scanned (lastScanned null) or never verified (lastScanCoverageVerification null) sorts as the oldest, and one in no scheduled scan (scanCoverageIntervalDays null) as the longest interval. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
+          schema: { type: string, enum: [severity, score, name, type, createdAt, modifiedAt, lastSeen, lastScanned, lastScanCoverageVerification, scanCoverageIntervalDays] }
         - $ref: "#/components/parameters/listOrder"
         - $ref: "#/components/parameters/listLimit"
+        - $ref: "#/components/parameters/listOffset"
       responses:
         "200":
           description: The assets.
@@ -297,18 +298,18 @@ paths:
         the CVE), the affected asset (`host`) and port, and `severity` 0–100
         (critical 90–100, high 70–89, medium 40–69, low 1–39); in a filter
         rule severity is written 0.0–10.0. Ordered by severity, highest
-        first, then newest first, or by `sort` and `order`. No paging:
-        `limit` answers only the first so many, and `total` still counts all
-        that match (AM-API-16).
+        first, then newest first, or by `sort` and `order`. Paged by `limit`
+        and `offset`; `total` still counts all that match (AM-API-16).
       parameters:
         - $ref: "#/components/parameters/actingUser"
         - $ref: "#/components/parameters/filter"
         - name: sort
           in: query
-          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names and hosts ignoring case. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
-          schema: { type: string, enum: [severity, name, host, createdAt, modifiedAt, lastSeen] }
+          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names, hosts and source labels ignoring case; a port by its number, then as text, a port without a number after all numbered ones. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
+          schema: { type: string, enum: [severity, name, host, port, sourceLabel, createdAt, modifiedAt, lastSeen] }
         - $ref: "#/components/parameters/listOrder"
         - $ref: "#/components/parameters/listLimit"
+        - $ref: "#/components/parameters/listOffset"
       responses:
         "200":
           description: The vulnerabilities.
@@ -398,18 +399,19 @@ paths:
         What was observed on the user's assets (in a shared workspace, on
         everyone's in it) — services, software, open ports — without a
         severity, that match `filter`: each with its name, the asset
-        (`host`) and port. Newest first, or by `sort` and `order`. No paging:
-        `limit` answers only the first so many, and `total` still counts all
-        that match (AM-API-16).
+        (`host`) and port. Newest first, or by `sort` and `order`. Paged by
+        `limit` and `offset`; `total` still counts all that match
+        (AM-API-16).
       parameters:
         - $ref: "#/components/parameters/actingUser"
         - $ref: "#/components/parameters/filter"
         - name: sort
           in: query
-          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names and hosts ignoring case. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
-          schema: { type: string, enum: [name, host, createdAt, modifiedAt, lastSeen] }
+          description: "Sort by this field instead of the default order; equal values stay newest first. Times sort as times; names, hosts and source labels ignoring case; a port by its number, then as text, a port without a number after all numbered ones. An unknown field is refused with 400, naming the allowed ones (AM-API-16)."
+          schema: { type: string, enum: [name, host, port, sourceLabel, createdAt, modifiedAt, lastSeen] }
         - $ref: "#/components/parameters/listOrder"
         - $ref: "#/components/parameters/listLimit"
+        - $ref: "#/components/parameters/listOffset"
       responses:
         "200":
           description: The detections.
@@ -1220,6 +1222,8 @@ components:
         contains, does not contain; "is set" and "is not set" (no value) on
         lastScannedDays, coverageVerifiedDays and scanCoverageIntervalDays.
         Name and type take contains and does not contain; type also =.
+        Contains matches the value as written, ignoring the case of ASCII
+        letters; % and _ are no wildcards.
         Scales: severity 0.0–10.0, a tenth of the answers' 0–100 (critical is
         >= 9, high >= 7, medium >= 4, low > 0); score 0–100 as answered; the
         …Days columns whole days ago (scanCoverageIntervalDays: days between
@@ -1241,6 +1245,11 @@ components:
       in: query
       description: "Answer at most this many records, after filtering and sorting, from 1 to 500; more or fewer is refused with 400. `total` still counts every matching record, so a total above the number answered says the list was cut. Absent: every matching record (AM-API-04, AM-API-16)."
       schema: { type: integer, minimum: 1, maximum: 500 }
+    listOffset:
+      name: offset
+      in: query
+      description: "Skip this many records, after filtering and sorting, before the `limit` answered: a page. Only with `limit`; alone, or not a whole number from 0, it is refused with 400. `total` counts every matching record, whichever page is asked. Every order ends with the id, so pages neither overlap nor skip a record (AM-API-16)."
+      schema: { type: integer, minimum: 0 }
     userIdForService:
       name: userId
       in: query

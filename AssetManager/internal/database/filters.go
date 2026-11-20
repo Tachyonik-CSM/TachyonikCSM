@@ -121,13 +121,20 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// likeEscaper escapes LIKE's wildcards and its escape character.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+
 // textRuleSQL is a "contains" / "does not contain" rule on a text column.
+// The value is matched as written: % and _ in it are escaped, so they are no
+// wildcards, and the WebUI's matching of a live record agrees with the list.
+// LIKE ignores the case of ASCII letters.
 func textRuleSQL(column string, rule FilterRule, extra ...string) (string, []interface{}, string) {
+	pattern := "%" + likeEscaper.Replace(rule.Value) + "%"
 	switch rule.Operator {
 	case "contains":
-		return column + " LIKE ?", []interface{}{"%" + rule.Value + "%"}, ""
+		return column + ` LIKE ? ESCAPE '\'`, []interface{}{pattern}, ""
 	case "does not contain":
-		return column + " NOT LIKE ?", []interface{}{"%" + rule.Value + "%"}, ""
+		return column + ` NOT LIKE ? ESCAPE '\'`, []interface{}{pattern}, ""
 	}
 	return "", nil, unknownOperator(rule.Column, rule.Operator, append(append([]string{}, textOperators...), extra...))
 }

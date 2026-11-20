@@ -61,6 +61,9 @@ func (h *Handler) ListVulnerabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	// sort, order and limit (AM-API-16); absent, the list is as it always was.
 	lq, err := listquery.Parse(r.URL.Query(), database.VulnerabilitySortFields)
+	if err == nil {
+		lq, err = listquery.ParseOffset(r.URL.Query(), lq) // paging (AM-API-16)
+	}
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return

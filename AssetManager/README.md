@@ -339,15 +339,24 @@ number where one is needed) is answered with `400` and the rule and the
 reason, e.g. `{"error": "Filter rule 2: \"severity\" needs a number, not \"high\""}`.
 Leaving the rule out used to list more than was asked for (AM-API-05).
 
-**The three lists can be sorted and cut** (AM-API-16): `?sort=<field>` —
+**The three lists can be sorted, cut and paged** (AM-API-16): `?sort=<field>` —
 assets `severity`, `score`, `name`, `type`, `createdAt`, `modifiedAt`,
-`lastSeen`, `lastScanned`; vulnerabilities `severity`, `name`, `host`,
-`createdAt`, `modifiedAt`, `lastSeen`; detections `name`, `host`,
-`createdAt`, `modifiedAt`, `lastSeen` — with `&order=asc|desc` (default asc
-for text, desc for numbers and times), and `?limit=1..500`, which answers at
-most that many while `total` still counts every match. All three are
-optional; without them a list is answered as before. An unknown field or
-order, `order` without `sort`, or a limit outside 1–500 is refused with `400`.
+`lastSeen`, `lastScanned`, `lastScanCoverageVerification`,
+`scanCoverageIntervalDays`; vulnerabilities `severity`, `name`, `host`, `port`,
+`sourceLabel`, `createdAt`, `modifiedAt`, `lastSeen`; detections `name`, `host`,
+`port`, `sourceLabel`, `createdAt`, `modifiedAt`, `lastSeen` — with
+`&order=asc|desc` (default asc for text, desc for numbers and times),
+`?limit=1..500`, which answers at most that many while `total` still counts
+every match, and `?offset=n` (with `limit` only), which skips the first `n`: a
+page. A port sorts by its number, then as text. Every order ends with the id,
+so pages neither overlap nor skip a record. All are optional; without them a
+list is answered as before. An unknown field or order, `order` without `sort`,
+a limit outside 1–500, or an offset without a limit or below 0 is refused with
+`400`. The WebUI's Assets, Vulnerabilities and Detections views ask for one
+page at a time (plan `docs/plans/assetmanager-list-pagination.md`).
+
+**"contains" matches the value as written** (AM-API-05), ignoring the case of
+ASCII letters: `%` and `_` in it are no wildcards.
 
 The `by-source` and `stale` endpoints are called with the source reference `?source=filename (ID: N)` and find a source's findings by the id in it — so a renamed file still finds its own. A reference without `(ID: N)` is refused with `400`. Both are for services only.
 

@@ -164,14 +164,14 @@ func TestTheListsRefuseABadSortOrderOrLimit(t *testing.T) {
 		handler    http.HandlerFunc
 		path, want string
 	}{
-		{h.ListAssets, "/api/assets?sort=risk", `sort must be one of severity, score, name, type, createdAt, modifiedAt, lastSeen, lastScanned, not "risk"`},
+		{h.ListAssets, "/api/assets?sort=risk", `sort must be one of severity, score, name, type, createdAt, modifiedAt, lastSeen, lastScanned, lastScanCoverageVerification, scanCoverageIntervalDays, not "risk"`},
 		{h.ListAssets, "/api/assets?sort=severity%20DESC%3B--", "sort must be one of"},
 		{h.ListAssets, "/api/assets?order=desc", "order needs sort"},
 		{h.ListAssets, "/api/assets?sort=name&order=down", "order must be asc or desc"},
 		{h.ListAssets, "/api/assets?limit=0", "limit must be a whole number from 1 to 500"},
-		{h.ListVulnerabilities, "/api/vulnerabilities?sort=score", "sort must be one of severity, name, host, createdAt, modifiedAt, lastSeen"},
+		{h.ListVulnerabilities, "/api/vulnerabilities?sort=score", "sort must be one of severity, name, host, port, sourceLabel, createdAt, modifiedAt, lastSeen"},
 		{h.ListVulnerabilities, "/api/vulnerabilities?limit=501", "limit must be a whole number from 1 to 500"},
-		{h.ListDetections, "/api/detections?sort=severity", "sort must be one of name, host, createdAt, modifiedAt, lastSeen"},
+		{h.ListDetections, "/api/detections?sort=severity", "sort must be one of name, host, port, sourceLabel, createdAt, modifiedAt, lastSeen"},
 		{h.ListDetections, "/api/detections?limit=many", "limit must be"},
 	} {
 		code, _, e := list(t, c.handler, c.path, "")
