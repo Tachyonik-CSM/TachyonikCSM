@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package systemmanager is a thin outbound client for reporting audit-trail
-// events to SystemManager. It is the shared core used by every service; modules
+// events to SystemManager, and for asking it the setup's instance mode
+// (instance_mode.go). It is the shared core used by every service; modules
 // that need additional SystemManager endpoints embed this Client and add their
 // own methods locally (so the shared library stays minimal).
 package systemmanager

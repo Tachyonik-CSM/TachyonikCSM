@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Tachyonik GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Checks the call this shared client makes against SystemManager's API
+// Checks the calls this shared client makes against SystemManager's API
 // document (apicontract): the path exists, and every field it sends is
 // documented.
 
@@ -16,6 +16,7 @@ import (
 
 var calls = []apicontract.Call{
 	{Method: "POST", Path: "/api/internal/audit-events", Request: auditEventRequest{}},
+	{Method: "GET", Path: "/api/internal/workspace", Answer: workspaceAnswer{}},
 }
 
 func TestTheClientMatchesSystemManagersDocument(t *testing.T) {
