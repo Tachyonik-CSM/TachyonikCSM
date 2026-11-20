@@ -91,3 +91,19 @@ func TestStopsWithItsContext(t *testing.T) {
 		t.Error("want the context's error")
 	}
 }
+
+// An AIManager that does not answer is named with its address and the reason,
+// so a configuration pointing at the wrong place shows in the log.
+func TestAnUnreachableAIManagerIsNamed(t *testing.T) {
+	_, err := register(context.Background(), &http.Client{Timeout: time.Second}, config("http://127.0.0.1:1/"))
+	if err == nil {
+		t.Fatal("registered with nothing listening")
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "AIManager at http://127.0.0.1:1 cannot be reached: ") || !strings.Contains(msg, "refused") {
+		t.Errorf("message %q, want the address and the reason", msg)
+	}
+	if strings.Contains(msg, "/api/internal/api-catalogue") {
+		t.Errorf("message %q repeats the request path", msg)
+	}
+}

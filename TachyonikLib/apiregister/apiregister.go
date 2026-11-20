@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -125,7 +126,15 @@ func register(ctx context.Context, client *http.Client, cfg Config) (permanent b
 	req.Header.Set("X-Internal-Service-Key", cfg.ServiceKey)
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("AIManager cannot be reached")
+		// Name the address and the reason: a configuration file from an older
+		// install that still points at localhost (inside a container, the
+		// container itself) is the usual cause, and the address shows it.
+		cause := err
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			cause = ue.Err
+		}
+		return false, fmt.Errorf("AIManager at %s cannot be reached: %v", strings.TrimRight(cfg.AIManagerURL, "/"), cause)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
