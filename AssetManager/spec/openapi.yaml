@@ -982,7 +982,8 @@ components:
           "hostsMonitored2d": 0,
           "hostsMonitored10d": 0,
           "hostsMonitoredOlder": 0,
-          "hostsUnmonitored": 2
+          "hostsUnmonitored": 2,
+          "hostsFullyCovered": 0
         }
     AssetStatsEmpty:
       summary: "No assets."
@@ -1005,7 +1006,8 @@ components:
           "hostsMonitored2d": 0,
           "hostsMonitored10d": 0,
           "hostsMonitoredOlder": 0,
-          "hostsUnmonitored": 0
+          "hostsUnmonitored": 0,
+          "hostsFullyCovered": 0
         }
     AssetStatsRegistered:
       summary: "Statistics of the registered user's six hosts."
@@ -1028,7 +1030,8 @@ components:
           "hostsMonitored2d": 1,
           "hostsMonitored10d": 1,
           "hostsMonitoredOlder": 0,
-          "hostsUnmonitored": 4
+          "hostsUnmonitored": 4,
+          "hostsFullyCovered": 0
         }
     VulnerabilityListAnonymous:
       summary: "One vulnerability."
@@ -1430,3 +1433,4 @@ components:
         hostsMonitored10d: { type: integer, description: 3 to 10 days }
         hostsMonitoredOlder: { type: integer, description: more than 10 days }
         hostsUnmonitored: { type: integer, description: no interval }
+        hostsFullyCovered: { type: integer, description: "current in all three at once: last seen at most 30 days ago, last scanned at most 2 days ago, scan coverage interval of 1 or 2 days (AM-DATA-48)" }

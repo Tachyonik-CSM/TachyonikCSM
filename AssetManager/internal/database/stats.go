@@ -45,6 +45,11 @@ type AssetStats struct {
 	HostsMonitored10d   int `json:"hostsMonitored10d"`   // every 3 to 10 days
 	HostsMonitoredOlder int `json:"hostsMonitoredOlder"` // less often than every 10 days
 	HostsUnmonitored    int `json:"hostsUnmonitored"`    // no interval: in no scheduled scan
+
+	// Host assets current in all three at once: seen at most 30 days ago,
+	// scanned at most 2 days ago and scanned every 1 or 2 days — the
+	// dashboard's "fully covered" hosts (AM-DATA-48).
+	HostsFullyCovered int `json:"hostsFullyCovered"`
 }
 
 // hostAgeBuckets fills the HostsSeen*, HostsScanned* and HostsMonitored*
@@ -68,6 +73,8 @@ func (db *DB) hostAgeBuckets(stats *AssetStats, where string, args []interface{}
 		Monitored10d   sql.NullInt64 `db:"monitored_10d"`
 		MonitoredOlder sql.NullInt64 `db:"monitored_older"`
 		Unmonitored    sql.NullInt64 `db:"unmonitored"`
+
+		FullyCovered sql.NullInt64 `db:"fully_covered"`
 	}
 	// The scan boundaries match the lastScannedDays filter the dashboard's
 	// "Show" applies: older is "> 10 and <= 99999", and anything without a
@@ -86,7 +93,8 @@ func (db *DB) hostAgeBuckets(stats *AssetStats, where string, args []interface{}
 			SUM(CASE WHEN scan_coverage_interval_days <= 2 THEN 1 ELSE 0 END) AS monitored_2d,
 			SUM(CASE WHEN scan_coverage_interval_days > 2 AND scan_coverage_interval_days <= 10 THEN 1 ELSE 0 END) AS monitored_10d,
 			SUM(CASE WHEN scan_coverage_interval_days > 10 AND scan_coverage_interval_days <= 99999 THEN 1 ELSE 0 END) AS monitored_older,
-			SUM(CASE WHEN scan_coverage_interval_days IS NULL OR scan_coverage_interval_days > 99999 THEN 1 ELSE 0 END) AS unmonitored
+			SUM(CASE WHEN scan_coverage_interval_days IS NULL OR scan_coverage_interval_days > 99999 THEN 1 ELSE 0 END) AS unmonitored,
+			SUM(CASE WHEN age <= 30 AND scan_age <= 2 AND scan_coverage_interval_days <= 2 THEN 1 ELSE 0 END) AS fully_covered
 		FROM (SELECT julianday('now') - julianday(last_seen) AS age,
 		             julianday('now') - julianday(last_scanned) AS scan_age,
 		             scan_coverage_interval_days
@@ -105,6 +113,7 @@ func (db *DB) hostAgeBuckets(stats *AssetStats, where string, args []interface{}
 	stats.HostsMonitored10d = int(b.Monitored10d.Int64)
 	stats.HostsMonitoredOlder = int(b.MonitoredOlder.Int64)
 	stats.HostsUnmonitored = int(b.Unmonitored.Int64)
+	stats.HostsFullyCovered = int(b.FullyCovered.Int64)
 	return nil
 }
 

@@ -347,6 +347,15 @@ with findings) and unmanaged (AM-DATA-19).
 *Reason: the dashboard and the rules use the same bands, so they must not be
 defined twice.*
 
+**AM-DATA-48** The statistics MUST count the host assets that are current in
+all three host views at once — last seen at most 30 days ago, last scanned at
+most 2 days ago, and a scan coverage interval of 1 or 2 days — as
+`hostsFullyCovered`, with the same boundaries as the three views' own counts.
+*Reason: the dashboard's Asset status chart leads with how many hosts are fully
+covered. The three counts alone cannot tell it: a host current in one view may
+be stale in another, so the number has to be counted per host, here (decided
+2026-11-23, docs/plans/asset-status-lanes.md).*
+
 **AM-DATA-41** The **Exposure** score MUST be the average score of the owner's
 assets, and 0 when there are none. On an appliance, which is one shared
 workspace, it MUST be the average over the assets of all its users, and be
