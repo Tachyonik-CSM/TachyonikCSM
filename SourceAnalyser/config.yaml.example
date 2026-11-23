@@ -19,25 +19,32 @@
 # Sources are read from ResourceManager (and announced over its WebSocket), and their type and status written back.
 resourcemanager:
   url: http://localhost:8080  # ResourceManager API URL (default: http://localhost:8080)
-                              # Env: RESOURCEMANAGER_URL (legacy: RESOURCEMANAGER_API_BASE_URL)
+                              # Env: SOURCEANALYSER_RESOURCEMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match ResourceManager's internal_service_key
-                                                            # Env: RESOURCEMANAGER_INTERNAL_SERVICE_KEY
+                                                            # Env: SOURCEANALYSER_RESOURCEMANAGER_INTERNAL_SERVICE_KEY
 
-# Log/heartbeat information is sent to SystemManager, which is the only purpose. No data is retrieved.
+# Audit events and the heartbeat are sent to SystemManager. No data is retrieved.
 systemmanager:
   url: http://localhost:8083  # SystemManager API URL (default: http://localhost:8083)
-                              # Env: SYSTEMMANAGER_URL
+                              # Env: SOURCEANALYSER_SYSTEMMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match SystemManager's internal_service_key
-                                                            # Env: SYSTEMMANAGER_INTERNAL_SERVICE_KEY
-                                                            # If empty, falls back to resourcemanager.internal_service_key
+                                                            # Env: SOURCEANALYSER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY
+                                                            # If empty, ResourceManager's key is sent, with a
+                                                            # warning; the next release requires it.
 
 # AI configuration (model, name, system prompt) is retrieved from AIManager at runtime,
 # which is the only purpose. No data is sent.
-ai_manager:
+aimanager:
   url: http://localhost:8085  # AIManager API URL (default: http://localhost:8085)
-                              # Env: SOURCEANALYSER_AI_MANAGER_URL
+                              # Env: SOURCEANALYSER_AIMANAGER_URL
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # Must match AIManager's internal_service_key
-                                                            # Env: AIMANAGER_INTERNAL_SERVICE_KEY
+                                                            # Env: SOURCEANALYSER_AIMANAGER_INTERNAL_SERVICE_KEY
+#
+# Until 2026-11-20 this section was ai_manager:, and the variables were
+# RESOURCEMANAGER_URL (and RESOURCEMANAGER_API_BASE_URL), RESOURCEMANAGER_INTERNAL_SERVICE_KEY,
+# SYSTEMMANAGER_URL, SYSTEMMANAGER_INTERNAL_SERVICE_KEY, SOURCEANALYSER_AI_MANAGER_URL and
+# AIMANAGER_INTERNAL_SERVICE_KEY. They are still read for one release, each with a warning
+# naming its replacement; the next release refuses ai_manager: and ignores the old variables.
 
 analyzer:
   sweep_interval_seconds: 300  # Seconds between sweeps of the whole source list, above 0

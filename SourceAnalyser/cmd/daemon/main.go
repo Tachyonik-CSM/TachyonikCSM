@@ -184,10 +184,10 @@ func runDaemon(cfg *config.Config) {
 
 	// Validate required config
 	if cfg.ResourceManager.URL == "" {
-		logger.Fatalf("ResourceManager URL is required")
+		logger.Fatalf("ResourceManager URL is required: set resourcemanager.url or SOURCEANALYSER_RESOURCEMANAGER_URL")
 	}
 	if cfg.ResourceManager.InternalServiceKey == "" {
-		logger.Fatalf("ResourceManager Internal Service Key is required")
+		logger.Fatalf("ResourceManager Internal Service Key is required: set resourcemanager.internal_service_key or SOURCEANALYSER_RESOURCEMANAGER_INTERNAL_SERVICE_KEY")
 	}
 
 	// Initialize API clients

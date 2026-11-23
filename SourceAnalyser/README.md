@@ -170,10 +170,10 @@ resourcemanager:
 # Log/heartbeat information is sent to SystemManager. No data is retrieved.
 systemmanager:
   url: http://localhost:8083
-  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # falls back to resourcemanager key if empty
+  internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"  # empty: ResourceManager's, with a warning (required next release)
 
 # AI configuration (model, name, system prompt) is retrieved from AIManager at runtime.
-ai_manager:
+aimanager:
   url: http://localhost:8085
   internal_service_key: "CHANGE-THIS-INTERNAL-SERVICE-KEY"
 
@@ -195,7 +195,7 @@ log:
 ```
 
 The AI model, name, and system prompt are not set here — they are resolved from AIManager
-at runtime via the `ai_manager` connection.
+at runtime via the `aimanager` connection.
 
 ### Environment Variables
 
@@ -204,12 +204,12 @@ Environment variables override configuration file values:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SOURCEANALYSER_CONFIG` | Path to config file | `./config.yaml` |
-| `RESOURCEMANAGER_URL` | ResourceManager API URL (legacy: `RESOURCEMANAGER_API_BASE_URL`) | `http://localhost:8080` |
-| `RESOURCEMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for ResourceManager | _(empty)_ |
-| `SYSTEMMANAGER_URL` | SystemManager API URL | `http://localhost:8083` |
-| `SYSTEMMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for SystemManager (falls back to ResourceManager key) | _(empty)_ |
-| `SOURCEANALYSER_AI_MANAGER_URL` | AIManager API URL | `http://localhost:8085` |
-| `AIMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for AIManager | _(empty)_ |
+| `SOURCEANALYSER_RESOURCEMANAGER_URL` | ResourceManager API URL | `http://localhost:8080` |
+| `SOURCEANALYSER_RESOURCEMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for ResourceManager (required) | _(empty)_ |
+| `SOURCEANALYSER_SYSTEMMANAGER_URL` | SystemManager API URL | `http://localhost:8083` |
+| `SOURCEANALYSER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for SystemManager; empty: ResourceManager's, with a warning (required next release) | _(empty)_ |
+| `SOURCEANALYSER_AIMANAGER_URL` | AIManager API URL | `http://localhost:8085` |
+| `SOURCEANALYSER_AIMANAGER_INTERNAL_SERVICE_KEY` | Internal service key for AIManager | _(empty)_ |
 | `SOURCEANALYSER_SWEEP_INTERVAL_SECONDS` | Seconds between sweeps of the whole source list, the safety net behind ResourceManager's messages; whole seconds above 0 | `300` |
 | `SOURCEANALYSER_POLL_INTERVAL` | **Ignored** since 2026-11-20, with a warning at startup; remove it | — |
 | `SOURCEANALYSER_JS_EXEC_TIMEOUT_SECONDS` | Max seconds a single JS analysis routine may run before being interrupted (guards against infinite loops / catastrophic regex in AI/feed-sourced routines), in whole seconds above 0; `0` switches the guard off | `5` |
@@ -231,6 +231,27 @@ above 0. Before 2026-11-18 such values were dropped without a word —
 `SOURCEANALYSER_LOG_TO_FILE=yes` even switched the file log off, and a negative
 `js_exec_timeout_seconds` in the file switched the guard off — so check a
 deployment's variables and file when upgrading.
+
+### Names before 2026-11-20
+
+The services' settings follow AssetManager's layout since 2026-11-20 (spec
+SA-OPS-19). For one release the old names are still read, each with a warning at
+startup naming its replacement; when both are set, the new one is used:
+
+| Old | New |
+|---|---|
+| section `ai_manager:` | `aimanager:` |
+| `RESOURCEMANAGER_URL`, `RESOURCEMANAGER_API_BASE_URL` | `SOURCEANALYSER_RESOURCEMANAGER_URL` |
+| `RESOURCEMANAGER_INTERNAL_SERVICE_KEY` | `SOURCEANALYSER_RESOURCEMANAGER_INTERNAL_SERVICE_KEY` |
+| `SYSTEMMANAGER_URL` | `SOURCEANALYSER_SYSTEMMANAGER_URL` |
+| `SYSTEMMANAGER_INTERNAL_SERVICE_KEY` | `SOURCEANALYSER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY` |
+| `SOURCEANALYSER_AI_MANAGER_URL` | `SOURCEANALYSER_AIMANAGER_URL` |
+| `AIMANAGER_INTERNAL_SERVICE_KEY` | `SOURCEANALYSER_AIMANAGER_INTERNAL_SERVICE_KEY` |
+
+The next release refuses `ai_manager:` and no longer reads the old variables, and
+requires SystemManager's own key. Rename them within this release: in Docker,
+`config/sourceanalyser.yaml` only needs `ai_manager:` renamed and
+`systemmanager.internal_service_key` set.
 
 ### Configuration Priority
 

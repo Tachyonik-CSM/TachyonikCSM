@@ -23,15 +23,15 @@ import (
 )
 
 type Config struct {
-	ResourceManager ResourceManagerConfig
-	SystemManager   SystemManagerConfig
-	AIManager       AIManagerConfig
+	ResourceManager ServiceConfig
+	SystemManager   ServiceConfig
+	AIManager       ServiceConfig
 	AI              AIConfig
 	Analyzer        AnalyzerConfig
 	Heartbeat       HeartbeatConfig
 	Log             LogConfig
-	// Warnings are settings that are accepted but no longer do anything,
-	// for the startup log.
+	// Warnings are settings that are accepted but deprecated or no longer do
+	// anything, for the startup log (SA-OPS-06, SA-OPS-20).
 	Warnings []string
 }
 
@@ -48,19 +48,17 @@ type AIConfig struct {
 	SystemPrompt string // resolved from AIManager at runtime
 }
 
-type AIManagerConfig struct {
+// ServiceConfig is where a service is reached and the key sent to it
+// (SA-OPS-19).
+type ServiceConfig struct {
 	URL                string
 	InternalServiceKey string
 }
 
-type ResourceManagerConfig struct {
-	URL                string
-	InternalServiceKey string
-}
-
-type SystemManagerConfig struct {
-	URL                string
-	InternalServiceKey string
+// FileServiceConfig is a service's section in config.yaml.
+type FileServiceConfig struct {
+	URL                string `yaml:"url"`
+	InternalServiceKey string `yaml:"internal_service_key"`
 }
 
 type AnalyzerConfig struct {
@@ -89,19 +87,13 @@ type LogConfig struct {
 
 // FileConfig represents the structure of config.yaml
 type FileConfig struct {
-	ResourceManager struct {
-		URL                string `yaml:"url"`
-		InternalServiceKey string `yaml:"internal_service_key"`
-	} `yaml:"resourcemanager"`
-	SystemManager struct {
-		URL                string `yaml:"url"`
-		InternalServiceKey string `yaml:"internal_service_key"`
-	} `yaml:"systemmanager"`
-	AIManager struct {
-		URL                string `yaml:"url"`
-		InternalServiceKey string `yaml:"internal_service_key"`
-	} `yaml:"ai_manager"`
-	Analyzer struct {
+	ResourceManager FileServiceConfig `yaml:"resourcemanager"`
+	SystemManager   FileServiceConfig `yaml:"systemmanager"`
+	AIManager       FileServiceConfig `yaml:"aimanager"`
+	// OldAIManager is the section's name before 2026-11-20, read for one
+	// release when aimanager is absent (SA-OPS-20).
+	OldAIManager *FileServiceConfig `yaml:"ai_manager"`
+	Analyzer     struct {
 		// PollInterval is accepted for one release and ignored (SA-OPS-18).
 		PollInterval         int   `yaml:"poll_interval"`
 		SweepIntervalSeconds int   `yaml:"sweep_interval_seconds"`
@@ -132,17 +124,9 @@ type FileConfig struct {
 func Load() (*Config, error) {
 	// 1. Set built-in defaults
 	cfg := &Config{
-		ResourceManager: ResourceManagerConfig{
-			URL:                "http://localhost:8080",
-			InternalServiceKey: "",
-		},
-		SystemManager: SystemManagerConfig{
-			URL:                "http://localhost:8083",
-			InternalServiceKey: "",
-		},
-		AIManager: AIManagerConfig{
-			URL: "http://localhost:8085",
-		},
+		ResourceManager: ServiceConfig{URL: "http://localhost:8080"},
+		SystemManager:   ServiceConfig{URL: "http://localhost:8083"},
+		AIManager:       ServiceConfig{URL: "http://localhost:8085"},
 		AI: AIConfig{
 			AIName:       "",
 			Model:        "",
@@ -205,25 +189,18 @@ func Load() (*Config, error) {
 // A 0 reads as an absent key (YAML cannot tell them apart); a number out of
 // bounds or an unknown log level is recorded in r.
 func applyFileConfig(cfg *Config, fileCfg *FileConfig, r *settings.Reader) {
-	if fileCfg.ResourceManager.URL != "" {
-		cfg.ResourceManager.URL = fileCfg.ResourceManager.URL
+	applyFileService(&cfg.ResourceManager, fileCfg.ResourceManager)
+	applyFileService(&cfg.SystemManager, fileCfg.SystemManager)
+	// The old ai_manager section, for one release (SA-OPS-20).
+	if old := fileCfg.OldAIManager; old != nil {
+		if fileCfg.AIManager != (FileServiceConfig{}) {
+			cfg.Warnings = append(cfg.Warnings, r.File()+": the section ai_manager is ignored, as aimanager is set; remove ai_manager, the next release refuses it")
+		} else {
+			cfg.Warnings = append(cfg.Warnings, r.File()+": the section ai_manager is deprecated: rename it to aimanager; the next release refuses it")
+			applyFileService(&cfg.AIManager, *old)
+		}
 	}
-	if fileCfg.ResourceManager.InternalServiceKey != "" {
-		cfg.ResourceManager.InternalServiceKey = fileCfg.ResourceManager.InternalServiceKey
-	}
-
-	if fileCfg.SystemManager.URL != "" {
-		cfg.SystemManager.URL = fileCfg.SystemManager.URL
-	}
-	if fileCfg.SystemManager.InternalServiceKey != "" {
-		cfg.SystemManager.InternalServiceKey = fileCfg.SystemManager.InternalServiceKey
-	}
-	if fileCfg.AIManager.URL != "" {
-		cfg.AIManager.URL = fileCfg.AIManager.URL
-	}
-	if fileCfg.AIManager.InternalServiceKey != "" {
-		cfg.AIManager.InternalServiceKey = fileCfg.AIManager.InternalServiceKey
-	}
+	applyFileService(&cfg.AIManager, fileCfg.AIManager)
 	// A ticker cannot run on 0 or fewer seconds, and a 0-byte limit downloads
 	// nothing to analyse, so every number here must be above 0. The JS budget
 	// can be switched off only from the environment (0), as the file cannot
@@ -244,30 +221,34 @@ func applyFileConfig(cfg *Config, fileCfg *FileConfig, r *settings.Reader) {
 	cfg.Log.ToFile = fileCfg.Log.ToFile
 }
 
+// applyFileService takes a section's non-empty values.
+func applyFileService(dst *ServiceConfig, f FileServiceConfig) {
+	if f.URL != "" {
+		dst.URL = f.URL
+	}
+	if f.InternalServiceKey != "" {
+		dst.InternalServiceKey = f.InternalServiceKey
+	}
+}
+
 // applyEnvOverrides applies environment variable overrides onto cfg. An empty
 // variable counts as unset; a value it cannot use is recorded in r.
 func applyEnvOverrides(cfg *Config, r *settings.Reader) {
-	// ResourceManager — support both new and legacy env vars
-	if url := os.Getenv("RESOURCEMANAGER_URL"); url != "" {
-		cfg.ResourceManager.URL = url
-	} else if url := os.Getenv("RESOURCEMANAGER_API_BASE_URL"); url != "" {
-		cfg.ResourceManager.URL = url
-	}
-	if key := os.Getenv("RESOURCEMANAGER_INTERNAL_SERVICE_KEY"); key != "" {
-		cfg.ResourceManager.InternalServiceKey = key
-	}
-
-	if url := os.Getenv("SYSTEMMANAGER_URL"); url != "" {
-		cfg.SystemManager.URL = url
-	}
-	if key := os.Getenv("SYSTEMMANAGER_INTERNAL_SERVICE_KEY"); key != "" {
-		cfg.SystemManager.InternalServiceKey = key
-	}
-	if aiMgrURL := os.Getenv("SOURCEANALYSER_AI_MANAGER_URL"); aiMgrURL != "" {
-		cfg.AIManager.URL = aiMgrURL
-	}
-	if aiMgrKey := os.Getenv("AIMANAGER_INTERNAL_SERVICE_KEY"); aiMgrKey != "" {
-		cfg.AIManager.InternalServiceKey = aiMgrKey
+	// SOURCEANALYSER_<SERVICE>_URL and SOURCEANALYSER_<SERVICE>_INTERNAL_SERVICE_KEY
+	// (SA-OPS-19); the names before 2026-11-20 are read for one release when
+	// the new one is not set, with a warning (SA-OPS-20).
+	for _, svc := range []struct {
+		dst     *ServiceConfig
+		prefix  string
+		oldURLs []string
+		oldKey  string
+	}{
+		{&cfg.ResourceManager, "SOURCEANALYSER_RESOURCEMANAGER_", []string{"RESOURCEMANAGER_URL", "RESOURCEMANAGER_API_BASE_URL"}, "RESOURCEMANAGER_INTERNAL_SERVICE_KEY"},
+		{&cfg.SystemManager, "SOURCEANALYSER_SYSTEMMANAGER_", []string{"SYSTEMMANAGER_URL"}, "SYSTEMMANAGER_INTERNAL_SERVICE_KEY"},
+		{&cfg.AIManager, "SOURCEANALYSER_AIMANAGER_", []string{"SOURCEANALYSER_AI_MANAGER_URL"}, "AIMANAGER_INTERNAL_SERVICE_KEY"},
+	} {
+		envService(cfg, &svc.dst.URL, svc.prefix+"URL", svc.oldURLs...)
+		envService(cfg, &svc.dst.InternalServiceKey, svc.prefix+"INTERNAL_SERVICE_KEY", svc.oldKey)
 	}
 	r.Int("SOURCEANALYSER_SWEEP_INTERVAL_SECONDS", &cfg.Analyzer.SweepIntervalSeconds, settings.Min(1))
 	if os.Getenv("SOURCEANALYSER_POLL_INTERVAL") != "" {
@@ -284,9 +265,35 @@ func applyEnvOverrides(cfg *Config, r *settings.Reader) {
 	r.Bool("SOURCEANALYSER_LOG_TO_FILE", &cfg.Log.ToFile)
 	r.Level("SOURCEANALYSER_LOG_LEVEL", &cfg.Log.Level)
 
-	// Fall back to the ResourceManager internal service key if SystemManager key not explicitly set
-	if cfg.SystemManager.InternalServiceKey == "" {
+	// SystemManager without a key of its own gets ResourceManager's, for one
+	// release, with a warning (SA-OPS-17).
+	if cfg.SystemManager.InternalServiceKey == "" && cfg.ResourceManager.InternalServiceKey != "" {
 		cfg.SystemManager.InternalServiceKey = cfg.ResourceManager.InternalServiceKey
+		cfg.Warnings = append(cfg.Warnings, "systemmanager.internal_service_key (SOURCEANALYSER_SYSTEMMANAGER_INTERNAL_SERVICE_KEY) is not set: ResourceManager's key is sent to SystemManager instead; set SystemManager's own key, the next release requires it")
+	}
+}
+
+// envService takes a service setting from the variable name, or else from
+// the first old name that is set, warning about the old one.
+func envService(cfg *Config, dst *string, name string, oldNames ...string) {
+	value := os.Getenv(name)
+	newSet := value != ""
+	for _, old := range oldNames {
+		if os.Getenv(old) == "" {
+			continue
+		}
+		switch {
+		case newSet:
+			cfg.Warnings = append(cfg.Warnings, old+" is ignored, as "+name+" is set; remove it, the next release no longer reads it")
+		case value != "":
+			cfg.Warnings = append(cfg.Warnings, old+" is ignored, as an older name is set too; set "+name+" instead, the next release no longer reads either")
+		default:
+			cfg.Warnings = append(cfg.Warnings, old+" is deprecated: set "+name+" instead; the next release no longer reads it")
+			value = os.Getenv(old)
+		}
+	}
+	if value != "" {
+		*dst = value
 	}
 }
 
