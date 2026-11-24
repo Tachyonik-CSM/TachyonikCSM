@@ -30,6 +30,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"tachyonik/lib/logger"
@@ -140,11 +141,34 @@ type Snapshot struct {
 	Hosts      []Host    `json:"hosts"`
 }
 
+// Activity is what the sweep is doing right now, for the platform to show
+// (docs/plans/proxy-activity.md): whether a sweep runs, over which networks
+// and ports, since when, and how many of its probes have finished.
+type Activity struct {
+	Scanning  bool      `json:"scanning"`
+	Networks  []string  `json:"networks,omitempty"`
+	Ports     []int     `json:"ports,omitempty"`
+	StartedAt time.Time `json:"startedAt,omitempty"`
+	Done      int64     `json:"done"`
+	Total     int64     `json:"total"`
+	// LastFinishedAt is when the last sweep finished, running or not: the
+	// platform syncs the proxy's tools once it changes, so tools the sweep
+	// found turn online at once, also after a sweep too short to be seen
+	// running. Zero before the first sweep has finished.
+	LastFinishedAt time.Time `json:"lastFinishedAt,omitempty"`
+}
+
 // Scanner owns the sweep schedule and the cached results.
 type Scanner struct {
-	cfg    Config
-	client *http.Client
-	roots  *x509.CertPool
+	cfg Config
+
+	// The running sweep's progress, read by Activity while it runs.
+	progressDone  atomic.Int64
+	progressTotal atomic.Int64
+	sweepStarted  atomic.Int64 // unix nanoseconds; 0 when none runs
+	sweepFinished atomic.Int64 // unix nanoseconds of the last finished sweep; 0 before the first
+	client        *http.Client
+	roots         *x509.CertPool
 
 	// defaultNetwork is the network this proxy sits in — derived from its
 	// primary IPv4, or named by netscan.network. It is the proxy's own fact
@@ -552,6 +576,10 @@ func (s *Scanner) ScanOnce(ctx context.Context) {
 
 	started := time.Now()
 	targets := s.targets()
+	s.progressDone.Store(0)
+	s.progressTotal.Store(int64(len(targets)))
+	s.sweepStarted.Store(started.UnixNano())
+	defer s.sweepStarted.Store(0)
 	hosts := s.probeAll(ctx, targets)
 	elapsed := time.Since(started)
 
@@ -566,9 +594,33 @@ func (s *Scanner) ScanOnce(ctx context.Context) {
 		Hosts:      hosts,
 	}
 	s.mu.Unlock()
+	s.sweepFinished.Store(time.Now().UnixNano())
 
 	logger.Infof("netscan: swept %d target(s) across %d network(s) in %s, %d responded",
 		len(targets), len(networks), elapsed.Round(time.Millisecond), len(hosts))
+}
+
+// Activity reports the running sweep, or Scanning false when none runs. A nil
+// receiver (netscan disabled) reports none.
+func (s *Scanner) Activity() Activity {
+	if s == nil {
+		return Activity{}
+	}
+	var a Activity
+	if finished := s.sweepFinished.Load(); finished != 0 {
+		a.LastFinishedAt = time.Unix(0, finished)
+	}
+	started := s.sweepStarted.Load()
+	if started == 0 {
+		return a
+	}
+	a.Scanning = true
+	a.Networks = s.Networks()
+	a.Ports = s.Ports()
+	a.StartedAt = time.Unix(0, started)
+	a.Done = s.progressDone.Load()
+	a.Total = s.progressTotal.Load()
+	return a
 }
 
 func (s *Scanner) setScanning(v bool) {
@@ -657,7 +709,9 @@ func (s *Scanner) probeAll(ctx context.Context, targets []target) []Host {
 		go func() {
 			defer wg.Done()
 			for t := range in {
-				if h, ok := s.probe(ctx, t); ok {
+				h, ok := s.probe(ctx, t)
+				s.progressDone.Add(1)
+				if ok {
 					select {
 					case results <- h:
 					case <-ctx.Done():

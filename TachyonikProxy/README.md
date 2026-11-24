@@ -719,6 +719,10 @@ recorded per host as `tlsTrusted`.
 The sweep runs in its own goroutine. It never blocks the MCP server, and
 routines only ever read the last completed snapshot.
 
+While a sweep runs, MCP `activity/get` answers its networks, ports, start and
+progress (probes done out of all), so the platform can show it on the proxy in
+the dashboard's Tools chart.
+
 ### The range is always private
 
 A sweep covers the proxy's **own** network, plus any **added** ones.
@@ -985,6 +989,7 @@ The MCP server speaks JSON-RPC 2.0 and supports the following methods. Unknown m
 | `tools/scan`                  | client → server    | Runs supplied JS detection routines; returns detected tools     |
 | `config/get`                  | client → server    | Returns the proxy's current `tools`, `mcpServers`, and `allowRemoteConfig` flag |
 | `config/update`               | client → server    | Replaces `tools` / `mcpServers` if `allow_remote_config: true`; persists `config.yaml`. Tools below the security floor are left out and named in `rejectedTools` |
+| `activity/get`                | client → server    | What the proxy is doing on its own: `networkSweep` with `scanning`, `networks`, `ports`, `startedAt` and the probes `done` out of `total` while a sweep runs, and always `lastFinishedAt`, when the last sweep finished (ToolManager syncs the proxy's tools when it changes). ToolManager asks every 15 seconds, for the dashboard's Tools chart |
 | `ping`                        | client → server    | Liveness check; returns `{}`                                    |
 
 Transports:

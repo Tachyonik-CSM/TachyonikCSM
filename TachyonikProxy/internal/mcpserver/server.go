@@ -21,6 +21,7 @@ import (
 
 	"tachyonik/lib/logger"
 	"tachyonik/tachyonikproxy/internal/config"
+	"tachyonik/tachyonikproxy/internal/netscan"
 	"tachyonik/tachyonikproxy/internal/platforminfo"
 	"tachyonik/tachyonikproxy/internal/tools"
 	"tachyonik/tachyonikproxy/internal/toolscan"
@@ -280,6 +281,8 @@ func (s *Server) HandleRequest(raw []byte) *Response {
 		return s.handleConfigGet(req)
 	case "config/update":
 		return s.handleConfigUpdate(req)
+	case "activity/get":
+		return s.handleActivityGet(req)
 	case "ping":
 		return okResp(req.ID, map[string]string{})
 	default:
@@ -540,6 +543,27 @@ func validatePushedNetScanPorts(ports []int) error {
 // nil interface — simply has nothing to reconfigure.
 type netScanPortSetter interface {
 	SetPorts([]int)
+}
+
+// netScanActivity is the same arrangement for what the sweep is doing now.
+type netScanActivity interface {
+	Activity() netscan.Activity
+}
+
+// ActivityResult answers activity/get: what the proxy is doing on its own, for
+// the platform to show (docs/plans/proxy-activity.md). Tool calls and tool
+// scans are the platform's own requests, so it knows them already; the
+// network sweep runs on the proxy's own schedule.
+type ActivityResult struct {
+	NetworkSweep netscan.Activity `json:"networkSweep"`
+}
+
+func (s *Server) handleActivityGet(req Request) *Response {
+	var res ActivityResult
+	if a, ok := s.netScan.(netScanActivity); ok {
+		res.NetworkSweep = a.Activity()
+	}
+	return okResp(req.ID, res)
 }
 
 // netScanPending is the same arrangement for whether the sweep has completed a
