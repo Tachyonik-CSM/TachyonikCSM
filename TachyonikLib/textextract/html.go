@@ -363,8 +363,9 @@ func collectImages(doc *html.Node, base *url.URL) []ImageCandidate {
 					add(attr(n, "href"), "icon", "", rankIcon)
 				}
 			case "meta":
-				property := strings.ToLower(attr(n, "property") + " " + attr(n, "name"))
-				if strings.Contains(property, "og:image") {
+				// The image's address only: og:image:width, :height, :alt and
+				// :type describe it and were taken for addresses ("/1200").
+				if isOGImageURLKey(attr(n, "property")) || isOGImageURLKey(attr(n, "name")) {
 					add(attr(n, "content"), "og:image", "", rankSocialImage)
 				}
 			case "img":
@@ -576,6 +577,17 @@ func renderSVG(n *html.Node) (string, bool) {
 		markup = strings.Replace(markup, "<svg", `<svg xmlns="http://www.w3.org/2000/svg"`, 1)
 	}
 	return markup, true
+}
+
+// isOGImageURLKey reports whether a meta property names the Open Graph
+// image's address — og:image, og:image:url or og:image:secure_url — rather
+// than one of its descriptions (width, height, alt, type).
+func isOGImageURLKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "og:image", "og:image:url", "og:image:secure_url":
+		return true
+	}
+	return false
 }
 
 func attr(n *html.Node, name string) string {

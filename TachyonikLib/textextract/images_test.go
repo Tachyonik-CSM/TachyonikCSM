@@ -105,3 +105,28 @@ func TestImageCandidatesAreDedupedAndBounded(t *testing.T) {
 		seen[c.URL] = true
 	}
 }
+
+// Only the og:image's address is a candidate; its width, height, alt text and
+// type are descriptions of it, which were once taken for addresses ("/1200").
+func TestOGImageDescriptionsAreNoCandidates(t *testing.T) {
+	page, err := FromHTML(strings.NewReader(`<html><head>
+<meta property="og:image" content="https://cdn.example/card.jpg">
+<meta property="og:image:secure_url" content="https://cdn.example/card-secure.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Example — what we do">
+<meta property="og:image:type" content="image/jpeg">
+</head><body></body></html>`), "https://example.com/")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var got []string
+	for _, img := range page.Images {
+		if img.Source == "og:image" {
+			got = append(got, img.URL)
+		}
+	}
+	if len(got) != 2 || got[0] != "https://cdn.example/card.jpg" || got[1] != "https://cdn.example/card-secure.jpg" {
+		t.Errorf("og:image candidates = %v, want the two addresses only", got)
+	}
+}
