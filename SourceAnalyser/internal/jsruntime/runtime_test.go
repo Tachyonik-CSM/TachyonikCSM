@@ -118,7 +118,7 @@ func TestAnalyzeSourceNormalRoutineNotInterrupted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AnalyzeSource: %v", err)
 	}
-	if res == nil || res.SourceType != "Test" || res.Status != "Analysed" {
+	if res == nil || res.SourceType != "Test" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 }

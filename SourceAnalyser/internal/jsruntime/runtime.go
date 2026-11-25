@@ -44,9 +44,11 @@ type RuleContext struct {
 }
 
 // AnalysisResult represents the result of a successful rule match
+// AnalysisResult is a rule's match: the format it recognised. A status the
+// routine returns is not part of it — SourceAnalyser writes Analysed itself
+// (SA-IF-04, SA-IF-05).
 type AnalysisResult struct {
 	SourceType string
-	Status     string
 	RuleName   string
 	RuleID     int64
 }
@@ -309,18 +311,17 @@ func (e *JSRuleExecutor) AnalyzeSource(ctx RuleContext) (*AnalysisResult, error)
 			continue
 		}
 
+		// Only the type: a returned status is ignored (SA-IF-04).
 		sourceType := jsmap.String(resultMap, "sourceType")
-		status := jsmap.String(resultMap, "status")
 
 		if sourceType == "" {
 			logger.Errorf("JS rule '%s' returned empty sourceType", rule.name)
 			continue
 		}
 
-		logger.Debugf("  rule '%s' (id %d): MATCH type=%s status=%s", rule.name, rule.ruleID, sourceType, status)
+		logger.Debugf("  rule '%s' (id %d): MATCH type=%s", rule.name, rule.ruleID, sourceType)
 		return &AnalysisResult{
 			SourceType: sourceType,
-			Status:     status,
 			RuleName:   rule.name,
 			RuleID:     rule.ruleID,
 		}, nil

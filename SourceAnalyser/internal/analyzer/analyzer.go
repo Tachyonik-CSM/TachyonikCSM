@@ -208,6 +208,10 @@ func (a *Analyzer) emitAudit(userID int64, level, message string) {
 }
 
 // updateSource updates a source via the ResourceManager API
+// StatusAnalysed is the status of a source whose analysis is done, recognised
+// or Unsupported; SourceImporter imports only these (SA-IF-05).
+const StatusAnalysed = "Analysed"
+
 func (a *Analyzer) updateSource(id int64, sourceType, status string) error {
 	// Include analyser version only when status is "Analysed"
 	var analyserVersion *string
@@ -360,12 +364,14 @@ func (a *Analyzer) processSource(source *resourcemanager.Source) error {
 		}
 
 		if result != nil {
-			logger.Infof("Rule '%s' matched source %d (%s): type=%s, status=%s",
-				result.RuleName, source.ID, source.Filename, result.SourceType, result.Status)
+			logger.Infof("Rule '%s' matched source %d (%s): type=%s",
+				result.RuleName, source.ID, source.Filename, result.SourceType)
 			a.emitAudit(source.UserID, "Info", fmt.Sprintf(
 				"Resource %q (id %d) analyzed: format %q", source.Filename, source.ID, result.SourceType,
 			))
-			return a.updateSource(source.ID, result.SourceType, result.Status)
+			// A recognised source is analysed: the status is ours to write,
+			// not the routine's (SA-IF-05).
+			return a.updateSource(source.ID, result.SourceType, StatusAnalysed)
 		}
 	}
 
@@ -384,7 +390,7 @@ func (a *Analyzer) processSource(source *resourcemanager.Source) error {
 }
 
 // processTestSource classifies a transient test source with a single routine
-// and writes back the outcome — a real {sourceType, status} on a match, or
+// and writes back the outcome — its type with Analysed on a match, or
 // Unsupported/Analysed on no match — which the WebUI reads via SOURCE_UPDATED.
 // No audit events are emitted: test runs must not clutter the audit trail.
 func (a *Analyzer) processTestSource(source *resourcemanager.Source, ctx jsruntime.RuleContext, routineID int64) error {
@@ -400,9 +406,9 @@ func (a *Analyzer) processTestSource(source *resourcemanager.Source, ctx jsrunti
 	}
 
 	if result != nil {
-		logger.Infof("Test routine %d matched source %d (%s): type=%s, status=%s",
-			routineID, source.ID, source.Filename, result.SourceType, result.Status)
-		return a.updateSource(source.ID, result.SourceType, result.Status)
+		logger.Infof("Test routine %d matched source %d (%s): type=%s",
+			routineID, source.ID, source.Filename, result.SourceType)
+		return a.updateSource(source.ID, result.SourceType, StatusAnalysed) // SA-IF-05
 	}
 
 	logger.Infof("Test routine %d did not match source %d (%s)", routineID, source.ID, source.Filename)

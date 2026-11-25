@@ -64,7 +64,7 @@ func TestAnalyzeSource_NoAIClient_ExecutesLoadedRoutine(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected a rule match with AI unset, got nil (routine not applied)")
 	}
-	if result.SourceType != "nmap" || result.Status != "Analysed" {
+	if result.SourceType != "nmap" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }

@@ -362,8 +362,10 @@ made after the start is left alone.
 ### A routine
 
 A routine defines a `rules` array; each entry has a `name`, a `ruleId`, and an
-`analyze(ctx)` function returning `{sourceType, status}` on a match or `null`
-otherwise:
+`analyze(ctx)` function returning `{sourceType}` on a match or `null`
+otherwise. SourceAnalyser writes the status `Analysed` itself; a `status` the
+routine returns (older routines return `"Analysed"`) is ignored (SA-IF-04,
+SA-IF-05):
 
 ```js
 var rules = [{
@@ -371,7 +373,7 @@ var rules = [{
   ruleId: 1,
   analyze: function (ctx) {
     if (ctx.content.indexOf("<report id=") >= 0) {
-      return { sourceType: "OpenVAS Report", status: "Analysed" };
+      return { sourceType: "OpenVAS Report" };
     }
     return null;
   }
@@ -445,7 +447,7 @@ text — for example:
 if (ctx.mimeType === "application/pdf"
     && ctx.content.indexOf("OpenVAS Vulnerability Report") >= 0
     && ctx.content.indexOf("This document reports on the results of an automatic security scan.") >= 0) {
-  return { sourceType: "OpenVAS PDF Report", status: "Analysed" };
+  return { sourceType: "OpenVAS PDF Report" };
 }
 ```
 
@@ -649,7 +651,7 @@ events and the liveness heartbeat.
 
 1. **ResourceManager** receives an uploaded file, creates a source with status `Analysing`
 2. **SourceAnalyser** receives `SOURCE_CREATED`, queues the source, downloads and extracts its text
-3. **SourceAnalyser** runs the loaded routines and writes back the source type and status
+3. **SourceAnalyser** runs the loaded routines and writes back the source type with the status `Analysed`
 4. **SourceImporter** detects the `Analysed` source and processes it
 5. **SourceImporter** creates assets in AssetManager
 
