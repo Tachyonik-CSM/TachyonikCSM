@@ -124,6 +124,16 @@ its limit instead (AG-IF-13).
 cannot show or filter it. A long text is the data being long — an asset with
 a long name — and dropping the action for it would lose advice the user needs.*
 
+**AG-EVAL-28** For each owner, a pass MUST evaluate the rules from the highest
+action priority to the lowest, rules of equal priority by ascending id. The
+priority is the rule's (`actionPriority` in AIManager), not the one its routine
+returns.
+*Reason: the number of actions a user may hold is limited, and ActionManager
+refuses the ones beyond it. What it refuses must be the least important
+advice, not whichever rule a random order put last. The rule's priority is
+known before anything is evaluated, and the routines return it as it is
+(decided 2026-11-26).*
+
 ## 4. Withdrawing actions
 
 **AG-EVAL-11** When a rule that is not on-demand evaluates to no action for a

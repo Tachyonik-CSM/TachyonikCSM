@@ -236,6 +236,7 @@ func runDaemon(cfg *config.Config) {
 		}
 		gen.SetExecutors(aiGen.Executors())
 		gen.SetOnDemandRules(aiGen.OnDemandRules())
+		gen.SetRuleOrder(aiGen.RuleOrder())
 		refreshTriggers()
 		if requestsCleared.CompareAndSwap(false, true) {
 			aiGen.ClearStandingRequests(startedAt)
@@ -323,6 +324,7 @@ func runDaemon(cfg *config.Config) {
 		// Update executor map on generator and re-process rules
 		gen.SetExecutors(aiGen.Executors())
 		gen.SetOnDemandRules(aiGen.OnDemandRules())
+		gen.SetRuleOrder(aiGen.RuleOrder())
 		refreshTriggers()
 		logger.Info("Re-processing rules after regeneration...")
 		passes.Now()
@@ -368,6 +370,7 @@ func runDaemon(cfg *config.Config) {
 			} else {
 				gen.SetExecutors(aiGen.Executors())
 				gen.SetOnDemandRules(aiGen.OnDemandRules())
+				gen.SetRuleOrder(aiGen.RuleOrder())
 			}
 			refreshTriggers()
 			passes.Now()

@@ -14,10 +14,15 @@
 // In shared-workspace mode the rules are evaluated once, for the primary owner,
 // whose answers cover the whole workspace (PA-BR-07), rather than once per user,
 // so a team sees one action rather than one each.
+//
+// For each owner the rules go from the highest action priority to the lowest
+// (AG-EVAL-28): the number of actions a user may hold is limited, and what the
+// limit refuses must be the least important advice.
 package generator
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"tachyonik/actiongenerator/internal/actionmanager"
@@ -37,7 +42,10 @@ type Generator struct {
 	// Rules that fire only when asked for by name; see SetOnDemandRules.
 	// Guarded by executorMu, which already covers the rule set it belongs to.
 	onDemandRules map[int64]bool
-	executorMu    sync.RWMutex
+	// The rules from the highest action priority down; see SetRuleOrder.
+	// Guarded by executorMu too.
+	ruleOrder  []int64
+	executorMu sync.RWMutex
 	// catalogue holds the API bridge the routines read through; without it
 	// no rule can be decided.
 	catalogue *apiholder.Holder
@@ -108,6 +116,37 @@ func (g *Generator) SetOnDemandRules(ids map[int64]bool) {
 	g.onDemandRules = ids
 }
 
+// SetRuleOrder records the order a pass evaluates the rules in for each owner:
+// from the highest action priority to the lowest, equal ones by ascending id
+// (AG-EVAL-28).
+func (g *Generator) SetRuleOrder(ids []int64) {
+	g.executorMu.Lock()
+	defer g.executorMu.Unlock()
+	g.ruleOrder = ids
+}
+
+// orderedRules lists the rules of executors in the order given. An executor
+// whose rule the order does not name — the two are set one after the other —
+// comes after them, by ascending id, so it is still evaluated.
+func orderedRules(executors map[int64]*jsruntime.JSRuleExecutor, order []int64) []int64 {
+	out := make([]int64, 0, len(executors))
+	seen := make(map[int64]bool, len(order))
+	for _, id := range order {
+		if _, ok := executors[id]; ok && !seen[id] {
+			out = append(out, id)
+			seen[id] = true
+		}
+	}
+	var rest []int64
+	for id := range executors {
+		if !seen[id] {
+			rest = append(rest, id)
+		}
+	}
+	sort.Slice(rest, func(i, j int) bool { return rest[i] < rest[j] })
+	return append(out, rest...)
+}
+
 // isOnDemand reports whether a rule fires only when forced.
 func (g *Generator) isOnDemand(ruleID int64) bool {
 	g.executorMu.RLock()
@@ -156,6 +195,7 @@ func (g *Generator) ProcessRules() error {
 	for k, v := range g.executors {
 		executorSnapshot[k] = v
 	}
+	order := orderedRules(executorSnapshot, g.ruleOrder)
 	g.executorMu.RUnlock()
 
 	if len(executorSnapshot) == 0 {
@@ -182,9 +222,9 @@ func (g *Generator) ProcessRules() error {
 	var created int
 	if shared {
 		logger.Infof("Appliance shared-workspace mode: generating one action set under user %d", primaryID)
-		created, err = g.processSharedWorkspace(unit, users, executorSnapshot, primaryID)
+		created, err = g.processSharedWorkspace(unit, users, executorSnapshot, order, primaryID)
 	} else {
-		created, err = g.processJSRules(unit, users, executorSnapshot)
+		created, err = g.processJSRules(unit, users, executorSnapshot, order)
 	}
 	if err != nil {
 		logger.Errorf("Error processing JS rules: %v", err)
@@ -314,8 +354,9 @@ func countDeactivated(users []systemmanager.User) int {
 	return n
 }
 
-// processJSRules evaluates JS rules from all executors for all users
-func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor) (int, error) {
+// processJSRules evaluates JS rules from all executors for all users, each
+// user's in the order given (AG-EVAL-28).
+func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor, order []int64) (int, error) {
 	actionsCreated := 0
 	pass := g.newPass()
 	if n := countDeactivated(users); n > 0 {
@@ -331,8 +372,10 @@ func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User,
 			continue
 		}
 
-		// Evaluate each per-rule executor
-		for ruleID, executor := range executors {
+		// Evaluate each per-rule executor, from the highest priority down, so
+		// that the action limit refuses the least important ones.
+		for _, ruleID := range order {
+			executor := executors[ruleID]
 			if g.stopping() {
 				logger.Info("Stopping: the rest of this pass is evaluated at the next start")
 				return actionsCreated, nil
@@ -381,7 +424,7 @@ func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User,
 // is correct. Owning everything under the primary user makes the existing
 // per-(owner,rule) dedup collapse to one-per-rule automatically, and lets us
 // consolidate away the per-user duplicates that earlier per-user generation left.
-func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor, primaryID int64) (int, error) {
+func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanager.User, executors map[int64]*jsruntime.JSRuleExecutor, order []int64, primaryID int64) (int, error) {
 	found := false
 	for i := range users {
 		if users[i].ID == primaryID {
@@ -398,7 +441,10 @@ func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanag
 	pass := g.newPass()
 	actionsCreated := 0
 
-	for ruleID, executor := range executors {
+	// From the highest priority down (AG-EVAL-28): the workspace shares one
+	// action budget.
+	for _, ruleID := range order {
+		executor := executors[ruleID]
 		if g.stopping() {
 			logger.Info("Stopping: the rest of this pass is evaluated at the next start")
 			return actionsCreated, nil

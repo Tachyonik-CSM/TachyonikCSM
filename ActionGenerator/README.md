@@ -64,6 +64,13 @@ picking an option of type `Action` — raises it regardless. Older copies of one
 rule's open action, from before ActionManager refused them, are consolidated to
 the newest (AG-EVAL-27).
 
+**The most important rules come first** (spec AG-EVAL-28). For each user, a
+pass evaluates the rules from the highest action priority to the lowest,
+rules of equal priority by ascending id. ActionManager refuses new actions
+once a user holds as many as they may; what it refuses is then the least
+important advice, not whatever happened to come last. An account already at
+its limit gets no new action, however high its priority.
+
 **Which AI generates a routine is decided at generation time.** Before each
 generation, the module asks AIManager for its current setting. It uses the AI
 set on the rule if there is one, otherwise the module's current default, and

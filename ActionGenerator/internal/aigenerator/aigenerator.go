@@ -20,6 +20,7 @@ package aigenerator
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -238,6 +239,29 @@ func (ag *AIActionGenerator) OnDemandRules() map[int64]bool {
 		}
 	}
 	return result
+}
+
+// RuleOrder returns the ids of the loaded rules from the highest action
+// priority to the lowest, equal priorities by ascending id: the order a pass
+// evaluates them in for each owner (AG-EVAL-28). The rule's priority, not what
+// its routine returns, because it is known before anything is evaluated; the
+// routines return it as it is.
+func (ag *AIActionGenerator) RuleOrder() []int64 {
+	ag.mu.RLock()
+	defer ag.mu.RUnlock()
+
+	ids := make([]int64, 0, len(ag.rules))
+	for id := range ag.rules {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		pi, pj := ag.rules[ids[i]].ActionPriority, ag.rules[ids[j]].ActionPriority
+		if pi != pj {
+			return pi > pj
+		}
+		return ids[i] < ids[j]
+	})
+	return ids
 }
 
 func (ag *AIActionGenerator) Executors() map[int64]*jsruntime.JSRuleExecutor {
