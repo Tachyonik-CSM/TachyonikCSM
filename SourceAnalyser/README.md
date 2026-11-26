@@ -486,7 +486,7 @@ A source is re-analysed without being re-uploaded when either applies:
 ```
 Analysing → OpenVAS Report (Analysed)     [a rule matched]
          └→ Unsupported (Analysed)         [no rule matched]
-         └→ Error (File Not Found)         [ResourceManager could not deliver the file]
+         └→ Error (File Not Found)         [ResourceManager has no file for it (404)]
 ```
 
 ### Single-routine test sources
@@ -520,7 +520,7 @@ previously left `Unsupported`.
 
 - `Analysing` — source is queued for, or currently under, analysis
 - `Analysed` — analysis completed (both for recognised types and `Unsupported`)
-- `File Not Found` — ResourceManager could not deliver the file
+- `File Not Found` — ResourceManager answered that the file does not exist (404). Any other failure to fetch it (timeout, 5xx, ResourceManager unreachable) leaves the source `Analysing` for the next sweep (SA-ANA-13)
 - `Test failed` — a single-routine test could not be run (test sources only)
 
 `sourceType` is whatever the matching rule returns (e.g. `OpenVAS Report`), or

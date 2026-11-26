@@ -112,12 +112,21 @@ func (c *Client) UpdateSource(id int64, sourceType, status string, analyserVersi
 	return c.rc.JSON("PATCH", fmt.Sprintf("/api/sources/%d", id), payload, nil, http.StatusOK)
 }
 
+// ErrFileNotFound is DownloadSourceFile's answer when ResourceManager says
+// the source's file does not exist (404) — as opposed to a passing failure,
+// which is returned as it is (SA-ANA-13).
+var ErrFileNotFound = errors.New("source file not found")
+
 // DownloadSourceFile downloads the file content for a source.
 // At most maxBytes bytes are read from the response body to limit memory usage.
 // Returns the file content in memory and the original filename.
 func (c *Client) DownloadSourceFile(id int64, maxBytes int64) ([]byte, string, error) {
 	resp, err := c.rc.Request("GET", fmt.Sprintf("/api/sources/%d/file", id), nil, http.StatusOK)
 	if err != nil {
+		var statusErr *restclient.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return nil, "", ErrFileNotFound
+		}
 		return nil, "", err
 	}
 	defer resp.Body.Close()

@@ -1,6 +1,6 @@
 # SourceAnalyser — 5. Security and containment
 
-Status: **Draft** · Area code: `SEC`
+Status: **Accepted** · Area code: `SEC`
 
 SourceAnalyser holds no data of its own and serves nobody. Its security
 questions are therefore three: how it proves itself to the services it calls,

@@ -318,6 +318,11 @@ func (a *Analyzer) processSource(source *resourcemanager.Source) error {
 		maxContent = 64 * 1024
 	}
 	raw, _, err := a.rscMgrClient.DownloadSourceFile(source.ID, maxContent)
+	if err != nil && !errors.Is(err, resourcemanager.ErrFileNotFound) {
+		// SA-ANA-13: a passing failure is not a missing file. The source stays
+		// Analysing and the next sweep tries again.
+		return fmt.Errorf("download file for source %d, left for the next sweep: %w", source.ID, err)
+	}
 	if err != nil {
 		logger.Errorf("Failed to download file for source %d: %v", source.ID, err)
 		a.emitAudit(source.UserID, "Warning", fmt.Sprintf(

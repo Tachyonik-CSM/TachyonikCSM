@@ -32,6 +32,7 @@ type fakeRM struct {
 	listed   int
 	patches  map[int64][]string // id → statuses written
 	download chan struct{}      // when set, each file download waits for it
+	fileStatus int              // when set, each file download fails with it
 }
 
 func newFakeRM(t *testing.T, sources ...resourcemanager.Source) (*fakeRM, *resourcemanager.Client) {
@@ -73,6 +74,10 @@ func (f *fakeRM) serve(w http.ResponseWriter, r *http.Request) {
 	case file:
 		if f.download != nil {
 			<-f.download
+		}
+		if f.fileStatus != 0 {
+			http.Error(w, `{"error":"file"}`, f.fileStatus)
+			return
 		}
 		_, _ = w.Write([]byte("plain text nobody recognises"))
 	case r.Method == "GET":

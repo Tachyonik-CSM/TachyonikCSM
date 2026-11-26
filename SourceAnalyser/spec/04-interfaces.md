@@ -1,6 +1,6 @@
 # SourceAnalyser — 4. Interfaces
 
-Status: **Draft** · Area code: `IF`
+Status: **Accepted** · Area code: `IF`
 
 What a routine must look like, what it is given and what it returns; the mock
 contexts it is validated against; the messages SourceAnalyser reacts to; and
