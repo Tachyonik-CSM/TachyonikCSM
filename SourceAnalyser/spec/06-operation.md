@@ -1,6 +1,6 @@
 # SourceAnalyser — 6. Operation
 
-Status: **Draft** · Area code: `OPS`
+Status: **Accepted** · Area code: `OPS`
 
 What an operator can rely on when running SourceAnalyser: how it is
 configured, what it does at startup and shutdown, how its version is managed
