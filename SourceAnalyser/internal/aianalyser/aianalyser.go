@@ -269,7 +269,7 @@ func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule, useNow bool) 
 	}
 
 	// Validate runtime behavior with mock contexts
-	validationErrors := tempExecutor.ValidateWithMockCtx()
+	validationErrors := tempExecutor.ValidateWithMockCtx(rule.ID)
 	if len(validationErrors) > 0 {
 		combinedErr := fmt.Errorf("runtime validation failed with %d errors", len(validationErrors))
 		var logMsg string

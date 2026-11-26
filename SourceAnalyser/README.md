@@ -336,8 +336,11 @@ routine implementing it, then validates and stores the routine back in AIManager
 1. **Generate** — the rule is sent to the AI together with the SourceAnalyser
    system prompt (Settings → SourceAnalyser → System Prompt)
 2. **Validate syntax** — the generated code is loaded into a goja VM
-3. **Validate behaviour** — every rule's `analyze()` is run against a set of mock
-   source contexts to catch runtime errors
+3. **Validate behaviour** — every rule must declare the analysis rule's id as
+   `ruleId` and no other, and its `analyze()` is run against a set of mock
+   source contexts: it fails when it throws or overruns its budget, or when a
+   rule recognises every one of them, the unsupported file included
+   (spec SA-GEN-10, SA-GEN-11)
 4. **Store** — the routine is saved in AIManager as `passed` or `failed`, with the
    model, a SHA-256 of the code, and any validation log
 

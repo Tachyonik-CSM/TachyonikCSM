@@ -27,12 +27,12 @@ import (
 
 // fakeRM holds sources and records every result written.
 type fakeRM struct {
-	mu       sync.Mutex
-	sources  map[int64]*resourcemanager.Source
-	listed   int
-	patches  map[int64][]string // id → statuses written
-	download chan struct{}      // when set, each file download waits for it
-	fileStatus int              // when set, each file download fails with it
+	mu         sync.Mutex
+	sources    map[int64]*resourcemanager.Source
+	listed     int
+	patches    map[int64][]string // id → statuses written
+	download   chan struct{}      // when set, each file download waits for it
+	fileStatus int                // when set, each file download fails with it
 }
 
 func newFakeRM(t *testing.T, sources ...resourcemanager.Source) (*fakeRM, *resourcemanager.Client) {

@@ -330,14 +330,29 @@ func (e *JSRuleExecutor) AnalyzeSource(ctx RuleContext) (*AnalysisResult, error)
 	return nil, nil
 }
 
-// ValidateWithMockCtx runs every rule's analyze() against mock source contexts
-// to catch runtime errors.
-func (e *JSRuleExecutor) ValidateWithMockCtx() []error {
+// ValidateWithMockCtx checks a routine generated for the analysis rule ruleID
+// (SA-GEN-10, SA-GEN-11): every rule of it declares that id and no other, and
+// runs against every mock context (SA-IF-06) without throwing or overrunning
+// its budget, and no rule recognises every one of them — a rule matching every
+// file would give its type to every source after its rule in order (SA-ANA-10).
+func (e *JSRuleExecutor) ValidateWithMockCtx(ruleID int64) []error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.code == "" || len(e.rules) == 0 {
 		return nil
+	}
+
+	var errs []error
+
+	// The rule's id and no other (decided 2026-11-26, GEN question 2): a model
+	// that invents or renumbers rules would otherwise have its output stored
+	// against the wrong rule.
+	for _, rule := range e.rules {
+		if rule.ruleID != ruleID {
+			errs = append(errs, fmt.Errorf("rule '%s' declares ruleId %d; the routine is for analysis rule %d and must declare that id and no other",
+				rule.name, rule.ruleID, ruleID))
+		}
 	}
 
 	fileSize := int64(2048)
@@ -373,7 +388,8 @@ func (e *JSRuleExecutor) ValidateWithMockCtx() []error {
 		},
 	}
 
-	var errs []error
+	// How many mock contexts each rule (by its position) recognised.
+	matched := make([]int, len(e.rules))
 
 	for _, mockCtx := range mockContexts {
 		var mockFileSize interface{}
@@ -394,14 +410,39 @@ func (e *JSRuleExecutor) ValidateWithMockCtx() []error {
 			"mimeType": mockCtx.MimeType,
 		})
 
-		for _, rule := range rules {
+		for i, rule := range rules {
+			recognised := false
 			_, err := runGuarded(vm, e.execTimeout, func() (goja.Value, error) {
-				return rule.analyzeFn(goja.Undefined(), ctxVal)
+				result, err := rule.analyzeFn(goja.Undefined(), ctxVal)
+				if err != nil {
+					return nil, err
+				}
+				// A match as the analysis takes one: an object with a
+				// sourceType (SA-IF-04, SA-ANA-11).
+				if result != nil && !goja.IsUndefined(result) && !goja.IsNull(result) {
+					if m, ok := result.Export().(map[string]interface{}); ok && jsmap.String(m, "sourceType") != "" {
+						recognised = true
+					}
+				}
+				return nil, nil
 			})
 			if err != nil {
 				errs = append(errs, fmt.Errorf("rule '%s' analyze() failed with mock ctx (file=%s): %w",
 					rule.name, mockCtx.Filename, err))
+				continue
 			}
+			if recognised && i < len(matched) {
+				matched[i]++
+			}
+		}
+	}
+
+	// A rule that recognises every file is no rule (decided 2026-11-26, GEN
+	// question 2), as AG-GEN-11 refuses a check() true in every scenario.
+	for i, n := range matched {
+		if n == len(mockContexts) {
+			errs = append(errs, fmt.Errorf("rule '%s' recognises every mock context, the unsupported file %q included; it would give its type to every source",
+				e.rules[i].name, mockContexts[len(mockContexts)-1].Filename))
 		}
 	}
 
