@@ -332,14 +332,27 @@ func runDaemon(cfg *config.Config) {
 	if err != nil {
 		logger.Errorf("Failed to create action rule watcher: %v", err)
 	} else {
-		arw.SetEvaluationRequestedHandler(func(event actionrulewatcher.EvaluationRequestEvent) {
-			logger.Infof("Processing evaluation request for rule %d, user %d", event.RuleID, event.UserID)
-			created, err := gen.ProcessRuleForUser(event.RuleID, event.UserID, event.Force)
+		// Evaluation requests are only queued here: this runs in the read
+		// loop of the AIManager connection, which must not wait for them
+		// (AG-EVAL-13). One worker evaluates them in order.
+		requests := generator.NewRequestQueue(func(r generator.Request) {
+			logger.Infof("Processing evaluation request %s", r)
+			var created int
+			var err error
+			if r.RuleID == 0 {
+				created, err = gen.ProcessRulesForUser(r.UserID)
+			} else {
+				created, err = gen.ProcessRuleForUser(r.RuleID, r.UserID, r.Force)
+			}
 			if err != nil {
-				logger.Errorf("Failed to process rule %d for user %d: %v", event.RuleID, event.UserID, err)
+				logger.Errorf("Failed to process evaluation request %s: %v", r, err)
 				return
 			}
-			logger.Infof("Evaluation request for rule %d, user %d: created %d actions", event.RuleID, event.UserID, created)
+			logger.Infof("Evaluation request %s: created %d actions", r, created)
+		})
+		stopWatching = append(stopWatching, func() error { requests.Stop(); return nil })
+		arw.SetEvaluationRequestedHandler(func(event actionrulewatcher.EvaluationRequestEvent) {
+			requests.Add(generator.Request{RuleID: event.RuleID, UserID: event.UserID, Force: event.Force})
 		})
 		// FEED_IMPORTED refreshes module settings and reloads the rules,
 		// followed by a pass, so freshly imported active routines start

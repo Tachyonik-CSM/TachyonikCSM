@@ -145,7 +145,8 @@ they invalidate (AG-IF-24); `TOOL_ACTIVITY` invalidates none.
 |---|---|---|
 | `ACTION_RULE_CREATED`, `ACTION_RULE_UPDATED` | `{"id"}` | reloads the rules and routines, handles a pending generation request (AG-GEN-01), re-evaluates |
 | `ACTION_RULE_DELETED` | `{"id"}` | stops running the rule, re-evaluates |
-| `ACTION_RULE_EVALUATION_REQUESTED` | `{"ruleId", "userId", "force"}` | evaluates that rule for that user (AG-EVAL-13) |
+| `ACTION_RULE_EVALUATION_REQUESTED` | `{"ruleId", "userId", "force"}` | queues the evaluation of that rule for that user (AG-EVAL-13) |
+| `ACTION_RULES_EVALUATION_REQUESTED` | `{"userId"}` | queues the evaluation of every rule for that user (AG-EVAL-29) |
 | `FEED_IMPORTED` | none | reloads all rules, routines and the AI setting, re-evaluates |
 | `MODULE_AI_SETTING_UPDATED` for `actiongenerator` | | re-reads the AI and system prompt |
 | `API_CATALOGUE_UPDATED` | `{"module", "sha256"}` | reloads the catalogue and the bridge, re-checks the active routines (AG-GEN-20), re-evaluates |

@@ -313,7 +313,9 @@ The daemon will:
 Send `SIGINT` (Ctrl+C) or `SIGTERM` to shut down gracefully (spec AG-OPS-09):
 
 1. The watchers are closed, so no message starts an evaluation any more; an
-   evaluation request or pass asked for from now on is refused.
+   evaluation request or pass asked for from now on is refused. Evaluation
+   requests still waiting in the queue are dropped, and the log says how many;
+   the next start evaluates every rule anyway.
 2. The rule and user being evaluated finish — their new actions created and
    their stale ones withdrawn — and the pass stops there; the rest is evaluated
    by the pass at the next start. The wait is at most 20 seconds; a unit still
@@ -389,6 +391,17 @@ asked for while one runs is not dropped: exactly one more pass follows, 2 s
 after the running one ends — pushed back by every further message, so an import
 that outlasts a pass still ends in one pass. An evaluation request (one rule for
 one user) is not a full pass and does not wait for one.
+
+**Evaluation requests are queued** (spec AG-EVAL-13, -29). A request — one
+rule for one user (`ACTION_RULE_EVALUATION_REQUESTED`), or every rule for one
+user (`ACTION_RULES_EVALUATION_REQUESTED`, the action icon's) — is only put
+into a queue (`internal/generator/requests.go`) by the AIManager connection,
+which goes on reading at once. One worker evaluates the requests in the order
+they came, beside the full passes. While waiting, the same rule for the same
+user is merged into one (forced if either was), and a request for every rule
+of a user takes in that user's unforced ones. A request for every rule is
+evaluated as the pass does for that user: most important rule first, with one
+bridge pass, on-demand rules left alone.
 
 There is deliberately **no periodic sweep**: staleness is fixed by watching the
 data the routines read, not by re-running on a timer. The triggers follow from

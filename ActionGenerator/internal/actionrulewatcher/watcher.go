@@ -5,7 +5,9 @@
 // Package actionrulewatcher keeps a running daemon current with AIManager's
 // action rules over a WebSocket, so a rule added or edited in the UI takes
 // effect without a restart. It also carries explicit requests to re-evaluate a
-// rule, which is how the UI's "test this rule" path reaches the daemon.
+// rule, or every rule, for a user, which is how the UI's "test this rule" path
+// and the action icon reach the daemon. It only hands those on: the daemon's
+// request queue evaluates them, so this read loop is never held up by one.
 //
 // It reconnects on its own when the connection drops — and reports every
 // (re)connect, so the daemon can load what it missed — and debounces per rule:
@@ -31,8 +33,10 @@ const (
 	typeActionRuleUpdated             = "ACTION_RULE_UPDATED"
 	typeActionRuleDeleted             = "ACTION_RULE_DELETED"
 	typeActionRuleEvaluationRequested = "ACTION_RULE_EVALUATION_REQUESTED"
-	typeFeedImported                  = "FEED_IMPORTED"
-	typeAPICatalogueUpdated           = "API_CATALOGUE_UPDATED"
+	// Every rule for one user (AG-EVAL-29); the payload has no ruleId.
+	typeActionRulesEvaluationRequested = "ACTION_RULES_EVALUATION_REQUESTED"
+	typeFeedImported                   = "FEED_IMPORTED"
+	typeAPICatalogueUpdated            = "API_CATALOGUE_UPDATED"
 )
 
 // rulePayload extracts the rule ID from the WebSocket payload
@@ -46,7 +50,8 @@ type RuleChangeEvent struct {
 	RuleID int64
 }
 
-// EvaluationRequestEvent describes a request to evaluate a rule for a specific user
+// EvaluationRequestEvent describes a request to evaluate a rule for a specific
+// user, or every rule (RuleID 0, AG-EVAL-29).
 type EvaluationRequestEvent struct {
 	RuleID int64
 	UserID int64
@@ -153,7 +158,7 @@ func (w *Watcher) dispatch(msg wswatcher.Message) {
 		w.handleRuleEvent(msg, "updated")
 	case typeActionRuleDeleted:
 		w.handleRuleEvent(msg, "deleted")
-	case typeActionRuleEvaluationRequested:
+	case typeActionRuleEvaluationRequested, typeActionRulesEvaluationRequested:
 		w.handleEvaluationRequested(msg)
 	case typeFeedImported:
 		// Global signal — no payload, no debounce. Run in a goroutine so a
@@ -194,9 +199,10 @@ func (w *Watcher) handleRuleEvent(msg wswatcher.Message, eventType string) {
 	})
 }
 
-// handleEvaluationRequested dispatches an explicit "evaluate this rule for this
-// user" request. Not debounced: it is a deliberate act by a person, and
-// collapsing two of them would drop one they asked for.
+// handleEvaluationRequested dispatches an explicit "evaluate this rule (or
+// every rule) for this user" request. Not debounced: it is a deliberate act by
+// a person. The handler must return at once — it runs in the read loop — and
+// does, by putting the request in the daemon's queue (AG-EVAL-13).
 func (w *Watcher) handleEvaluationRequested(msg wswatcher.Message) {
 	var payload evaluationPayload
 	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
@@ -204,7 +210,16 @@ func (w *Watcher) handleEvaluationRequested(msg wswatcher.Message) {
 		return
 	}
 
-	logger.Infof("Received evaluation request for rule %d, user %d", payload.RuleID, payload.UserID)
+	if msg.Type == typeActionRulesEvaluationRequested {
+		payload.RuleID, payload.Force = 0, false
+		logger.Infof("Received evaluation request for every rule, user %d", payload.UserID)
+	} else {
+		if payload.RuleID == 0 {
+			logger.Debugf("Evaluation request without a rule id ignored")
+			return
+		}
+		logger.Infof("Received evaluation request for rule %d, user %d", payload.RuleID, payload.UserID)
+	}
 	if w.onEvaluationRequested != nil {
 		w.onEvaluationRequested(EvaluationRequestEvent(payload))
 	}

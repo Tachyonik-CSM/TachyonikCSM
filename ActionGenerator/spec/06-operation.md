@@ -100,8 +100,9 @@ again every 30 s and on every reconnect, then evaluates every rule.*
 messages, let a running evaluation finish, close its connections and exit.
 A running pass MUST stop after the rule and user it is evaluating; the rest is
 evaluated by the pass at the next start. An evaluation MUST NOT start after
-the signal. The wait MUST be bounded, and a unit still running when it ends
-MUST be logged by name. A generation in progress is not waited for; its
+the signal; evaluation requests still waiting (AG-EVAL-13) MUST be dropped
+and their number logged. The wait MUST be bounded, and a unit still running
+when it ends MUST be logged by name. A generation in progress is not waited for; its
 request is cleared at the next start (AG-GEN-02).
 *Reason: an evaluation stopped between creating and withdrawing leaves a
 half-applied set of actions until the next one. A container stop must not do

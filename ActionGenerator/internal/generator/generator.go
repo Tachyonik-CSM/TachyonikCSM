@@ -343,6 +343,45 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 	return 0, nil
 }
 
+// ProcessRulesForUser evaluates every rule for one user, as the full pass
+// does for them (AG-EVAL-29): in priority order, with one bridge pass, the
+// user and the workspace mode read once. It is not forced, so on-demand rules
+// are left alone (AG-EVAL-14). In a shared workspace it is evaluated for the
+// primary owner, as the shared pass is; a deactivated user is refused
+// (AG-EVAL-25). Returns the number of actions created.
+func (g *Generator) ProcessRulesForUser(userID int64) (int, error) {
+	unit := g.gate.Enter(fmt.Sprintf("every rule for user %d", userID), nil)
+	if unit == nil {
+		return 0, ErrStopping
+	}
+	defer unit.Leave()
+
+	g.executorMu.RLock()
+	executors := make(map[int64]*jsruntime.JSRuleExecutor, len(g.executors))
+	for k, v := range g.executors {
+		executors[k] = v
+	}
+	order := orderedRules(executors, g.ruleOrder)
+	g.executorMu.RUnlock()
+	if len(executors) == 0 {
+		return 0, fmt.Errorf("no rules loaded")
+	}
+
+	user, err := g.systemMgr.GetUser(userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get user %d: %w", userID, err)
+	}
+	if user.Deactivated() {
+		return 0, fmt.Errorf("user %d is deactivated; its actions are left as they are", userID)
+	}
+
+	if primaryID, shared := g.workspaceOwner(); shared {
+		return g.evaluateShared(unit, executors, order, g.newPass(), primaryID), nil
+	}
+	created, _ := g.evaluateUser(unit, userID, executors, order, g.newPass())
+	return created, nil
+}
+
 // countDeactivated counts the deactivated accounts among users.
 func countDeactivated(users []systemmanager.User) int {
 	n := 0
@@ -372,49 +411,62 @@ func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User,
 			continue
 		}
 
-		// Evaluate each per-rule executor, from the highest priority down, so
-		// that the action limit refuses the least important ones.
-		for _, ruleID := range order {
-			executor := executors[ruleID]
-			if g.stopping() {
-				logger.Info("Stopping: the rest of this pass is evaluated at the next start")
-				return actionsCreated, nil
-			}
-			unit.Rename(fmt.Sprintf("rule %d for user %d", ruleID, user.ID))
-			actions, unknown, err := g.evaluate(executor, pass, user.ID, false)
-			if err != nil {
-				logger.Errorf("Error evaluating JS rules for user %d (rule executor %d): %v", user.ID, ruleID, err)
-				continue
-			}
-			if unknown {
-				continue
-			}
-
-			// Rule did not match the user's current data. Garbage-collect any
-			// New-status action this rule had previously created for the user —
-			// it's stale. Actions the user already acted on (Acknowledged,
-			// InProgress, Done) are preserved by the server-side filter.
-			if len(actions) == 0 {
-				// Except for an on-demand rule, whose normal answer this is.
-				if !g.shouldWithdraw(ruleID, len(actions)) {
-					continue
-				}
-				g.withdraw(user.ID, ruleID)
-				continue
-			}
-
-			created, err := g.placeAction(user.ID, ruleID, firstAction(ruleID, actions)[0], false)
-			if err != nil {
-				logger.Errorf("%v", err)
-				continue
-			}
-			if created {
-				actionsCreated++
-			}
+		created, stopped := g.evaluateUser(unit, user.ID, executors, order, pass)
+		actionsCreated += created
+		if stopped {
+			return actionsCreated, nil
 		}
 	}
 
 	return actionsCreated, nil
+}
+
+// evaluateUser evaluates every rule for one user, from the highest priority
+// down (AG-EVAL-28), so that the action limit refuses the least important
+// ones, and creates, updates and withdraws their actions. It reports the
+// actions created, and whether it stopped short because the daemon is
+// stopping. The full pass and a request for every rule (AG-EVAL-29) share it.
+func (g *Generator) evaluateUser(unit *drain.Unit, userID int64, executors map[int64]*jsruntime.JSRuleExecutor, order []int64, pass *apibridge.Pass) (int, bool) {
+	actionsCreated := 0
+	for _, ruleID := range order {
+		executor := executors[ruleID]
+		if g.stopping() {
+			logger.Info("Stopping: the rest of this pass is evaluated at the next start")
+			return actionsCreated, true
+		}
+		unit.Rename(fmt.Sprintf("rule %d for user %d", ruleID, userID))
+		actions, unknown, err := g.evaluate(executor, pass, userID, false)
+		if err != nil {
+			logger.Errorf("Error evaluating JS rules for user %d (rule executor %d): %v", userID, ruleID, err)
+			continue
+		}
+		if unknown {
+			continue
+		}
+
+		// Rule did not match the user's current data. Garbage-collect any
+		// New-status action this rule had previously created for the user —
+		// it's stale. Actions the user already acted on (Acknowledged,
+		// InProgress, Done) are preserved by the server-side filter.
+		if len(actions) == 0 {
+			// Except for an on-demand rule, whose normal answer this is.
+			if !g.shouldWithdraw(ruleID, len(actions)) {
+				continue
+			}
+			g.withdraw(userID, ruleID)
+			continue
+		}
+
+		created, err := g.placeAction(userID, ruleID, firstAction(ruleID, actions)[0], false)
+		if err != nil {
+			logger.Errorf("%v", err)
+			continue
+		}
+		if created {
+			actionsCreated++
+		}
+	}
+	return actionsCreated, false
 }
 
 // processSharedWorkspace evaluates every rule ONCE, for the primary owner, whose
@@ -438,7 +490,14 @@ func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanag
 
 	// Evaluated for the primary owner; the managers answer with the
 	// workspace's data (PA-BR-07).
-	pass := g.newPass()
+	return g.evaluateShared(unit, executors, order, g.newPass(), primaryID), nil
+}
+
+// evaluateShared evaluates every rule once for the shared workspace's primary
+// owner and places, withdraws and consolidates as one action set for the
+// workspace. The shared pass and a request for every rule (AG-EVAL-29) share
+// it.
+func (g *Generator) evaluateShared(unit *drain.Unit, executors map[int64]*jsruntime.JSRuleExecutor, order []int64, pass *apibridge.Pass, primaryID int64) int {
 	actionsCreated := 0
 
 	// From the highest priority down (AG-EVAL-28): the workspace shares one
@@ -447,7 +506,7 @@ func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanag
 		executor := executors[ruleID]
 		if g.stopping() {
 			logger.Info("Stopping: the rest of this pass is evaluated at the next start")
-			return actionsCreated, nil
+			return actionsCreated
 		}
 		unit.Rename(fmt.Sprintf("rule %d for the workspace (owner %d)", ruleID, primaryID))
 		actions, unknown, err := g.evaluate(executor, pass, primaryID, false)
@@ -482,5 +541,5 @@ func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanag
 		g.consolidateShared(ruleID, primaryID)
 	}
 
-	return actionsCreated, nil
+	return actionsCreated
 }

@@ -16,7 +16,8 @@ when one of these happens, and only then:
   (AG-IF-24), or a user is created or deleted (AG-IF-18);
 - the connection to one of those services is (re)established;
 - a rule is created, changed or deleted, or a feed import reloads the rules;
-- an evaluation of one rule for one user is requested (AG-EVAL-13).
+- an evaluation of one rule, or of every rule, for one user is requested
+  (AG-EVAL-13, -29).
 
 There MUST NOT be a periodic evaluation.
 *Reason: an action appears and goes only when something re-runs the rules, so
@@ -191,6 +192,30 @@ of type `Action`, which asks for a rule's action by name. A request stands in
 for the pass, so it gives the pass's answer: in a shared workspace the
 workspace's data and one action for everyone, not a copy for the requester
 that the next pass withdraws (decided 2026-11-18).*
+
+Evaluation requests MUST NOT be evaluated while the message that carries them
+is read: they MUST be queued and evaluated by one worker, one after another,
+in the order they arrived. While a request waits, a second one for the same
+rule and user MUST be merged into it, forced if either is. A request for every
+rule of a user (AG-EVAL-29) MUST take in that user's waiting unforced requests
+and wait where the first of them did; a forced request stays.
+*Reason: while one request is evaluated, the connection reads nothing else —
+no rule change, no catalogue change, no further request — and one whose bridge
+calls run into their timeout held back all the others. With one worker, two
+requests for the same rule and user never race to create the same action. A
+person waits for the answer, so a waiting duplicate is merged rather than
+evaluated twice (decided 2026-11-26).*
+
+**AG-EVAL-29** When AIManager announces a request to evaluate every rule for
+one user, ActionGenerator MUST evaluate every rule for that user as the pass
+does for them (AG-EVAL-28, -09, -11, -26, -27), reading the user and the
+workspace mode once and with one bridge pass (AG-EVAL-23). It is not forced:
+on-demand rules are left alone (AG-EVAL-14). In a shared workspace it MUST be
+evaluated for the primary owner as the shared pass is (AG-EVAL-07, -12); a
+deactivated requester is refused (AG-EVAL-25).
+*Reason: the action icon asks for it when the user has no open action. One
+request per rule meant as many requests, each reading the user, the workspace
+mode and the managers anew (decided 2026-11-26).*
 
 **AG-EVAL-14** The actions of an on-demand rule MUST NOT be withdrawn by an
 evaluation that finds no match.

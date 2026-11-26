@@ -129,6 +129,29 @@ func TestEvaluationRequestIsNotDebounced(t *testing.T) {
 	}
 }
 
+// A request for every rule of a user (AG-EVAL-29) arrives as rule 0, never
+// forced, whatever the payload says.
+func TestEvaluationRequestForEveryRule(t *testing.T) {
+	srv := fakeAIManager(t, []map[string]any{
+		{"type": "ACTION_RULES_EVALUATION_REQUESTED", "payload": map[string]any{"userId": 52, "ruleId": 9, "force": true}},
+	})
+
+	got := make(chan EvaluationRequestEvent, 1)
+	w, _ := New(srv.URL, "", func(RuleChangeEvent) {})
+	w.SetEvaluationRequestedHandler(func(e EvaluationRequestEvent) { got <- e })
+	w.Start()
+	defer w.Close()
+
+	select {
+	case e := <-got:
+		if e != (EvaluationRequestEvent{UserID: 52}) {
+			t.Errorf("event = %+v, want every rule (0) for user 52, not forced", e)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no request for every rule arrived")
+	}
+}
+
 func TestFeedImportedTriggersReload(t *testing.T) {
 	srv := fakeAIManager(t, []map[string]any{{"type": "FEED_IMPORTED"}})
 
