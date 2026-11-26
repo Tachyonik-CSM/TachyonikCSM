@@ -125,10 +125,9 @@ files is the usual fault, and the log is where an operator looks first.*
 2. read the module's AI setting and system prompt from AIManager;
 3. load the rules and their active routines (SA-GEN-16), and clear the
    generation requests an earlier run left standing (SA-GEN-03);
-4. generate the routines of rules without one (SA-GEN-02), in the background;
-5. connect to AIManager for rule and setting changes;
-6. start the heartbeat (SA-OPS-10);
-7. connect to ResourceManager for sources announced as waiting (SA-IF-10), and
+4. connect to AIManager for rule and setting changes;
+5. start the heartbeat (SA-OPS-10);
+6. connect to ResourceManager for sources announced as waiting (SA-IF-10), and
    start the worker with its first sweep (SA-ANA-19).
 
 A service that cannot be reached MUST NOT stop the daemon: it MUST be logged,

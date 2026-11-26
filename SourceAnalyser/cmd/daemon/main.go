@@ -292,34 +292,10 @@ func runDaemon(cfg *config.Config) {
 			}
 		}
 
-		// Generate for rules that don't have executors yet. This requires an
-		// AI chat client, so only attempt it when one is configured. Without
-		// AI the already-loaded routines still run; missing ones simply won't
-		// be generated until an AI is assigned (picked up via the watcher).
-		if chatClient != nil {
-			rules := ai.Rules()
-			needsGeneration := false
-			for id := range rules {
-				if !ai.HasExecutor(id) {
-					needsGeneration = true
-					break
-				}
-			}
-			if needsGeneration {
-				logger.Info("Generating JS for rules without executors...")
-				go func() {
-					for id, rule := range rules {
-						if !ai.HasExecutor(id) {
-							// No routine at all yet: the new one is used at once.
-							if _, err := ai.GenerateForRule(rule, true); err != nil {
-								logger.Errorf("Failed to generate JS for rule %d: %v", id, err)
-							}
-						}
-					}
-					logger.Infof("Startup generation complete (%d executors loaded)", ai.RuleCount())
-				}()
-			}
-		}
+		// No routine is generated at startup (decided 2026-11-26, GEN
+		// question 1): only when an administrator asks for it (SA-GEN-01). A
+		// rule without a routine recognises nothing until then, and the rule
+		// dialog shows it.
 
 		// Start the AIManager watcher. A single WebSocket connection carries
 		// analysis rule changes, feed imports, and module AI setting updates.

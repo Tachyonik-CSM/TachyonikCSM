@@ -13,7 +13,7 @@ authoritative.
 |---|---|---|---|
 | 1 | [Purpose and scope](01-purpose-and-scope.md) | What is SourceAnalyser for, and what is it not for? | Accepted |
 | 2 | [Analysing sources](02-analysis.md) | Which sources are analysed, when, and what is written back? | Accepted |
-| 3 | [Routine generation and validation](03-generation-and-validation.md) | How does an analysis rule become a routine that may run? | Draft |
+| 3 | [Routine generation and validation](03-generation-and-validation.md) | How does an analysis rule become a routine that may run? | Accepted |
 | 4 | [Interfaces](04-interfaces.md) | What do routines read and return, and how does SourceAnalyser talk to the other services? | Accepted |
 | 5 | [Security and containment](05-security-and-containment.md) | Whose data reaches whom, and how is generated code kept in bounds? | Accepted |
 | 6 | [Operation](06-operation.md) | What does an operator rely on? | Draft |

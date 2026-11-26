@@ -221,12 +221,11 @@ func pickEntry(e *aimanager.AIEntry) *aipick.Entry {
 // generate JS, validate syntax and runtime, store in AIManager. Returns the
 // stored routine when it passed.
 //
-// useNow puts the new routine to work right away. Only for a rule without a
-// routine (start-up). Otherwise which routine runs is the rule's active one:
-// a generation asked to activate it does so through AIManager, whose update
-// loads it here, and one that was not leaves the active routine in use — the
-// new one used to run at once while the rule still named the old one.
-func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule, useNow bool) (*aimanager.Routine, error) {
+// The new routine does not run by itself: which routine runs is the rule's
+// active one. A generation asked to activate it does so through AIManager,
+// whose update loads it here, and one that was not leaves the active routine
+// in use (SA-GEN-14).
+func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule) (*aimanager.Routine, error) {
 	logger.Infof("Generating JS code for analysis rule %d (%s)...", rule.ID, rule.Type)
 
 	// Which AI, asked of AIManager now rather than remembered from startup:
@@ -285,12 +284,6 @@ func (a *AIAnalyser) GenerateForRule(rule *aimanager.AnalysisRule, useNow bool) 
 	routine, err := a.storeRoutine(code, rule.ID, version, ruleModel, sha256Hex, now, "passed", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to store routine for rule %d: %w", rule.ID, err)
-	}
-
-	if useNow {
-		a.mu.Lock()
-		a.executors[rule.ID] = tempExecutor
-		a.mu.Unlock()
 	}
 
 	logger.Infof("Successfully generated and saved routine for analysis rule %d (%s)", rule.ID, rule.Type)
@@ -455,7 +448,7 @@ func (a *AIAnalyser) HandleRuleChange(event aimwatcher.RuleChangeEvent) {
 			// asked for it and the routine passed; a failed one never
 			// replaces what is active.
 			var activate int64
-			routine, err := a.GenerateForRule(targetRule, false)
+			routine, err := a.GenerateForRule(targetRule)
 			if err != nil {
 				logger.Errorf("Failed to generate routine for analysis rule %d: %v", event.RuleID, err)
 				failure = err.Error()

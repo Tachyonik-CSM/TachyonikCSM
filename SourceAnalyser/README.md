@@ -352,8 +352,10 @@ generation request asked for it ("Make new routine the active routine" in the
 Edit Analysis Rule dialog) — when it passed: SourceAnalyser then names it the
 rule's active routine as it clears the request, and loads it from AIManager's
 update like any other change. A routine that was not asked to become active is
-stored and waits to be picked; the active one stays in use. Only at start-up,
-for a rule with no routine at all, is a newly generated routine used at once. The rules are loaded again on
+stored and waits to be picked; the active one stays in use. A routine is
+generated only when asked for: a rule without one recognises nothing until an
+administrator requests a generation, and nothing is generated at start-up
+(spec SA-GEN-02, withdrawn). The rules are loaded again on
 every reconnect to AIManager. If AIManager can't be reached at start-up,
 SourceAnalyser starts without rules and tries again every 30 seconds and on every
 connect. Once the rules are loaded for the first time, a generation request
