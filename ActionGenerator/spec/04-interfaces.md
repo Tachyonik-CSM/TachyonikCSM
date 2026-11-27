@@ -164,7 +164,7 @@ id, unless stated.
 
 | Service | Call | For |
 |---|---|---|
-| SystemManager | `GET /api/internal/users`, `/users/{id}`, `/workspace` | users, workspace mode and primary owner |
+| SystemManager | `GET /api/internal/users`, `/users/{id}`, `/workspace` | users (with `workspaceAdminId`, the admin of a user's SaaS workspace), workspace mode and primary owner |
 | AIManager | `GET /api/internal/action-rules`, `/routines/{id}`, `/action-options?actionRuleId=`, `/module-ai-settings/actiongenerator`, `/ais/{id}`, `/ais/by-name/{name}`, the API catalogue | rules and routines, AI, the catalogue the bridge is built from |
 | | `POST /api/internal/routines`; `PATCH /api/internal/action-rules/{id}` | store a routine; clear a generation request (AG-GEN-02) |
 | ActionManager | `GET /api/actions?userId=` | existing actions, to recognise one already raised (AG-EVAL-09) |

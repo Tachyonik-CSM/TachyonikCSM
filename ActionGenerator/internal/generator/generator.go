@@ -287,13 +287,16 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 		return 0, fmt.Errorf("user %d is deactivated; its actions are left as they are", userID)
 	}
 
-	// In a shared workspace the request is evaluated for the primary owner
-	// and its action placed under them, as the shared pass would; the
-	// requester only asked (AG-EVAL-13).
-	owner, who := userID, fmt.Sprintf("user %d", userID)
-	primaryID, shared := g.workspaceOwner()
-	if shared {
-		owner, who = primaryID, fmt.Sprintf("the workspace (owner %d), asked by user %d", primaryID, userID)
+	// In a workspace — the appliance's or a SaaS group's — the request is
+	// evaluated for its owner and its action placed under them, as the pass
+	// would; the requester only asked (AG-EVAL-13).
+	t, err := g.requestTarget(user)
+	if err != nil {
+		return 0, err
+	}
+	owner, who := t.owner, t.String()
+	if t.owner != userID {
+		who = fmt.Sprintf("%s, asked by user %d", t, userID)
 		unit.Rename(fmt.Sprintf("rule %d for %s", ruleID, who))
 	}
 
@@ -319,11 +322,7 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 			logger.Debugf("Rule %d is on-demand; leaving its actions for %s alone", ruleID, who)
 			return 0, nil
 		}
-		if shared {
-			g.withdrawShared(ruleID)
-		} else {
-			g.withdraw(owner, ruleID)
-		}
+		g.withdrawFor(t, ruleID)
 		return 0, nil
 	}
 
@@ -331,9 +330,7 @@ func (g *Generator) ProcessRuleForUser(ruleID int64, userID int64, force bool) (
 	// request raises it even while a Done one holds the rule back
 	// (AG-EVAL-26).
 	created, err := g.placeAction(owner, ruleID, firstAction(ruleID, actions)[0], force)
-	if shared {
-		g.consolidateShared(ruleID, primaryID)
-	}
+	g.consolidateFor(t, ruleID)
 	if err != nil {
 		return 0, err
 	}
@@ -375,10 +372,14 @@ func (g *Generator) ProcessRulesForUser(userID int64) (int, error) {
 		return 0, fmt.Errorf("user %d is deactivated; its actions are left as they are", userID)
 	}
 
-	if primaryID, shared := g.workspaceOwner(); shared {
-		return g.evaluateShared(unit, executors, order, g.newPass(), primaryID), nil
+	t, err := g.requestTarget(user)
+	if err != nil {
+		return 0, err
 	}
-	created, _ := g.evaluateUser(unit, userID, executors, order, g.newPass())
+	if t.instance || len(t.others) > 0 {
+		return g.evaluateTarget(unit, executors, order, g.newPass(), t), nil
+	}
+	created, _ := g.evaluateUser(unit, t.owner, executors, order, g.newPass())
 	return created, nil
 }
 
@@ -402,20 +403,24 @@ func (g *Generator) processJSRules(unit *drain.Unit, users []systemmanager.User,
 		logger.Infof("Not evaluating %d deactivated users: their actions are left as they are (AG-EVAL-25)", n)
 	}
 
-	for i := range users {
-		user := users[i]
-		// A deactivated account is not evaluated: its actions stay as they
-		// were until it is reactivated (AG-EVAL-25).
-		if user.Deactivated() {
-			logger.Debugf("Skipping deactivated user %d", user.ID)
-			continue
-		}
-
-		created, stopped := g.evaluateUser(unit, user.ID, executors, order, pass)
-		actionsCreated += created
-		if stopped {
+	// A user in no workspace is evaluated on their own; a workspace once, for
+	// its admin (AG-EVAL-06, -07). A deactivated user in no workspace is not
+	// evaluated: their actions stay as they were until they are reactivated
+	// (AG-EVAL-25).
+	for _, t := range passTargets(users) {
+		if g.stopping() {
+			logger.Info("Stopping: the rest of this pass is evaluated at the next start")
 			return actionsCreated, nil
 		}
+		if len(t.others) == 0 {
+			created, stopped := g.evaluateUser(unit, t.owner, executors, order, pass)
+			actionsCreated += created
+			if stopped {
+				return actionsCreated, nil
+			}
+			continue
+		}
+		actionsCreated += g.evaluateTarget(unit, executors, order, pass, t)
 	}
 
 	return actionsCreated, nil
@@ -498,28 +503,35 @@ func (g *Generator) processSharedWorkspace(unit *drain.Unit, users []systemmanag
 // workspace. The shared pass and a request for every rule (AG-EVAL-29) share
 // it.
 func (g *Generator) evaluateShared(unit *drain.Unit, executors map[int64]*jsruntime.JSRuleExecutor, order []int64, pass *apibridge.Pass, primaryID int64) int {
+	return g.evaluateTarget(unit, executors, order, pass, target{owner: primaryID, instance: true})
+}
+
+// evaluateTarget evaluates every rule once for a workspace — the appliance's,
+// or a SaaS group's for its workspace admin — from the highest priority down
+// (AG-EVAL-28): the workspace shares one action budget. Each action is placed
+// under the owner, the members' New copies are consolidated, and a rule that
+// no longer matches is withdrawn for every member (AG-EVAL-07, -12).
+func (g *Generator) evaluateTarget(unit *drain.Unit, executors map[int64]*jsruntime.JSRuleExecutor, order []int64, pass *apibridge.Pass, t target) int {
 	actionsCreated := 0
 
-	// From the highest priority down (AG-EVAL-28): the workspace shares one
-	// action budget.
 	for _, ruleID := range order {
 		executor := executors[ruleID]
 		if g.stopping() {
 			logger.Info("Stopping: the rest of this pass is evaluated at the next start")
 			return actionsCreated
 		}
-		unit.Rename(fmt.Sprintf("rule %d for the workspace (owner %d)", ruleID, primaryID))
-		actions, unknown, err := g.evaluate(executor, pass, primaryID, false)
+		unit.Rename(fmt.Sprintf("rule %d for %s", ruleID, t))
+		actions, unknown, err := g.evaluate(executor, pass, t.owner, false)
 		if err != nil {
-			logger.Errorf("Error evaluating shared JS rule %d: %v", ruleID, err)
+			logger.Errorf("Error evaluating JS rule %d for %s: %v", ruleID, t, err)
 			continue
 		}
 		if unknown {
 			continue
 		}
 
-		// Rule no longer matches the workspace's data — garbage-collect every
-		// New-status action it previously created, for any owner.
+		// Rule no longer matches the workspace's data — withdraw every
+		// New-status action it previously created, for every member.
 		if len(actions) == 0 {
 			// As in the per-user path: an on-demand rule answering "no actions"
 			// is not the rule ceasing to match, it is the rule doing nothing
@@ -527,18 +539,18 @@ func (g *Generator) evaluateShared(unit *drain.Unit, executors map[int64]*jsrunt
 			if !g.shouldWithdraw(ruleID, len(actions)) {
 				continue
 			}
-			g.withdrawShared(ruleID)
+			g.withdrawFor(t, ruleID)
 			continue
 		}
 
-		// Placed under the primary owner, as one action for the workspace.
-		if created, err := g.placeAction(primaryID, ruleID, firstAction(ruleID, actions)[0], false); err != nil {
-			logger.Errorf("Shared workspace: %v", err)
+		// Placed under the owner, as one action for the workspace.
+		if created, err := g.placeAction(t.owner, ruleID, firstAction(ruleID, actions)[0], false); err != nil {
+			logger.Errorf("%s: %v", t, err)
 		} else if created {
 			actionsCreated++
 		}
 
-		g.consolidateShared(ruleID, primaryID)
+		g.consolidateFor(t, ruleID)
 	}
 
 	return actionsCreated

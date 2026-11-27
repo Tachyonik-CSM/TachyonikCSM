@@ -56,8 +56,10 @@ one they asked for.*
 
 **AG-EVAL-06** ActionGenerator MUST evaluate against every user SystemManager
 lists for internal services, which excludes holder accounts of parked group
-data. In a SaaS installation each user is evaluated separately, the routines
-reading that user's data (PA-BR-03), and their actions are created for them.
+data. In a SaaS installation each user in no workspace is evaluated
+separately, the routines reading that user's data (PA-BR-03), and their
+actions are created for them; a user in a workspace is evaluated with it
+(AG-EVAL-07).
 *Reason: in SaaS every user's data is private, so is the advice. Holder
 accounts are not people (SystemManager's group parking).* Deactivated
 accounts are not evaluated (AG-EVAL-25).
@@ -68,10 +70,19 @@ the primary owner, and create the actions for the primary owner. The
 managers answer the bridge's calls for the primary owner with the data of the
 whole workspace (PA-BR-07); ActionGenerator MUST NOT combine users' data
 itself.
+In a SaaS installation, a workspace (a group, shown to users as a workspace)
+MUST likewise be evaluated once, for its workspace admin — the account
+SystemManager names as `workspaceAdminId` of its members — with the actions
+created for the workspace admin; its members MUST NOT be evaluated on their
+own. A SystemManager that names no workspace admin leaves every user to
+AG-EVAL-06.
 *Reason: every registered user sees the same data, so one action set per user
 would show up as duplicates in the shared Actions view. What a workspace user
 sees is the managers' to decide; a second definition here — the combined
-context of earlier versions — drifts from theirs.*
+context of earlier versions — drifts from theirs. A SaaS workspace's members
+see one another's data and actions, so the same holds for it; its admin
+cannot leave it, only dissolve it, so its actions need not change owner when
+a member leaves (decided 2026-11-27).*
 
 **AG-EVAL-08** When the workspace mode cannot be read, or an appliance reports
 no primary owner, ActionGenerator MUST evaluate per user (AG-EVAL-06) and say
@@ -86,14 +97,18 @@ Its actions MUST stay as they were until the account is reactivated; the
 first evaluation after that evaluates it again. An evaluation request for it
 (AG-EVAL-13) MUST be refused. A shared workspace is evaluated for its primary
 owner as before (AG-EVAL-07), even when that account is deactivated, and an
-account for which SystemManager does not say counts as active.
+account for which SystemManager does not say counts as active. A SaaS
+workspace is evaluated for its workspace admin even when the admin is
+deactivated, unless every member is; a deactivated member's `New` copies are
+consolidated like the other members' (AG-EVAL-12).
 *Reason: nobody can log in to a deactivated account to read the advice, so
 evaluating it costs work for no one. Withdrawing its actions meanwhile would
 erase what the user left as they were, and they would come back to a
 different list. A reactivated account is brought up to date by the next pass
 (decided 2026-11-18). The actions of a shared workspace are the workspace's,
 not the owner's own, and skipping a deactivated owner would stop the advice
-for everyone in it.*
+for everyone in it. A deactivated member's copies in a workspace are
+duplicates every other member sees (decided 2026-11-27).*
 
 ## 3. Creating actions
 
@@ -149,7 +164,10 @@ longer. An action the user has acknowledged, started or finished is theirs
 **AG-EVAL-12** In a shared workspace, a rule that produces no action MUST have
 its `New` actions withdrawn, and its `Done` actions cleared, for every owner.
 A rule that does produce one MUST
-have its `New` actions of every owner but the primary one withdrawn.
+have its `New` actions of every owner but the primary one withdrawn. In a
+SaaS workspace (AG-EVAL-07) the same holds for its members: "every owner" is
+every member, the primary one its workspace admin; other users' actions MUST
+NOT be touched.
 *Reason: the first is AG-EVAL-11 for the workspace. The second consolidates
 the per-user copies left by earlier per-user evaluation, and by evaluation
 requests before they were evaluated for the primary owner (AG-EVAL-13).*
@@ -183,7 +201,8 @@ produces none. A request marked *forced* MUST skip the rule's condition and
 create the action as if it had matched, even while a `Done` action holds the
 rule back (AG-EVAL-26). In a shared workspace (AG-EVAL-07) the request MUST be
 evaluated for the primary owner and its action placed under them, withdrawn
-and consolidated as in AG-EVAL-12; when the workspace mode cannot be read, it
+and consolidated as in AG-EVAL-12; a member's request in a SaaS workspace for
+its workspace admin, likewise; when the workspace mode cannot be read, it
 is evaluated for the requester (AG-EVAL-08). A deactivated requester is
 refused in every mode (AG-EVAL-25).
 *Reason: the WebUI asks for this when the Action Guide opens an action, so the
@@ -211,7 +230,8 @@ one user, ActionGenerator MUST evaluate every rule for that user as the pass
 does for them (AG-EVAL-28, -09, -11, -26, -27), reading the user and the
 workspace mode once and with one bridge pass (AG-EVAL-23). It is not forced:
 on-demand rules are left alone (AG-EVAL-14). In a shared workspace it MUST be
-evaluated for the primary owner as the shared pass is (AG-EVAL-07, -12); a
+evaluated for the primary owner as the shared pass is (AG-EVAL-07, -12), and
+a member's request in a SaaS workspace for its workspace admin; a
 deactivated requester is refused (AG-EVAL-25).
 *Reason: the action icon asks for it when the user has no open action. One
 request per rule meant as many requests, each reading the user, the workspace

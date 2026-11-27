@@ -39,6 +39,11 @@ type User struct {
 	// SystemManager that does not send it predates deactivation: nil counts
 	// as active.
 	Active *bool `json:"active"`
+	// WorkspaceAdminID is the admin of the user's workspace (a SaaS group),
+	// the user's own id for the admin; 0 for a user in none, and from a
+	// SystemManager that does not send it. A workspace is evaluated once, for
+	// this account (docs/plans/workspace-actions-once.md).
+	WorkspaceAdminID int64 `json:"workspaceAdminId"`
 }
 
 // Deactivated reports whether an administrator deactivated the account.
